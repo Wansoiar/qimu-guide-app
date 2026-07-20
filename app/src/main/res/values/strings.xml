@@ -1,0 +1,62 @@
+<resources>
+    <string name="app_name">齐目导览</string>
+
+    <!-- Device Page -->
+    <string name="device_management">设备管理</string>
+    <string name="device_subtitle">连接您的 AI 眼镜以开始导览</string>
+    <string name="scan_and_connect">扫描并连接眼镜</string>
+    <string name="cancel_scan">取消扫描</string>
+    <string name="re_scan">重新扫描</string>
+    <string name="connect_hint">连接眼镜后可使用实时讲解功能</string>
+    <string name="no_device_found">未发现设备，请确认眼镜已开机</string>
+    <string name="connection_timeout">连接超时，请靠近眼镜重试</string>
+    <string name="connection_failed">连接失败，请重启眼镜后再试</string>
+    <string name="device_connected">已连接</string>
+    <string name="device_disconnected">未连接</string>
+
+    <!-- Device Info -->
+    <string name="battery">电量</string>
+    <string name="signal">信号</string>
+    <string name="firmware_version">固件</string>
+    <string name="device_model">设备型号</string>
+    <string name="serial_number">序列号</string>
+    <string name="connection_type">连接方式</string>
+    <string name="connection_duration">本次连接时长</string>
+    <string name="ble_version">低功耗蓝牙 5.3</string>
+    <string name="unknown_device">未知设备</string>
+
+    <!-- Device State -->
+    <string name="state_connecting">正在连接…</string>
+    <string name="state_connected">已连接</string>
+    <string name="state_disconnected">未连接</string>
+    <string name="state_scanning">扫描中…</string>
+
+    <!-- Dialogue Page -->
+    <string name="dialogue">对话</string>
+    <string name="current_venue">当前场馆</string>
+    <string name="dialogue_placeholder">通过眼镜操作提问，手机端仅供查看</string>
+    <string name="photo_hint">拍照提问</string>
+    <string name="voice_hint">语音提问</string>
+    <string name="replay_hint">重播讲解</string>
+    <string name="ai_state_idle">空闲</string>
+    <string name="ai_state_listening">聆听中…</string>
+    <string name="ai_state_thinking">思考中…</string>
+    <string name="ai_state_speaking">讲解中…</string>
+    <string name="must_connect_first">请先连接眼镜</string>
+    <string name="not_connected">未连接</string>
+    <string name="disconnected_hint">眼镜连接已断开，请重新连接</string>
+
+    <!-- Export Page -->
+    <string name="export">导出</string>
+    <string name="export_title">导出数据</string>
+    <string name="export_description">扫描二维码，通过小程序导出本次导览的全部内容</string>
+    <string name="generate_qrcode">生成二维码</string>
+    <string name="regenerate">再次生成</string>
+    <string name="qrcode_expire">二维码有效时间</string>
+    <string name="no_session_data">暂无导出数据</string>
+
+    <!-- Tab -->
+    <string name="tab_device">设备</string>
+    <string name="tab_dialogue">对话</string>
+    <string name="tab_export">导出</string>
+</resources>
