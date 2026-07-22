@@ -52,19 +52,52 @@ public class DialogueFragment extends Fragment {
     private final StringBuilder recognizedText = new StringBuilder();
     private boolean turnComplete = true;
     private int currentBubbleIndex = -1;
+    private android.speech.tts.TextToSpeech tts;
     private final android.os.Handler silenceHandler = new android.os.Handler(android.os.Looper.getMainLooper());
     private final Runnable silenceRunnable = new Runnable() {
         @Override
         public void run() {
             turnComplete = true;
             String full = recognizedText.toString().trim();
+            if (full.isEmpty()) return;
+
+            CRPBleConnection conn = BleService.getInstance().getConnection();
+            if (conn != null) {
+                conn.sendAIDialogueState(com.moyoung.glasses.conn.protos.FlowStatus.FlowStatusType.FlowStatusStart);
+                Log.d(TAG, "发送 FlowStatusStart");
+            }
+
             if (full.contains("我眼前") || full.contains("我面前") || full.contains("这是什么") || full.contains("这是啥")) {
                 triggerAiPhoto();
+            }
+
+            if (tts == null) {
+                tts = new android.speech.tts.TextToSpeech(requireContext(), status -> {
+                    if (status == android.speech.tts.TextToSpeech.SUCCESS) {
+                        tts.setLanguage(java.util.Locale.CHINESE);
+                        doReplyTts(conn);
+                    } else if (conn != null) {
+                        conn.sendAIDialogueState(com.moyoung.glasses.conn.protos.FlowStatus.FlowStatusType.FlowStatusComplete);
+                    }
+                });
+            } else {
+                doReplyTts(conn);
             }
         }
     };
 
-    /** 所有 UI 操作切到主线程（回调来自 BLE 线程） */
+    private void doReplyTts(CRPBleConnection conn) {
+        String reply = "好的，我看到了。";
+        tts.speak(reply, android.speech.tts.TextToSpeech.QUEUE_FLUSH, null, "reply");
+        silenceHandler.postDelayed(() -> {
+            if (conn != null) {
+                conn.sendAIDialogueState(com.moyoung.glasses.conn.protos.FlowStatus.FlowStatusType.FlowStatusComplete);
+                Log.d(TAG, "发送 FlowStatusComplete");
+            }
+        }, 1500);
+    }
+
+/** 所有 UI 操作切到主线程（回调来自 BLE 线程） */
     private void uiAddMessage(DialogueMessage msg) {
         if (!isAdded()) return;
         requireActivity().runOnUiThread(() -> {
@@ -332,5 +365,6 @@ public class DialogueFragment extends Fragment {
     public void onDestroyView() {
         super.onDestroyView();
         if (aiDialogueManager != null) aiDialogueManager.release();
+        if (tts != null) { tts.stop(); tts.shutdown(); tts = null; }
     }
 }
