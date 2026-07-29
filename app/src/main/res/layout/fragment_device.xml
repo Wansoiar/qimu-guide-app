@@ -95,6 +95,16 @@
             android:text="@string/scan_and_connect"
             android:textColor="@android:color/white"
             android:textAllCaps="false" />
+
+        <androidx.appcompat.widget.AppCompatButton
+            android:id="@+id/btn_direct_connect"
+            android:layout_width="match_parent"
+            android:layout_height="44dp"
+            android:layout_marginTop="6dp"
+            android:background="@color/colorAccent"
+            android:text="🔗 一键直连眼镜 (V03 Pro)"
+            android:textColor="@android:color/white"
+            android:textAllCaps="false" />
     </LinearLayout>
 
     <!-- 设备列表 -->
