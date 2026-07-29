@@ -23,6 +23,7 @@ import com.qimu.guide.R;
 import com.qimu.guide.model.DialogueMessage;
 import com.qimu.guide.net.GuideApiClient;
 import com.qimu.guide.service.AIDialogueManager;
+import com.qimu.guide.service.AudioChunkPlayer;
 import com.qimu.guide.service.BleService;
 import com.qimu.guide.service.MicRecorder;
 
@@ -60,6 +61,21 @@ public class DialogueFragment extends Fragment {
 
     // 手机麦克风（无眼镜时的音频来源；眼镜在时也可用）
     private final MicRecorder micRecorder = new MicRecorder();
+    // 流式 TTS 串播器（audio_chunk 逐句播放；A2DP 连眼镜时从眼镜出声）
+    private final AudioChunkPlayer ttsPlayer = new AudioChunkPlayer();
+
+    /**
+     * TTS 声源策略（架构兼容点）：
+     *  PHONE_ONLY   —— 无眼镜时手机播后端豆包 TTS；眼镜连着时由眼镜自带 TTS 朗读（当前默认，避免两个TTS重叠）。
+     *  BACKEND_ALWAYS —— 眼镜也用后端豆包 TTS（音质更好）。启用前提：眼镜端不再自动朗读
+     *                    （摸清 sendAiReplyMode 语义 / 眼镜只显示文字后），否则会与眼镜自带TTS重叠。
+     * 后续切豆包只需把此常量改成 BACKEND_ALWAYS，并在回推眼镜处停用自带朗读。
+     */
+    private enum TtsOutput { PHONE_ONLY, BACKEND_ALWAYS }
+    private static final TtsOutput TTS_OUTPUT = TtsOutput.BACKEND_ALWAYS;
+
+    /** 本轮是否由后端豆包 TTS 出声（决定要不要播 audio_chunk）。 */
+    private volatile boolean playBackendTtsThisTurn = false;
     private final androidx.activity.result.ActivityResultLauncher<String> micPermLauncher =
             registerForActivityResult(new androidx.activity.result.contract.ActivityResultContracts.RequestPermission(),
                     granted -> {
@@ -170,6 +186,12 @@ public class DialogueFragment extends Fragment {
                 return;
             }
 
+            // 新一轮：重置 TTS 串播器（清掉上一轮残留）
+            ttsPlayer.reset();
+            // 决定本轮 TTS 声源：BACKEND_ALWAYS 恒用豆包；PHONE_ONLY 仅在无眼镜时用豆包（眼镜连着由自带TTS念）
+            boolean glassesConnected = BleService.getInstance().getConnection() != null;
+            playBackendTtsThisTurn = (TTS_OUTPUT == TtsOutput.BACKEND_ALWAYS) || !glassesConnected;
+
             // 先加"我说的话"气泡（onDone 时填 ASR 结果），再加 AI 回复气泡
             replyText.setLength(0);
             requireActivitySafe(() -> {
@@ -196,8 +218,11 @@ public class DialogueFragment extends Fragment {
 
                 @Override
                 public void onAudioChunk(int sequence, String url, int durationMs) {
-                    // 流式 TTS 播放留待下一轮（拿 url 下载 mp3 串播）。本阶段先打通文字。
                     Log.d(TAG, "audio_chunk #" + sequence + " " + url);
+                    // 仅在本轮用后端豆包 TTS 时串播（眼镜连着且策略=PHONE_ONLY 则跳过，避免与眼镜自带TTS重叠）
+                    if (playBackendTtsThisTurn) {
+                        ttsPlayer.enqueue(url);
+                    }
                 }
 
                 @Override
@@ -211,7 +236,9 @@ public class DialogueFragment extends Fragment {
                     final String reply = fullText != null && !fullText.isEmpty()
                             ? fullText : replyText.toString();
                     uiUpdateMessage(replyBubbleIndex, reply);
-                    // 回推眼镜（显示 + TTS 朗读）
+                    // 回推眼镜：眼镜端会显示文字 + 自带 TTS 朗读。
+                    // 注意声源耦合：PHONE_ONLY 下眼镜连着时靠这里的自带TTS出声（不播audio_chunk）；
+                    // 若将来切到 BACKEND_ALWAYS，需让眼镜只显示不朗读，否则与豆包TTS重叠。
                     CRPBleConnection conn = BleService.getInstance().getConnection();
                     if (conn != null && aiDialogueManager != null && !reply.isEmpty()) {
                         aiDialogueManager.sendTextToGlasses(reply);
@@ -386,5 +413,6 @@ public class DialogueFragment extends Fragment {
         super.onDestroyView();
         if (aiDialogueManager != null) aiDialogueManager.release();
         micRecorder.release();
+        ttsPlayer.release();
     }
 }
