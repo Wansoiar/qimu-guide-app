@@ -54,10 +54,8 @@ public class MainActivity extends AppCompatActivity {
                 switchFragment(new DeviceFragment());
                 return true;
             } else if (id == R.id.nav_dialogue) {
-                if (!connected) {
-                    Toast.makeText(this, R.string.must_connect_first, Toast.LENGTH_SHORT).show();
-                    return false;
-                }
+                // 对话页不强制连眼镜：连了走眼镜链路，没连用手机麦克风「按住说话」，
+                // 都走同一套后端（端无关）。这样 App 独立可用、也方便无眼镜调试。
                 switchFragment(new DialogueFragment());
                 return true;
             } else if (id == R.id.nav_export) {
@@ -72,7 +70,9 @@ public class MainActivity extends AppCompatActivity {
         });
 
         if (savedInstanceState == null) {
-            bottomNav.setSelectedItemId(R.id.nav_device);
+            // 启动直接进对话页：无眼镜也能用手机麦克风「按住说话」。
+            // 需要连眼镜时再切到设备页扫描。
+            bottomNav.setSelectedItemId(R.id.nav_dialogue);
         }
     }
 
@@ -88,7 +88,8 @@ public class MainActivity extends AppCompatActivity {
         boolean connected = bleService.isConnected()
                 || bleService.getConnectionState() == CRPBleConnectionStateListener.STATE_CONNECTED;
         runOnUiThread(() -> {
-            bottomNav.getMenu().findItem(R.id.nav_dialogue).setEnabled(connected);
+            // 对话页始终可用（无眼镜可用手机麦克风）；导出依赖眼镜录音，保持需连接。
+            bottomNav.getMenu().findItem(R.id.nav_dialogue).setEnabled(true);
             bottomNav.getMenu().findItem(R.id.nav_export).setEnabled(connected);
         });
     }

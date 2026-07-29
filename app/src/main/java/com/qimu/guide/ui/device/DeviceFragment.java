@@ -38,6 +38,12 @@ import java.util.List;
 public class DeviceFragment extends Fragment {
 
     private static final long SCAN_TIMEOUT_MS = 15000;
+
+    // 已知眼镜（调试用一键直连；正式版可做成扫描后记住）
+    private static final String KNOWN_GLASSES_MAC = "99:88:BF:00:92:2C";
+    // 眼镜名字特征（用于从一堆蓝牙里挑出眼镜）
+    private static final String[] GLASSES_NAME_HINTS = {"V03", "Pro", "glass", "Glass", "青橙", "moyoung", "Da Echo", "Echo"};
+
     private BleService bleService;
 
     private View layoutDisconnected, layoutConnected;
@@ -113,6 +119,13 @@ public class DeviceFragment extends Fragment {
         btnScan.setOnClickListener(vi -> {
             if (isScanning) { bleService.cancelScan(); setScanningState(false); }
             else checkPermissionsAndScan();
+        });
+
+        // 一键直连：按已知 MAC 直接连，跳过扫描列表（列表太长/扫不到名字时的兜底）
+        v.findViewById(R.id.btn_direct_connect).setOnClickListener(vi -> {
+            appendLog("一键直连: " + KNOWN_GLASSES_MAC);
+            tvScanStatus.setText(R.string.state_connecting);
+            bleService.connect(KNOWN_GLASSES_MAC);
         });
 
         // 调试按钮组
@@ -203,9 +216,11 @@ public class DeviceFragment extends Fragment {
         bleService.startScan(new CRPScanCallback() {
             @Override public void onScanning(CRPScanDevice dev) {
                 if (!isAdded()) return;
+                // 只保留"像眼镜的"设备，过滤掉周围一堆 null 杂蓝牙（列表太长问题）
+                if (!looksLikeGlasses(dev)) return;
                 for (CRPScanDevice d : deviceList) if (d.getDevice().getAddress().equals(dev.getDevice().getAddress())) return;
                 deviceList.add(dev); deviceAdapter.notifyDataSetChanged();
-                appendLog("发现: " + dev.getDevice().getName() + " [" + dev.getDevice().getAddress() + "] RSSI=" + dev.getRssi());
+                appendLog("✔ 眼镜候选: " + dev.getDevice().getName() + " [" + dev.getDevice().getAddress() + "] RSSI=" + dev.getRssi());
             }
             @Override public void onScanComplete(List<CRPScanDevice> r) {
                 if (!isAdded()) return;
@@ -218,6 +233,18 @@ public class DeviceFragment extends Fragment {
     }
 
     private void connectToDevice(String addr) { tvScanStatus.setText(R.string.state_connecting); appendLog("连接: " + addr); bleService.connect(addr); }
+
+    /** 判断一个扫描到的设备是否像眼镜（按已知 MAC 或名字特征）。 */
+    private boolean looksLikeGlasses(CRPScanDevice dev) {
+        String addr = dev.getDevice().getAddress();
+        if (addr != null && addr.equalsIgnoreCase(KNOWN_GLASSES_MAC)) return true;
+        String name = dev.getDevice().getName();
+        if (name == null) return false;
+        for (String hint : GLASSES_NAME_HINTS) {
+            if (name.toLowerCase().contains(hint.toLowerCase())) return true;
+        }
+        return false;
+    }
 
     private void setScanningState(boolean scanning) { isScanning = scanning; if (btnScan != null) btnScan.post(() -> { TextView tv = (TextView)btnScan; if (scanning) tv.setText(R.string.cancel_scan); else tv.setText(R.string.scan_and_connect); }); }
 

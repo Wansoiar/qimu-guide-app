@@ -21,8 +21,9 @@ public final class SessionContext {
         return INSTANCE;
     }
 
-    // 占位 venue（阶段 3 换真实馆 ID）
-    private volatile String venueId = "11111111-1111-1111-1111-111111111111";
+    // 义净寺（code=demo01）——后端已录入展品+讲解词+embedding，RAG 可检索。
+    // 换其他馆时改这里，或由 setVenueId 动态指定。
+    private volatile String venueId = "61f1f93d-fe42-49d0-b392-bcbf9cd1c13d";
     // 一次 App 生命周期 = 一次会话
     private final String sessionId = UUID.randomUUID().toString();
     private final AtomicInteger querySeq = new AtomicInteger(0);

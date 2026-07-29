@@ -1,14 +1,18 @@
 package com.qimu.guide.ui.dialogue;
 
+import android.Manifest;
+import android.content.pm.PackageManager;
 import android.os.Bundle;
 import android.util.Log;
 import android.view.LayoutInflater;
+import android.view.MotionEvent;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.Toast;
 
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
+import androidx.core.content.ContextCompat;
 import androidx.fragment.app.Fragment;
 import androidx.recyclerview.widget.LinearLayoutManager;
 import androidx.recyclerview.widget.RecyclerView;
@@ -20,6 +24,7 @@ import com.qimu.guide.model.DialogueMessage;
 import com.qimu.guide.net.GuideApiClient;
 import com.qimu.guide.service.AIDialogueManager;
 import com.qimu.guide.service.BleService;
+import com.qimu.guide.service.MicRecorder;
 
 import java.io.ByteArrayOutputStream;
 import java.io.File;
@@ -53,6 +58,14 @@ public class DialogueFragment extends Fragment {
 
     private final GuideApiClient apiClient = new GuideApiClient();
 
+    // 手机麦克风（无眼镜时的音频来源；眼镜在时也可用）
+    private final MicRecorder micRecorder = new MicRecorder();
+    private final androidx.activity.result.ActivityResultLauncher<String> micPermLauncher =
+            registerForActivityResult(new androidx.activity.result.contract.ActivityResultContracts.RequestPermission(),
+                    granted -> {
+                        if (!granted) Toast.makeText(getContext(), "需要麦克风权限", Toast.LENGTH_SHORT).show();
+                    });
+
     // ── 音频状态 ──
     private int listeningMsgIndex = -1;
     private ByteArrayOutputStream audioBuffer;
@@ -60,6 +73,8 @@ public class DialogueFragment extends Fragment {
     // 本轮 AI 回复气泡（流式追加 text_delta）
     private int replyBubbleIndex = -1;
     private final StringBuilder replyText = new StringBuilder();
+    // 本轮"我说的话"气泡（onDone 时填 ASR 识别结果）
+    private int userBubbleIndex = -1;
 
     // ── 眼镜 AI 对话回调 ──
     private final AIDialogueManager.DialogueCallback dialogueCallback = new AIDialogueManager.DialogueCallback() {
@@ -155,9 +170,15 @@ public class DialogueFragment extends Fragment {
                 return;
             }
 
-            // 新建一个 AI 回复气泡，text_delta 往里流式追加
+            // 先加"我说的话"气泡（onDone 时填 ASR 结果），再加 AI 回复气泡
             replyText.setLength(0);
             requireActivitySafe(() -> {
+                DialogueMessage userMsg = new DialogueMessage(DialogueMessage.Type.VOICE,
+                        "🗣️ 你说：（识别中…）", System.currentTimeMillis());
+                messages.add(userMsg);
+                userBubbleIndex = messages.size() - 1;
+                messageAdapter.notifyItemInserted(userBubbleIndex);
+
                 DialogueMessage bubble = new DialogueMessage(DialogueMessage.Type.AI_REPLY,
                         "…", System.currentTimeMillis());
                 messages.add(bubble);
@@ -182,10 +203,13 @@ public class DialogueFragment extends Fragment {
                 @Override
                 public void onDone(String transcribedText, String fullText, String aigcLabel) {
                     Log.d(TAG, "done transcribed=" + transcribedText + " full=" + fullText);
-                    // 定稿气泡（以 full_text 为准，防止 delta 拼接有偏差）
+                    // 回填 ASR 识别结果到"我说的话"气泡
+                    String asr = (transcribedText != null && !transcribedText.isEmpty())
+                            ? transcribedText : "（未识别到语音）";
+                    uiUpdateMessage(userBubbleIndex, "🗣️ 你说：" + asr);
+                    // 定稿 AI 回复气泡（以 full_text 为准，防止 delta 拼接有偏差）
                     final String reply = fullText != null && !fullText.isEmpty()
                             ? fullText : replyText.toString();
-                    // 在识别文本气泡前插一条"我说的话"（可选）——这里简化：更新回复气泡
                     uiUpdateMessage(replyBubbleIndex, reply);
                     // 回推眼镜（显示 + TTS 朗读）
                     CRPBleConnection conn = BleService.getInstance().getConnection();
@@ -251,22 +275,67 @@ public class DialogueFragment extends Fragment {
             aiDialogueManager.setupAiDialogueListener();
             aiDialogueManager.setupTranslationListener();
             uiAddMessage(new DialogueMessage(DialogueMessage.Type.AI_REPLY,
-                    "🟢 已就绪。按眼镜左键 → AI对话（后端讲解）", System.currentTimeMillis()));
+                    "🟢 已连接眼镜。按眼镜左键 或 屏幕「按住说话」→ AI讲解", System.currentTimeMillis()));
         } else {
+            // 无眼镜也可用：手机麦克风「按住说话」走同一套后端链路
             uiAddMessage(new DialogueMessage(DialogueMessage.Type.AI_REPLY,
-                    "🔴 未连接眼镜", System.currentTimeMillis()));
+                    "🟡 未连接眼镜，可用手机麦克风：按住下方「🎤 按住说话」提问", System.currentTimeMillis()));
         }
 
         v.findViewById(R.id.btn_take_photo).setOnClickListener(vi -> {
             CRPBleConnection c = BleService.getInstance().getConnection();
-            if (c == null) { Toast.makeText(getContext(), "请先连接眼镜", Toast.LENGTH_SHORT).show(); return; }
+            if (c == null) { Toast.makeText(getContext(), "拍照需连接眼镜", Toast.LENGTH_SHORT).show(); return; }
             c.takePhoto(TakePhoto.PhotoMode.ModeAIRecognition);
             uiAddMessage(new DialogueMessage(DialogueMessage.Type.AI_REPLY,
                     "📷 拍照指令已发送", System.currentTimeMillis()));
         });
 
-        v.findViewById(R.id.btn_push_text).setOnClickListener(vi ->
-                Toast.makeText(getContext(), "按眼镜左键说话", Toast.LENGTH_LONG).show());
+        // 「按住说话」：按下用手机麦克风录音，松开 → 走后端（与眼镜链路复用 sendToBackend）
+        View btnPush = v.findViewById(R.id.btn_push_text);
+        btnPush.setOnTouchListener((view, event) -> {
+            switch (event.getAction()) {
+                case MotionEvent.ACTION_DOWN:
+                    startMicRecording();
+                    view.setPressed(true);
+                    return true;
+                case MotionEvent.ACTION_UP:
+                case MotionEvent.ACTION_CANCEL:
+                    view.setPressed(false);
+                    stopMicRecordingAndSend();
+                    view.performClick();
+                    return true;
+            }
+            return false;
+        });
+    }
+
+    /** 按下：申请麦克风权限并开始录音。 */
+    private void startMicRecording() {
+        if (ContextCompat.checkSelfPermission(requireContext(), Manifest.permission.RECORD_AUDIO)
+                != PackageManager.PERMISSION_GRANTED) {
+            micPermLauncher.launch(Manifest.permission.RECORD_AUDIO);
+            return;
+        }
+        if (micRecorder.isRecording()) return;
+        boolean ok = micRecorder.start();
+        if (!ok) {
+            Toast.makeText(getContext(), "麦克风启动失败", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        uiAddMessage(new DialogueMessage(DialogueMessage.Type.AI_REPLY,
+                "🎤 录音中…（松开发送）", System.currentTimeMillis()));
+    }
+
+    /** 松开：停止录音，整段 PCM → 后端（复用眼镜同款链路）。 */
+    private void stopMicRecordingAndSend() {
+        if (!micRecorder.isRecording()) return;
+        byte[] pcm = micRecorder.stop();
+        if (pcm.length < MicRecorder.SAMPLE_RATE) { // 少于 ~0.5s 视为误触
+            uiAddMessage(new DialogueMessage(DialogueMessage.Type.AI_REPLY,
+                    "⚠️ 录音太短，请按住多说一会儿", System.currentTimeMillis()));
+            return;
+        }
+        sendToBackend(pcm);
     }
 
     /** 整段 PCM(16k/mono/16bit) 封成 WAV 文件。 */
@@ -316,5 +385,6 @@ public class DialogueFragment extends Fragment {
     public void onDestroyView() {
         super.onDestroyView();
         if (aiDialogueManager != null) aiDialogueManager.release();
+        micRecorder.release();
     }
 }
