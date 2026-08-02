@@ -44,6 +44,8 @@ public class BleService {
     private static final String TAG = "BleService";
     private static final int MAX_RETRY_COUNT = 3;
     private static final long RETRY_DELAY_MS = 2000;
+    // CONNECTING 看门狗超时：超过这么久还没 CONNECTED 就判失败重试（BLE 首连常卡在此）
+    private static final long CONNECT_TIMEOUT_MS = 12000;
 
     private static volatile BleService instance;
 
@@ -115,21 +117,75 @@ public class BleService {
 
     public void connect(String address) {
         if (address == null) { notifyError("无效的设备地址"); return; }
+
+        // 先清理上一次的残留连接：BLE 首连失败后旧 GATT 句柄会变脏，
+        // 复用它重连基本必失败（表现为卡 CONNECTING 或连上又立刻断）。每次连接从干净状态开始。
+        cleanupConnection();
+        retryCount = 0;
+        isReconnecting = false;
+
         bleDevice = bleClient.getBleDevice(address);
         if (bleDevice == null) { notifyError("获取设备对象失败"); return; }
 
         connectedAddress = address;
         deviceName = bleDevice.getName() != null ? bleDevice.getName() : "未知设备";
-        bleConnection = bleDevice.connect();
-        postLog("连接", "准备连接: " + deviceName + " [" + address + "]");
+        doConnect();
+    }
+
+    /** 真正发起一次连接：拿新 connection、挂监听、connect + 启动 CONNECTING 看门狗。 */
+    private void doConnect() {
+        if (bleDevice == null) { notifyError("设备对象不存在"); return; }
+        bleConnection = bleDevice.connect();  // 每次都拿新的 connection，不复用脏句柄
+        postLog("连接", "准备连接: " + deviceName + " [" + connectedAddress + "]");
         postLog("连接", "bleConnection对象: " + (bleConnection != null ? "获取成功" : "获取失败"));
+        if (bleConnection == null) { notifyError("获取连接对象失败"); return; }
 
         setupConnectionStateListener();
         setupBatteryListener();
 
         boolean success = bleConnection.connect();
         postLog("连接", "connection.connect() 返回: " + success);
-        if (!success) notifyError("连接发起失败");
+        if (!success) { notifyError("连接发起失败"); return; }
+
+        startConnectWatchdog();
+    }
+
+    /** CONNECTING 看门狗：超时仍未 CONNECTED 就判失败并清理，避免无限卡在“连接中”。 */
+    private void startConnectWatchdog() {
+        mainHandler.removeCallbacks(connectTimeoutTask);
+        mainHandler.postDelayed(connectTimeoutTask, CONNECT_TIMEOUT_MS);
+    }
+
+    private final Runnable connectTimeoutTask = this::onConnectTimeout;
+
+    /** CONNECTING 看门狗触发：超时仍未连上则重试或最终判失败。 */
+    private void onConnectTimeout() {
+        if (connectionState == CRPBleConnectionStateListener.STATE_CONNECTED) return;
+        postLog("连接", "连接超时（" + (CONNECT_TIMEOUT_MS / 1000) + "s 未就绪）");
+        if (retryCount < MAX_RETRY_COUNT && connectedAddress != null) {
+            retryCount++;
+            isReconnecting = true;
+            postLog("重连", "超时重连 第 " + retryCount + "/" + MAX_RETRY_COUNT + " 次...");
+            cleanupConnection();
+            mainHandler.postDelayed(this::doConnect, RETRY_DELAY_MS);
+        } else {
+            isReconnecting = false;
+            notifyError("连接超时，请确认眼镜已开机并靠近手机后重试");
+            cleanupConnection();
+            connectedAddress = null;
+        }
+    }
+
+    /** 关闭并释放当前连接/设备句柄（幂等）。 */
+    private void cleanupConnection() {
+        mainHandler.removeCallbacks(connectTimeoutTask);
+        if (bleConnection != null) {
+            try { bleConnection.close(); } catch (Exception ignored) {}
+            bleConnection = null;
+        }
+        if (bleDevice != null) {
+            try { if (bleDevice.isConnected()) bleDevice.disconnect(); } catch (Exception ignored) {}
+        }
     }
 
     public void disconnect() {
@@ -137,10 +193,9 @@ public class BleService {
         isReconnecting = false;
         batteryLevel = -1;
         firmwareVersion = "";
-        if (bleDevice != null && bleDevice.isConnected()) {
-            bleDevice.disconnect();
-            postLog("连接", "主动断开连接");
-        }
+        mainHandler.removeCallbacks(connectTimeoutTask);
+        cleanupConnection();
+        postLog("连接", "主动断开连接");
         connectedAddress = null;
     }
 
@@ -269,6 +324,7 @@ public class BleService {
     }
 
     private void onConnected() {
+        mainHandler.removeCallbacks(connectTimeoutTask);  // 连上了，取消看门狗
         postLog("连接", "设备已连接成功");
         if (bleConnection != null) {
             bleConnection.syncTime();
@@ -280,23 +336,22 @@ public class BleService {
 
     private void onDisconnected() {
         postLog("连接", "设备已断开");
+        mainHandler.removeCallbacks(connectTimeoutTask);
         if (retryCount < MAX_RETRY_COUNT && connectedAddress != null) {
             isReconnecting = true;
             retryCount++;
             postLog("重连", "第 " + retryCount + "/" + MAX_RETRY_COUNT + " 次尝试...");
-            mainHandler.postDelayed(() -> {
-                if (bleConnection != null) {
-                    bleConnection.connect();
-                }
-            }, RETRY_DELAY_MS);
+            // 关键修复：重连前清掉脏连接，重新拿新的 connection（旧的复用必失败）
+            cleanupConnection();
+            mainHandler.postDelayed(this::doConnect, RETRY_DELAY_MS);
         } else {
             isReconnecting = false;
             if (retryCount >= MAX_RETRY_COUNT) {
                 notifyError("重连失败，已达最大重试次数");
             }
+            cleanupConnection();
             connectedAddress = null;
             bleDevice = null;
-            bleConnection = null;
         }
     }
 
