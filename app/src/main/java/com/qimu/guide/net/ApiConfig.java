@@ -18,5 +18,6 @@ public final class ApiConfig {
     public static final String BASE_URL = "http://127.0.0.1:8787";
 
     public static final String UPLOAD_AUDIO = BASE_URL + "/v1/upload/audio";
+    public static final String UPLOAD_IMAGE = BASE_URL + "/v1/upload/image";
     public static final String QUERY = BASE_URL + "/v1/query";
 }
