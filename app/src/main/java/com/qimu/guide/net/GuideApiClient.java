@@ -42,6 +42,9 @@ public class GuideApiClient {
 
     /** SSE 逐帧回调。所有回调在后台线程触发，UI 操作需自行切主线程。 */
     public interface QueryCallback {
+        /** 流式 ASR 中间结果（累积文本，可覆盖刷新"你说：…"气泡）。isFinal=VAD 判停。
+         *  默认空实现：整段 SSE 路径不触发此回调，老回调无需改。 */
+        default void onAsrPartial(String text, boolean isFinal) {}
         /** LLM 逐字增量（拼接即完整回复）。 */
         void onTextDelta(String delta);
         /** 一句 TTS 音频就绪，url 为可 GET 的签名 URL。 */
@@ -196,6 +199,84 @@ public class GuideApiClient {
     }
 
     /**
+     * 流式语音会话句柄：向上行 WS 推 PCM / 结束本轮 / 中止。
+     */
+    public interface StreamSession {
+        /** 推一包 PCM（16k/mono/16bit raw）。 */
+        void sendPcm(byte[] pcm, int length);
+        /** 用户手动结束本轮（可选；服务端 VAD 判停也会自动结束）。 */
+        void finish();
+        /** 中止并关闭连接（如打断/离开页面）。 */
+        void cancel();
+    }
+
+    /**
+     * 发起流式语音 query（上行 WS）。非阻塞：立即返回 StreamSession，
+     * 边采边 sendPcm()，说完 finish()。下行帧通过 cb 逐帧回调（后台线程）。
+     *
+     * 契约见后端 apps/api/routers/stream_query.py：
+     *   建连 QUERY_STREAM_WS?venue_id=&session_id=&client_query_id=&language=
+     *   上行 二进制帧=PCM；文本帧 {"type":"end"}=结束
+     *   下行 文本帧 {"event":..,"data":{..}}，event 语义同 SSE
+     */
+    public StreamSession queryVoiceStream(QueryCallback cb) {
+        SessionContext ctx = SessionContext.get();
+        String url = ApiConfig.QUERY_STREAM_WS
+                + "?venue_id=" + ctx.venueId()
+                + "&session_id=" + ctx.sessionId()
+                + "&client_query_id=" + ctx.nextClientQueryId()
+                + "&language=zh";
+        Request req = new Request.Builder()
+                .url(url)
+                .header("X-Client-Type", "android")
+                .build();
+
+        final okhttp3.WebSocket[] wsHolder = new okhttp3.WebSocket[1];
+        okhttp3.WebSocket ws = client.newWebSocket(req, new okhttp3.WebSocketListener() {
+            @Override
+            public void onMessage(okhttp3.WebSocket webSocket, String text) {
+                // 下行 {"event":..,"data":{..}} → 复用 dispatchFrame
+                try {
+                    JSONObject msg = new JSONObject(text);
+                    String event = msg.optString("event", "");
+                    JSONObject data = msg.optJSONObject("data");
+                    dispatchFrame(event, data != null ? data.toString() : "{}", cb);
+                } catch (Exception e) {
+                    Log.e(TAG, "WS 帧解析失败: " + text, e);
+                }
+            }
+
+            @Override
+            public void onFailure(okhttp3.WebSocket webSocket, Throwable t, Response response) {
+                Log.e(TAG, "WS 失败: " + t.getMessage(), t);
+                cb.onError("stream WS 失败: " + t.getMessage());
+            }
+        });
+        wsHolder[0] = ws;
+
+        return new StreamSession() {
+            @Override
+            public void sendPcm(byte[] pcm, int length) {
+                // OkHttp send(ByteString) 复制字节，需精确长度
+                okio.ByteString bs = okio.ByteString.of(pcm, 0, length);
+                wsHolder[0].send(bs);
+            }
+
+            @Override
+            public void finish() {
+                try {
+                    wsHolder[0].send(new JSONObject().put("type", "end").toString());
+                } catch (Exception ignored) {}
+            }
+
+            @Override
+            public void cancel() {
+                wsHolder[0].cancel();
+            }
+        };
+    }
+
+    /**
      * 解析 SSE 流。帧格式：
      *   event: <name>\n
      *   data: <json>\n
@@ -235,6 +316,9 @@ public class GuideApiClient {
         try {
             JSONObject d = new JSONObject(dataJson);
             switch (event) {
+                case "asr_partial":
+                    cb.onAsrPartial(d.optString("text", ""), d.optBoolean("is_final", false));
+                    break;
                 case "text_delta":
                     cb.onTextDelta(d.optString("delta", ""));
                     break;

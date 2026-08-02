@@ -16,8 +16,12 @@ public final class ApiConfig {
 
     /** 后端基址（adb reverse 场景走本机回环）。 */
     public static final String BASE_URL = "http://127.0.0.1:8787";
+    /** WebSocket 基址（与 BASE_URL 同主机，http→ws）。 */
+    public static final String WS_BASE_URL = "ws://127.0.0.1:8787";
 
     public static final String UPLOAD_AUDIO = BASE_URL + "/v1/upload/audio";
     public static final String UPLOAD_IMAGE = BASE_URL + "/v1/upload/image";
     public static final String QUERY = BASE_URL + "/v1/query";
+    /** 流式语音上行 WS（边采边推 PCM，边收 asr_partial/text_delta/audio_chunk/done）。 */
+    public static final String QUERY_STREAM_WS = WS_BASE_URL + "/v1/query/stream";
 }

@@ -100,6 +100,23 @@ public class DialogueFragment extends Fragment {
                         sendPhotoToBackend(img);
                     });
 
+    /**
+     * 流式上行开关：true = 手机「按住说话」走上行 WS 流式 ASR（边说边出字 + VAD 判停）；
+     * false = 走原整段路径（录完 → WAV → upload → query）。
+     * 眼镜端一期先不走流式（onDialogueStop 仍整段），待明天真机验证流式采集稳定后再切。
+     */
+    private static final boolean STREAM_UPLOAD = true;
+
+    /**
+     * 眼镜端流式开关：true = 眼镜 PCM 回调（onDialogueAudioChange）边收边推上行 WS；
+     * false = 眼镜走原整段路径（onDialogueStop 整段发）。
+     * ⚠️ 眼镜不在身边，代码先写好默认关；明天真机验证眼镜 PCM 回调节奏与 WS 推流稳定后再置 true。
+     */
+    private static final boolean STREAM_UPLOAD_GLASSES = false;
+
+    // 流式会话句柄（按住说话/眼镜说话期间持有；松手/判停后由 done/error 自然失效）
+    private volatile GuideApiClient.StreamSession streamSession;
+
     // ── 音频状态 ──
     private int listeningMsgIndex = -1;
     private ByteArrayOutputStream audioBuffer;
@@ -117,7 +134,16 @@ public class DialogueFragment extends Fragment {
             Log.d(TAG, "AI对话开始");
             audioBuffer = new ByteArrayOutputStream();
             totalAudioBytes = 0;
-            // "聆听中"状态气泡
+            if (STREAM_UPLOAD_GLASSES) {
+                // 眼镜流式：开对话即建上行 WS 会话 + 铺气泡，PCM 随 onDialogueAudioChange 推入
+                ttsPlayer.reset();
+                boolean glassesConnected = BleService.getInstance().getConnection() != null;
+                playBackendTtsThisTurn = (TTS_OUTPUT == TtsOutput.BACKEND_ALWAYS) || !glassesConnected;
+                setupTurnBubbles("🗣️ 你说：（聆听中…）", DialogueMessage.Type.VOICE);
+                streamSession = apiClient.queryVoiceStream(newRenderCallback(/*fillUserBubbleWithAsr=*/true));
+                return;
+            }
+            // "聆听中"状态气泡（整段路径）
             DialogueMessage statusMsg = new DialogueMessage(DialogueMessage.Type.AI_REPLY,
                     "🎤 聆听中...", System.currentTimeMillis());
             if (!isAdded()) return;
@@ -132,6 +158,13 @@ public class DialogueFragment extends Fragment {
 
         @Override
         public void onDialogueAudioChange(byte[] audioData) {
+            if (STREAM_UPLOAD_GLASSES) {
+                // 眼镜流式：每块 PCM 直推上行 WS（眼镜 SDK 已是 16k/mono/16bit）
+                GuideApiClient.StreamSession s = streamSession;
+                if (s != null) s.sendPcm(audioData, audioData.length);
+                totalAudioBytes += audioData.length;
+                return;
+            }
             if (audioBuffer != null) {
                 try { audioBuffer.write(audioData); } catch (Exception ignored) {}
             }
@@ -154,6 +187,13 @@ public class DialogueFragment extends Fragment {
         @Override
         public void onDialogueStop(boolean isTimeout) {
             Log.d(TAG, "AI对话结束, isTimeout=" + isTimeout);
+            if (STREAM_UPLOAD_GLASSES) {
+                // 眼镜流式：告诉服务端上行结束（VAD 可能已提前判停）；下行帧继续到 done
+                GuideApiClient.StreamSession s = streamSession;
+                if (s != null) s.finish();
+                totalAudioBytes = 0;
+                return;
+            }
             int sec = totalAudioBytes / (SAMPLE_RATE * 2);
             uiUpdateMessage(listeningMsgIndex,
                     "🎤 录音结束 (" + sec + "秒, " + (totalAudioBytes / 1024) + " KB)");
@@ -269,6 +309,14 @@ public class DialogueFragment extends Fragment {
      */
     private GuideApiClient.QueryCallback newRenderCallback(boolean fillUserBubbleWithAsr) {
         return new GuideApiClient.QueryCallback() {
+            @Override
+            public void onAsrPartial(String text, boolean isFinal) {
+                // 流式 ASR 中间结果：实时刷新"你说：…"气泡（累积文本，可覆盖）
+                if (fillUserBubbleWithAsr && text != null && !text.isEmpty()) {
+                    uiUpdateMessage(userBubbleIndex, "🗣️ 你说：" + text);
+                }
+            }
+
             @Override
             public void onTextDelta(String delta) {
                 replyText.append(delta);
@@ -401,7 +449,7 @@ public class DialogueFragment extends Fragment {
         });
     }
 
-    /** 按下：申请麦克风权限并开始录音。 */
+    /** 按下：申请麦克风权限并开始录音（STREAM_UPLOAD 开则走流式上行 WS）。 */
     private void startMicRecording() {
         if (ContextCompat.checkSelfPermission(requireContext(), Manifest.permission.RECORD_AUDIO)
                 != PackageManager.PERMISSION_GRANTED) {
@@ -409,6 +457,12 @@ public class DialogueFragment extends Fragment {
             return;
         }
         if (micRecorder.isRecording()) return;
+
+        if (STREAM_UPLOAD) {
+            startMicStreaming();
+            return;
+        }
+
         boolean ok = micRecorder.start();
         if (!ok) {
             Toast.makeText(getContext(), "麦克风启动失败", Toast.LENGTH_SHORT).show();
@@ -418,9 +472,15 @@ public class DialogueFragment extends Fragment {
                 "🎤 录音中…（松开发送）", System.currentTimeMillis()));
     }
 
-    /** 松开：停止录音，整段 PCM → 后端（复用眼镜同款链路）。 */
+    /** 松开：停止录音 → 后端。STREAM_UPLOAD 开则走流式结束（finish 交给 VAD/服务端收尾）。 */
     private void stopMicRecordingAndSend() {
         if (!micRecorder.isRecording()) return;
+
+        if (STREAM_UPLOAD) {
+            stopMicStreaming();
+            return;
+        }
+
         byte[] pcm = micRecorder.stop();
         if (pcm.length < MicRecorder.SAMPLE_RATE) { // 少于 ~0.5s 视为误触
             uiAddMessage(new DialogueMessage(DialogueMessage.Type.AI_REPLY,
@@ -428,6 +488,45 @@ public class DialogueFragment extends Fragment {
             return;
         }
         sendToBackend(pcm);
+    }
+
+    /**
+     * 流式采集开始：先建上行 WS + 铺好气泡，再开麦克风并把每块 PCM 通过监听器推到 WS。
+     * asr_partial 实时刷"你说：…"，text_delta/audio_chunk/done 复用 newRenderCallback。
+     */
+    private void startMicStreaming() {
+        // 新一轮：重置 TTS 串播器 + 决定声源
+        ttsPlayer.reset();
+        boolean glassesConnected = BleService.getInstance().getConnection() != null;
+        playBackendTtsThisTurn = (TTS_OUTPUT == TtsOutput.BACKEND_ALWAYS) || !glassesConnected;
+
+        // 铺气泡（用户气泡随 asr_partial 刷新；AI 回复气泡随 text_delta 追加）
+        setupTurnBubbles("🗣️ 你说：（聆听中…）", DialogueMessage.Type.VOICE);
+
+        // 建上行 WS 会话
+        streamSession = apiClient.queryVoiceStream(newRenderCallback(/*fillUserBubbleWithAsr=*/true));
+
+        // 麦克风每块 PCM → 推 WS
+        micRecorder.setPcmListener((pcm, length) -> {
+            GuideApiClient.StreamSession s = streamSession;
+            if (s != null) s.sendPcm(pcm, length);
+        });
+        boolean ok = micRecorder.start();
+        if (!ok) {
+            Toast.makeText(getContext(), "麦克风启动失败", Toast.LENGTH_SHORT).show();
+            if (streamSession != null) { streamSession.cancel(); streamSession = null; }
+        }
+    }
+
+    /** 流式采集结束：停麦 + 发 finish（服务端 VAD 可能已提前判停，此处是兜底）。 */
+    private void stopMicStreaming() {
+        micRecorder.setPcmListener(null);
+        micRecorder.stop();  // 停采集（整段 buffer 丢弃，流式不用）
+        GuideApiClient.StreamSession s = streamSession;
+        if (s != null) {
+            s.finish();  // 告诉服务端上行结束；下行帧继续回调直到 done
+            // 不在这里置空 streamSession：done/error 回调后自然失效，cancel 交给 onDestroyView
+        }
     }
 
     /** 把相册选中的图片 Uri 拷到临时 .jpg 文件（供 uploadImage）。失败返 null。 */
@@ -534,6 +633,7 @@ public class DialogueFragment extends Fragment {
     public void onDestroyView() {
         super.onDestroyView();
         if (aiDialogueManager != null) aiDialogueManager.release();
+        if (streamSession != null) { streamSession.cancel(); streamSession = null; }
         micRecorder.release();
         ttsPlayer.release();
     }

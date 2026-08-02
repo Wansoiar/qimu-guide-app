@@ -26,8 +26,20 @@ public class MicRecorder {
     private Thread readThread;
     private final ByteArrayOutputStream buffer = new ByteArrayOutputStream();
 
+    /** 流式模式：每读到一块 PCM 就回调（用于上行 WS 边采边推）。为 null 则走整段模式。 */
+    public interface PcmListener {
+        void onPcm(byte[] pcm, int length);
+    }
+
+    private volatile PcmListener pcmListener;
+
     public boolean isRecording() {
         return recording;
+    }
+
+    /** 设置流式 PCM 监听器（在 start() 前调用）。设了则 read 循环每块回调 + 仍攒 buffer 兜底。 */
+    public void setPcmListener(PcmListener listener) {
+        this.pcmListener = listener;
     }
 
     /** 开始录音。需已获得 RECORD_AUDIO 权限（调用方负责）。 */
@@ -69,6 +81,17 @@ public class MicRecorder {
             while (recording) {
                 int n = audioRecord.read(chunk, 0, chunk.length);
                 if (n > 0) {
+                    // 流式模式：每块立即回调推出去（上行 WS）
+                    PcmListener l = pcmListener;
+                    if (l != null) {
+                        byte[] copy = new byte[n];
+                        System.arraycopy(chunk, 0, copy, 0, n);
+                        try {
+                            l.onPcm(copy, n);
+                        } catch (Exception e) {
+                            Log.w(TAG, "pcmListener 回调异常: " + e.getMessage());
+                        }
+                    }
                     synchronized (buffer) {
                         buffer.write(chunk, 0, n);
                     }
