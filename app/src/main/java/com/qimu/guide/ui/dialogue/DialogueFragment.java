@@ -82,6 +82,24 @@ public class DialogueFragment extends Fragment {
                         if (!granted) Toast.makeText(getContext(), "需要麦克风权限", Toast.LENGTH_SHORT).show();
                     });
 
+    // 调试入口：从相册/文件选一张图，走 photo query（无眼镜时验证图片识物链路）
+    private final androidx.activity.result.ActivityResultLauncher<String> pickImageLauncher =
+            registerForActivityResult(new androidx.activity.result.contract.ActivityResultContracts.GetContent(),
+                    uri -> {
+                        if (uri == null) return;
+                        File img = copyUriToTempFile(uri);
+                        if (img == null) {
+                            Toast.makeText(getContext(), "读取图片失败", Toast.LENGTH_SHORT).show();
+                            return;
+                        }
+                        // 先显示缩略图气泡（与眼镜拍照回调一致），再走上传+query
+                        DialogueMessage msg = new DialogueMessage(DialogueMessage.Type.PHOTO,
+                                "🖼️ 选图测试", System.currentTimeMillis());
+                        msg.setImageFile(img);
+                        uiAddMessage(msg);
+                        sendPhotoToBackend(img);
+                    });
+
     // ── 音频状态 ──
     private int listeningMsgIndex = -1;
     private ByteArrayOutputStream audioBuffer;
@@ -129,7 +147,8 @@ public class DialogueFragment extends Fragment {
                     "📷 眼镜拍照", System.currentTimeMillis());
             msg.setImageFile(imageFile);
             uiAddMessage(msg);
-            // 图片识物链路（image_id → query 带 image_id）留到下一轮，本阶段先打通语音。
+            // 图片识物链路：拍到的图 → 上传拿 image_id → query(photo) → 讲解词 + TTS。
+            sendPhotoToBackend(imageFile);
         }
 
         @Override
@@ -192,65 +211,106 @@ public class DialogueFragment extends Fragment {
             boolean glassesConnected = BleService.getInstance().getConnection() != null;
             playBackendTtsThisTurn = (TTS_OUTPUT == TtsOutput.BACKEND_ALWAYS) || !glassesConnected;
 
-            // 先加"我说的话"气泡（onDone 时填 ASR 结果），再加 AI 回复气泡
-            replyText.setLength(0);
-            requireActivitySafe(() -> {
-                DialogueMessage userMsg = new DialogueMessage(DialogueMessage.Type.VOICE,
-                        "🗣️ 你说：（识别中…）", System.currentTimeMillis());
-                messages.add(userMsg);
-                userBubbleIndex = messages.size() - 1;
-                messageAdapter.notifyItemInserted(userBubbleIndex);
+            // 语音轮：加"我说的话"气泡（onDone 填 ASR）+ AI 回复气泡，再走后端 SSE
+            setupTurnBubbles("🗣️ 你说：（识别中…）", DialogueMessage.Type.VOICE);
+            apiClient.queryVoice(audioId, newRenderCallback(/*fillUserBubbleWithAsr=*/true));
+        }).start();
+    }
 
-                DialogueMessage bubble = new DialogueMessage(DialogueMessage.Type.AI_REPLY,
-                        "…", System.currentTimeMillis());
-                messages.add(bubble);
-                replyBubbleIndex = messages.size() - 1;
-                messageAdapter.notifyItemInserted(replyBubbleIndex);
-                recyclerMessages.smoothScrollToPosition(replyBubbleIndex);
-            });
+    /**
+     * 眼镜拍照 → 上传图片拿 image_id → query(photo) → 讲解词 + TTS。
+     * 与 sendToBackend(pcm) 并列，共用 setupTurnBubbles / newRenderCallback 渲染逻辑。
+     * 全程后台线程。
+     */
+    private void sendPhotoToBackend(File imageFile) {
+        new Thread(() -> {
+            String imageId = apiClient.uploadImage(imageFile);
+            if (imageId == null) {
+                uiAddMessage(new DialogueMessage(DialogueMessage.Type.AI_REPLY,
+                        "⚠️ 图片上传失败，检查后端与 adb reverse", System.currentTimeMillis()));
+                return;
+            }
 
-            apiClient.queryVoice(audioId, new GuideApiClient.QueryCallback() {
-                @Override
-                public void onTextDelta(String delta) {
-                    replyText.append(delta);
-                    uiUpdateMessage(replyBubbleIndex, replyText.toString());
+            ttsPlayer.reset();
+            boolean glassesConnected = BleService.getInstance().getConnection() != null;
+            playBackendTtsThisTurn = (TTS_OUTPUT == TtsOutput.BACKEND_ALWAYS) || !glassesConnected;
+
+            // 拍照轮：加"我拍了张照片"气泡（无 ASR，不回填）+ AI 回复气泡
+            setupTurnBubbles("📷 我拍了张照片，请讲解", DialogueMessage.Type.PHOTO);
+            apiClient.queryPhoto(imageId, newRenderCallback(/*fillUserBubbleWithAsr=*/false));
+        }).start();
+    }
+
+    /**
+     * 新一轮问答：重置 replyText，插入"用户气泡 + AI 回复气泡"，滚到底。
+     * userBubbleText 为本轮用户侧提示文案；AI 回复气泡先占位"…"。
+     */
+    private void setupTurnBubbles(String userBubbleText, DialogueMessage.Type userType) {
+        replyText.setLength(0);
+        requireActivitySafe(() -> {
+            DialogueMessage userMsg = new DialogueMessage(userType,
+                    userBubbleText, System.currentTimeMillis());
+            messages.add(userMsg);
+            userBubbleIndex = messages.size() - 1;
+            messageAdapter.notifyItemInserted(userBubbleIndex);
+
+            DialogueMessage bubble = new DialogueMessage(DialogueMessage.Type.AI_REPLY,
+                    "…", System.currentTimeMillis());
+            messages.add(bubble);
+            replyBubbleIndex = messages.size() - 1;
+            messageAdapter.notifyItemInserted(replyBubbleIndex);
+            recyclerMessages.smoothScrollToPosition(replyBubbleIndex);
+        });
+    }
+
+    /**
+     * 构造 voice / photo 共用的 SSE 渲染回调：text_delta 上屏、audio_chunk 串播、done 定稿+回推眼镜。
+     * fillUserBubbleWithAsr=true 时（语音轮）用 done 的 ASR 结果回填用户气泡；photo 轮为 false（无 ASR）。
+     */
+    private GuideApiClient.QueryCallback newRenderCallback(boolean fillUserBubbleWithAsr) {
+        return new GuideApiClient.QueryCallback() {
+            @Override
+            public void onTextDelta(String delta) {
+                replyText.append(delta);
+                uiUpdateMessage(replyBubbleIndex, replyText.toString());
+            }
+
+            @Override
+            public void onAudioChunk(int sequence, String url, int durationMs) {
+                Log.d(TAG, "audio_chunk #" + sequence + " " + url);
+                // 仅在本轮用后端豆包 TTS 时串播（眼镜连着且策略=PHONE_ONLY 则跳过，避免与眼镜自带TTS重叠）
+                if (playBackendTtsThisTurn) {
+                    ttsPlayer.enqueue(url);
                 }
+            }
 
-                @Override
-                public void onAudioChunk(int sequence, String url, int durationMs) {
-                    Log.d(TAG, "audio_chunk #" + sequence + " " + url);
-                    // 仅在本轮用后端豆包 TTS 时串播（眼镜连着且策略=PHONE_ONLY 则跳过，避免与眼镜自带TTS重叠）
-                    if (playBackendTtsThisTurn) {
-                        ttsPlayer.enqueue(url);
-                    }
-                }
-
-                @Override
-                public void onDone(String transcribedText, String fullText, String aigcLabel) {
-                    Log.d(TAG, "done transcribed=" + transcribedText + " full=" + fullText);
-                    // 回填 ASR 识别结果到"我说的话"气泡
+            @Override
+            public void onDone(String transcribedText, String fullText, String aigcLabel) {
+                Log.d(TAG, "done transcribed=" + transcribedText + " full=" + fullText);
+                if (fillUserBubbleWithAsr) {
+                    // 语音轮：回填 ASR 识别结果到"我说的话"气泡
                     String asr = (transcribedText != null && !transcribedText.isEmpty())
                             ? transcribedText : "（未识别到语音）";
                     uiUpdateMessage(userBubbleIndex, "🗣️ 你说：" + asr);
-                    // 定稿 AI 回复气泡（以 full_text 为准，防止 delta 拼接有偏差）
-                    final String reply = fullText != null && !fullText.isEmpty()
-                            ? fullText : replyText.toString();
-                    uiUpdateMessage(replyBubbleIndex, reply);
-                    // 回推眼镜：眼镜端会显示文字 + 自带 TTS 朗读。
-                    // 注意声源耦合：PHONE_ONLY 下眼镜连着时靠这里的自带TTS出声（不播audio_chunk）；
-                    // 若将来切到 BACKEND_ALWAYS，需让眼镜只显示不朗读，否则与豆包TTS重叠。
-                    CRPBleConnection conn = BleService.getInstance().getConnection();
-                    if (conn != null && aiDialogueManager != null && !reply.isEmpty()) {
-                        aiDialogueManager.sendTextToGlasses(reply);
-                    }
                 }
+                // 定稿 AI 回复气泡（以 full_text 为准，防止 delta 拼接有偏差）
+                final String reply = fullText != null && !fullText.isEmpty()
+                        ? fullText : replyText.toString();
+                uiUpdateMessage(replyBubbleIndex, reply);
+                // 回推眼镜：眼镜端会显示文字 + 自带 TTS 朗读。
+                // 注意声源耦合：PHONE_ONLY 下眼镜连着时靠这里的自带TTS出声（不播audio_chunk）；
+                // 若将来切到 BACKEND_ALWAYS，需让眼镜只显示不朗读，否则与豆包TTS重叠。
+                CRPBleConnection conn = BleService.getInstance().getConnection();
+                if (conn != null && aiDialogueManager != null && !reply.isEmpty()) {
+                    aiDialogueManager.sendTextToGlasses(reply);
+                }
+            }
 
-                @Override
-                public void onError(String message) {
-                    uiUpdateMessage(replyBubbleIndex, "⚠️ " + message);
-                }
-            });
-        }).start();
+            @Override
+            public void onError(String message) {
+                uiUpdateMessage(replyBubbleIndex, "⚠️ " + message);
+            }
+        };
     }
 
     // ── UI 辅助（回调多来自后台线程） ──
@@ -295,6 +355,8 @@ public class DialogueFragment extends Fragment {
         recyclerMessages.setLayoutManager(new LinearLayoutManager(getContext()));
         recyclerMessages.setAdapter(messageAdapter);
 
+        setupVenueSpinner(v);
+
         CRPBleConnection conn = BleService.getInstance().getConnection();
         if (conn != null) {
             aiDialogueManager = new AIDialogueManager(conn);
@@ -316,6 +378,9 @@ public class DialogueFragment extends Fragment {
             uiAddMessage(new DialogueMessage(DialogueMessage.Type.AI_REPLY,
                     "📷 拍照指令已发送", System.currentTimeMillis()));
         });
+
+        // 调试：从相册选图走 photo query（眼镜不在时验证图片识物）
+        v.findViewById(R.id.btn_pick_image).setOnClickListener(vi -> pickImageLauncher.launch("image/*"));
 
         // 「按住说话」：按下用手机麦克风录音，松开 → 走后端（与眼镜链路复用 sendToBackend）
         View btnPush = v.findViewById(R.id.btn_push_text);
@@ -365,6 +430,27 @@ public class DialogueFragment extends Fragment {
         sendToBackend(pcm);
     }
 
+    /** 把相册选中的图片 Uri 拷到临时 .jpg 文件（供 uploadImage）。失败返 null。 */
+    private File copyUriToTempFile(android.net.Uri uri) {
+        try {
+            File dir = new File(requireContext().getExternalFilesDir("images"), "query");
+            if (!dir.exists()) dir.mkdirs();
+            String ts = new SimpleDateFormat("yyyyMMdd_HHmmss", Locale.getDefault()).format(new Date());
+            File out = new File(dir, "pick_" + ts + ".jpg");
+            try (java.io.InputStream in = requireContext().getContentResolver().openInputStream(uri);
+                 FileOutputStream fos = new FileOutputStream(out)) {
+                if (in == null) return null;
+                byte[] buf = new byte[8192];
+                int n;
+                while ((n = in.read(buf)) > 0) fos.write(buf, 0, n);
+            }
+            return out;
+        } catch (Exception e) {
+            Log.e(TAG, "copyUriToTempFile 异常: " + e.getMessage(), e);
+            return null;
+        }
+    }
+
     /** 整段 PCM(16k/mono/16bit) 封成 WAV 文件。 */
     private File writePcmToWav(byte[] pcm) {
         try {
@@ -406,6 +492,42 @@ public class DialogueFragment extends Fragment {
         header[40] = (byte)(dataSize & 0xff); header[41] = (byte)((dataSize >> 8) & 0xff);
         header[42] = (byte)((dataSize >> 16) & 0xff); header[43] = (byte)((dataSize >> 24) & 0xff);
         fos.write(header);
+    }
+
+    /**
+     * 调试用场馆切换：义净寺（语音/文字 demo，有全量文字）↔ 大雁塔（图片识物测试图所在馆）。
+     * 选中即 SessionContext.setVenueId，后续 query 带上新 venue_id。
+     */
+    private void setupVenueSpinner(View v) {
+        // 名称 与 venue_id 一一对应（与后端库对齐）
+        final String[] names = {"义净寺（语音/文字）", "大雁塔（图片识物）"};
+        final String[] ids = {
+                "61f1f93d-fe42-49d0-b392-bcbf9cd1c13d",  // 义净寺
+                "58cf0bef-90b9-4117-bd83-f59f4b05d9eb",  // 大雁塔
+        };
+        android.widget.Spinner spinner = v.findViewById(R.id.spinner_venue);
+        android.widget.ArrayAdapter<String> adapter = new android.widget.ArrayAdapter<>(
+                requireContext(), android.R.layout.simple_spinner_item, names);
+        adapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
+        spinner.setAdapter(adapter);
+
+        // 初始选中项对齐 SessionContext 当前 venue（默认义净寺）
+        String current = com.qimu.guide.net.SessionContext.get().venueId();
+        for (int i = 0; i < ids.length; i++) {
+            if (ids[i].equals(current)) { spinner.setSelection(i); break; }
+        }
+
+        spinner.setOnItemSelectedListener(new android.widget.AdapterView.OnItemSelectedListener() {
+            @Override
+            public void onItemSelected(android.widget.AdapterView<?> parent, View view, int pos, long id) {
+                com.qimu.guide.net.SessionContext.get().setVenueId(ids[pos]);
+                uiAddMessage(new DialogueMessage(DialogueMessage.Type.AI_REPLY,
+                        "🏛️ 已切换到「" + names[pos] + "」", System.currentTimeMillis()));
+            }
+
+            @Override
+            public void onNothingSelected(android.widget.AdapterView<?> parent) {}
+        });
     }
 
     @Override

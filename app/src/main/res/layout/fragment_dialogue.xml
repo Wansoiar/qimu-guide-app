@@ -22,6 +22,28 @@
         android:textColor="@color/text_hint"
         android:layout_marginBottom="8dp" />
 
+    <!-- 调试：场馆切换（义净寺=语音/文字 demo；大雁塔=图片识物测试图所在馆） -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        android:layout_marginBottom="8dp">
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="🏛️ 场馆："
+            android:textSize="12sp"
+            android:textColor="@color/text_hint" />
+
+        <Spinner
+            android:id="@+id/spinner_venue"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1" />
+    </LinearLayout>
+
     <!-- 消息列表 -->
     <androidx.recyclerview.widget.RecyclerView
         android:id="@+id/recycler_messages"
@@ -63,5 +85,17 @@
             android:textAllCaps="false"
             android:textSize="12sp" />
     </LinearLayout>
+
+    <!-- 调试入口：无眼镜时从相册选图走 photo query（验证图片识物链路） -->
+    <androidx.appcompat.widget.AppCompatButton
+        android:id="@+id/btn_pick_image"
+        android:layout_width="match_parent"
+        android:layout_height="40dp"
+        android:layout_marginTop="4dp"
+        android:background="@color/background_card"
+        android:text="🖼️ 选图测试（无眼镜调试）"
+        android:textColor="@color/text_primary"
+        android:textAllCaps="false"
+        android:textSize="12sp" />
 
 </LinearLayout>

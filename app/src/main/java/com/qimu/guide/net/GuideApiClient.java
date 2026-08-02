@@ -87,6 +87,43 @@ public class GuideApiClient {
     }
 
     /**
+     * 上传整段图片（JPEG），返回 image_id（后端 data.file_id）。阻塞调用，请在后台线程执行。
+     *
+     * 对齐 uploadAudio：multipart 字段 file，仅端点/取值字段/MIME 不同。
+     * 后端 /v1/upload/image 返回 {file_id, url, expires_at}，不入资料库，供以图搜图。
+     *
+     * @return image_id，失败返回 null
+     */
+    public String uploadImage(File imageFile) {
+        try {
+            RequestBody fileBody = RequestBody.create(imageFile, MediaType.parse("image/jpeg"));
+            MultipartBody body = new MultipartBody.Builder()
+                    .setType(MultipartBody.FORM)
+                    .addFormDataPart("file", imageFile.getName(), fileBody)
+                    .build();
+            Request req = new Request.Builder()
+                    .url(ApiConfig.UPLOAD_IMAGE)
+                    .header("X-Client-Type", "android")
+                    .post(body)
+                    .build();
+            try (Response resp = client.newCall(req).execute()) {
+                String s = resp.body() != null ? resp.body().string() : "";
+                JSONObject json = new JSONObject(s);
+                if (json.optInt("code", -1) != 0) {
+                    Log.e(TAG, "uploadImage 后端错误: " + json.optString("message"));
+                    return null;
+                }
+                String imageId = json.getJSONObject("data").optString("file_id", "");
+                Log.d(TAG, "uploadImage ok: " + imageId);
+                return imageId.isEmpty() ? null : imageId;
+            }
+        } catch (Exception e) {
+            Log.e(TAG, "uploadImage 异常: " + e.getMessage(), e);
+            return null;
+        }
+    }
+
+    /**
      * 发起语音 query 并逐帧回调 SSE。阻塞调用，请在后台线程执行。
      */
     public void queryVoice(String audioId, QueryCallback cb) {
@@ -116,6 +153,44 @@ public class GuideApiClient {
             }
         } catch (Exception e) {
             Log.e(TAG, "queryVoice 异常: " + e.getMessage(), e);
+            cb.onError("query 异常: " + e.getMessage());
+        }
+    }
+
+    /**
+     * 发起拍照识物 query 并逐帧回调 SSE。阻塞调用，请在后台线程执行。
+     *
+     * 对齐 queryVoice：query_type=photo、body 带 image_id（无 audio_id）。
+     * 复用同一套 SSE 解析与回调；后端 done 帧 transcribed_text 为 null（拍照无 ASR），
+     * onDone 的 transcribedText 会是空串，调用方据此不回填"你说"气泡即可。
+     */
+    public void queryPhoto(String imageId, QueryCallback cb) {
+        SessionContext ctx = SessionContext.get();
+        try {
+            JSONObject reqBody = new JSONObject();
+            reqBody.put("venue_id", ctx.venueId());
+            reqBody.put("session_id", ctx.sessionId());
+            reqBody.put("client_query_id", ctx.nextClientQueryId());
+            reqBody.put("query_type", "photo");
+            reqBody.put("image_id", imageId);
+            reqBody.put("language", "zh");
+
+            Request req = new Request.Builder()
+                    .url(ApiConfig.QUERY)
+                    .header("X-Client-Type", "android")
+                    .header("Accept", "text/event-stream")
+                    .post(RequestBody.create(reqBody.toString(), JSON))
+                    .build();
+
+            try (Response resp = client.newCall(req).execute()) {
+                if (!resp.isSuccessful() || resp.body() == null) {
+                    cb.onError("query HTTP " + resp.code());
+                    return;
+                }
+                parseSse(resp.body(), cb);
+            }
+        } catch (Exception e) {
+            Log.e(TAG, "queryPhoto 异常: " + e.getMessage(), e);
             cb.onError("query 异常: " + e.getMessage());
         }
     }
