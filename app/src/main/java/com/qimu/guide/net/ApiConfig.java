@@ -24,4 +24,10 @@ public final class ApiConfig {
     public static final String QUERY = BASE_URL + "/v1/query";
     /** 流式语音上行 WS（边采边推 PCM，边收 asr_partial/text_delta/audio_chunk/done）。 */
     public static final String QUERY_STREAM_WS = WS_BASE_URL + "/v1/query/stream";
+
+    // ── 火山 RTC 会话编排（feat/volc-rtc）──────────────────────────────
+    /** 创建 RTC 会话：签进房 Token + 调 StartVoiceChat，返回 app_id/room_id/uid/token/task_id。 */
+    public static final String RTC_SESSION = BASE_URL + "/v1/rtc/session";
+    /** 结束 RTC 会话（退房后调，避免持续计费）。 */
+    public static final String RTC_SESSION_STOP = BASE_URL + "/v1/rtc/session/stop";
 }

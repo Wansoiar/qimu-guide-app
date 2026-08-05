@@ -346,4 +346,74 @@ public class GuideApiClient {
             Log.e(TAG, "解析帧失败 event=" + event + " data=" + dataJson, e);
         }
     }
+
+    // ── 火山 RTC 会话编排（feat/volc-rtc）──────────────────────────────
+
+    /** 后端 /v1/rtc/session 返回的进房信息。 */
+    public static final class RtcSessionInfo {
+        public final String appId;
+        public final String roomId;
+        public final String uid;
+        public final String token;
+        public final String taskId;
+        public final boolean mocked;  // true=后端未真调 StartVoiceChat（无凭证），AI 不会进房
+
+        RtcSessionInfo(String appId, String roomId, String uid, String token, String taskId, boolean mocked) {
+            this.appId = appId; this.roomId = roomId; this.uid = uid;
+            this.token = token; this.taskId = taskId; this.mocked = mocked;
+        }
+    }
+
+    /**
+     * 创建 RTC 会话（后端签 Token + 调 StartVoiceChat 让 AI 进房）。阻塞调用，请在后台线程执行。
+     *
+     * @param venueId 场馆 UUID，可为 null（用默认馆 / 通用讲解员 prompt）
+     * @return 进房信息，失败返回 null
+     */
+    public RtcSessionInfo createRtcSession(String venueId) {
+        try {
+            JSONObject reqBody = new JSONObject();
+            if (venueId != null && !venueId.isEmpty()) reqBody.put("venue_id", venueId);
+            Request req = new Request.Builder()
+                    .url(ApiConfig.RTC_SESSION)
+                    .header("X-Client-Type", "android")
+                    .post(RequestBody.create(reqBody.toString(), JSON))
+                    .build();
+            try (Response resp = client.newCall(req).execute()) {
+                String s = resp.body() != null ? resp.body().string() : "";
+                JSONObject json = new JSONObject(s);
+                if (json.optInt("code", -1) != 0) {
+                    Log.e(TAG, "createRtcSession 后端错误: " + json.optString("message"));
+                    return null;
+                }
+                JSONObject d = json.getJSONObject("data");
+                return new RtcSessionInfo(
+                        d.optString("app_id", ""), d.optString("room_id", ""),
+                        d.optString("uid", ""), d.optString("token", ""),
+                        d.optString("task_id", ""), d.optBoolean("mocked", false));
+            }
+        } catch (Exception e) {
+            Log.e(TAG, "createRtcSession 异常: " + e.getMessage(), e);
+            return null;
+        }
+    }
+
+    /** 结束 RTC 会话（退房后调，避免持续计费）。阻塞调用，请在后台线程执行。 */
+    public void stopRtcSession(String roomId, String taskId) {
+        try {
+            JSONObject reqBody = new JSONObject();
+            reqBody.put("room_id", roomId);
+            reqBody.put("task_id", taskId);
+            Request req = new Request.Builder()
+                    .url(ApiConfig.RTC_SESSION_STOP)
+                    .header("X-Client-Type", "android")
+                    .post(RequestBody.create(reqBody.toString(), JSON))
+                    .build();
+            try (Response resp = client.newCall(req).execute()) {
+                Log.d(TAG, "stopRtcSession resp=" + (resp.body() != null ? resp.body().string() : ""));
+            }
+        } catch (Exception e) {
+            Log.e(TAG, "stopRtcSession 异常: " + e.getMessage(), e);
+        }
+    }
 }
