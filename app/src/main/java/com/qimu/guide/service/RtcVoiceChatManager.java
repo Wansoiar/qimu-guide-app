@@ -17,8 +17,6 @@ import com.ss.bytertc.engine.type.AudioScenarioType;
 import com.ss.bytertc.engine.type.ChannelProfile;
 import com.ss.bytertc.engine.type.SubtitleMessage;
 
-import org.json.JSONObject;
-
 /**
  * 火山 RTC 语音对话管理器（feat/volc-rtc 阶段3，纯音频）。
  *
@@ -71,14 +69,25 @@ public class RtcVoiceChatManager {
         this.listener = listener;
         this.selfUid = s.uid;
 
-        // 1. 创建引擎（AI 对话音频场景 + 私有参数，见火山文档 3.60 AI 场景优化）
+        // 前置校验：appId 必须非空，否则 createRTCEngine 会返回 null
+        if (s.appId == null || s.appId.isEmpty()) {
+            Log.e(TAG, "start 失败：appId 为空");
+            listener.onError(-100, "appId 为空（后端返回异常）");
+            return;
+        }
+
+        // 1. 创建引擎（官方最小配置：context + appID）。
+        //    注：AI 音质优化私有参数 aigc_media_360 待引擎能正常创建后再评估加入，先跑通。
         EngineConfig cfg = new EngineConfig();
         cfg.context = appContext;
         cfg.appID = s.appId;
-        try {
-            cfg.parameters = new JSONObject().put("rtc.fg_config", "aigc_media_360=true");
-        } catch (Exception ignore) {}
         engine = RTCEngine.createRTCEngine(cfg, engineHandler);
+        if (engine == null) {
+            // createRTCEngine 返回 null：多为 native 库加载失败 / appId 非法 / 引擎已存在未销毁
+            Log.e(TAG, "createRTCEngine 返回 null，appId=" + s.appId);
+            listener.onError(-101, "RTC 引擎创建失败（createRTCEngine 返回 null）");
+            return;
+        }
         engine.setAudioScenario(AudioScenarioType.AICLIENT);
 
         // 2. 开启音频采集（纯音频，不做视频）
