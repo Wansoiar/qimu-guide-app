@@ -55,6 +55,17 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <!-- 火山 RTC 语音对话测试页（feat/volc-rtc 阶段3）。独立 LAUNCHER 入口便于验证，验证后可移除 -->
+        <activity
+            android:name=".ui.rtc.RtcTestActivity"
+            android:exported="true"
+            android:label="RTC语音测试">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
     </application>
 
 </manifest>

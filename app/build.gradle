@@ -51,6 +51,9 @@ dependencies {
     implementation 'com.artillery.pay:paycertification:leadingSmart_1.0.55'
     implementation 'org.nanohttpd:nanohttpd:2.3.1'
 
+    // 火山引擎 RTC SDK（feat/volc-rtc）：手机进房与 AI 智能体实时语音对话
+    implementation 'com.volcengine:VolcEngineRTC:3.60.105.3500'
+
     testImplementation 'junit:junit:4.13.2'
     androidTestImplementation 'androidx.test.ext:junit:1.1.5'
     androidTestImplementation 'androidx.test.espresso:espresso-core:3.5.1'
