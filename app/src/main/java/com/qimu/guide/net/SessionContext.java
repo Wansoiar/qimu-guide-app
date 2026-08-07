@@ -21,9 +21,9 @@ public final class SessionContext {
         return INSTANCE;
     }
 
-    // 义净寺（code=demo01）——后端已录入展品+讲解词+embedding，RAG 可检索。
-    // 换其他馆时改这里，或由 setVenueId 动态指定。
-    private volatile String venueId = "61f1f93d-fe42-49d0-b392-bcbf9cd1c13d";
+    // 默认=演示博物馆（code=demo-spec005，含佛像/方鼎/莲花尊，文字+图片向量齐全，RAG/以图搜图可检索）。
+    // 义净寺(61f1f93d)数据已丢待重录，别用作默认。换馆改这里或 setVenueId 动态指定。
+    private volatile String venueId = "a3bf2489-0b25-416d-9c7f-635fff041a5d";
     // 一次 App 生命周期 = 一次会话
     private final String sessionId = UUID.randomUUID().toString();
     private final AtomicInteger querySeq = new AtomicInteger(0);

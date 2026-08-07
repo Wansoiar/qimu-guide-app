@@ -446,6 +446,15 @@ public class DialogueFragment extends Fragment {
                             "⏹ 已结束对话。返回本页可重新开始。", System.currentTimeMillis()));
                 });
             }
+            // 火山模式下音频走 RTC，但【拍照走 BLE 数据通道，与音频独立】——
+            // 仍需注册 AIDialogueManager 拿 onDialogueImageChange 回调，否则眼镜拍的图
+            // SDK 收到了却无人接住（图进黑洞，不上传、不识别）。拍照识物入口B 依赖此。
+            CRPBleConnection connVolc = BleService.getInstance().getConnection();
+            if (connVolc != null) {
+                aiDialogueManager = new AIDialogueManager(connVolc);
+                aiDialogueManager.setCallback(dialogueCallback);
+                aiDialogueManager.setupAiDialogueListener();
+            }
             // 进房交给 onResume（避免与 onViewCreated 重复建，且切回页自动恢复）
             return;
         }
