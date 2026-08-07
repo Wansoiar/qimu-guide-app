@@ -1,277 +1,116 @@
 package com.qimu.guide.ui.dialogue;
 
-import android.Manifest;
-import android.content.pm.PackageManager;
 import android.os.Bundle;
-import android.os.SystemClock;
+import android.os.Handler;
+import android.os.Looper;
 import android.util.Log;
 import android.view.LayoutInflater;
-import android.view.MotionEvent;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.TextView;
 import android.widget.Toast;
 
-import androidx.activity.result.ActivityResultLauncher;
-import androidx.activity.result.contract.ActivityResultContracts;
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 import androidx.appcompat.app.AlertDialog;
-import androidx.core.content.ContextCompat;
 import androidx.fragment.app.Fragment;
 import androidx.fragment.app.FragmentActivity;
 import androidx.recyclerview.widget.LinearLayoutManager;
 import androidx.recyclerview.widget.RecyclerView;
 
+import com.google.android.material.button.MaterialButton;
 import com.moyoung.glasses.conn.CRPBleConnection;
-import com.moyoung.glasses.conn.listener.CRPBleConnectionStateListener;
+import com.moyoung.glasses.conn.listener.CRPAiDialogueListener;
 import com.moyoung.glasses.conn.protos.TakePhoto;
 import com.qimu.guide.R;
 import com.qimu.guide.model.DialogueMessage;
-import com.qimu.guide.net.GuideApiClient;
 import com.qimu.guide.net.TourSessionManager;
-import com.qimu.guide.service.AIDialogueManager;
-import com.qimu.guide.service.AudioChunkPlayer;
 import com.qimu.guide.service.BleService;
-import com.qimu.guide.service.MicRecorder;
+import com.qimu.guide.service.RealtimeGuideManager;
 
-import java.io.ByteArrayOutputStream;
 import java.io.File;
-import java.io.FileOutputStream;
-import java.text.SimpleDateFormat;
 import java.util.ArrayList;
-import java.util.Date;
+import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
-import java.util.Locale;
+import java.util.Map;
+import java.util.Set;
 
 /**
- * AI 对话页。
+ * 智能导览对话页。
  *
- * 手机“按住说话”和眼镜左键是两个独立入口，但任何时刻只允许一轮对话进行，
- * 避免两路音频共用气泡、SSE 文本或 TTS 播放状态而串线。
+ * RTC 房间属于整次游览：进入游览后常驻，页面销毁或暂停收音都不会退房。
+ * App 按钮只控制眼镜 Translation PCM 是否上行；结束游览才停止 Agent 并销毁 RTC。
  */
 public class DialogueFragment extends Fragment {
 
     private static final String TAG = "DialogueFragment";
-    private static final int SAMPLE_RATE = 16000;
-    private static final long MIN_LONG_PRESS_MS = 300L;
-    private static final int MIN_AUDIO_BYTES = MicRecorder.SAMPLE_RATE; // 约 0.5 秒 PCM
-    private static final long AUDIO_PROGRESS_INTERVAL_MS = 250L;
+    private static final long VISION_CAPTURE_TIMEOUT_MS = 10_000L;
+    private static final long HARDWARE_RELEASE_DELAY_MS = 300L;
 
-    private enum TurnSource { PHONE, GLASSES }
+    private final Handler mainHandler = new Handler(Looper.getMainLooper());
+    private final List<DialogueMessage> messages = new ArrayList<>();
+    private final RealtimeGuideManager guideManager = RealtimeGuideManager.get();
 
-    private enum TurnPhase { PHONE_RECORDING, GLASSES_RECORDING, BACKEND }
-
-    /** 每轮对话独享的音频、气泡和流式回复状态。 */
-    private static final class TurnContext {
-        final TurnSource source;
-        TurnPhase phase;
-        ByteArrayOutputStream pcmBuffer;
-        int audioBytes;
-        long lastProgressUpdateMs;
-        volatile int listeningMessageIndex = -1;
-        volatile int userBubbleIndex = -1;
-        volatile int replyBubbleIndex = -1;
-        final StringBuilder replyText = new StringBuilder();
-        boolean backendScheduled;
-        volatile boolean terminal;
-
-        TurnContext(TurnSource source, TurnPhase phase) {
-            this.source = source;
-            this.phase = phase;
-        }
-    }
-
-    private final Object turnLock = new Object();
-    private volatile TurnContext activeTurn;
     private volatile boolean viewActive;
-
-    private volatile AIDialogueManager aiDialogueManager;
-    private volatile CRPBleConnection boundDialogueConnection;
-    private GuideApiClient apiClient;
-    private MicRecorder micRecorder;
-    private AudioChunkPlayer ttsPlayer;
-
     private RecyclerView recyclerMessages;
     private MessageAdapter messageAdapter;
-    private final List<DialogueMessage> messages = new ArrayList<>();
+    private MaterialButton dialogueButton;
+    private MaterialButton photoButton;
+    private TextView rtcStatusText;
+    private TextView rtcSessionBody;
+    private View rtcCardStatusDot;
+    private View rtcControlStatusDot;
 
-    private View talkButton;
-    private long pressStartedAt;
-    private boolean gestureStartedRecording;
+    private final Map<String, Integer> subtitleIndexes = new HashMap<>();
+    private final Set<String> finalizedSubtitleKeys = new HashSet<>();
 
-    private final ActivityResultLauncher<String> microphonePermissionLauncher =
-            registerForActivityResult(new ActivityResultContracts.RequestPermission(), granted -> {
-                if (!viewActive || !isAdded()) return;
-                Toast.makeText(requireContext(),
-                        granted ? "麦克风权限已允许，请再次按住说话" : "需要麦克风权限才能按住说话",
-                        Toast.LENGTH_SHORT).show();
-            });
+    private int visionGeneration;
+    private boolean visionBusy;
+    private boolean visionImageAccepted;
+    private boolean visionHardwareStageActive;
+    private boolean resumeAfterVisionFailure;
+    private String visionQuestion;
+    private String visionCommandId;
+    private CRPBleConnection visionConnection;
+    private Runnable visionTimeout;
 
-    private final BleService.BleListener bleListener = new BleService.BleListener() {
-        @Override
-        public void onConnectionStateChanged(int state) {
-            if (!viewActive) return;
-            if (state == CRPBleConnectionStateListener.STATE_CONNECTED) {
-                CRPBleConnection connection = BleService.getInstance().getConnection();
-                postUi(() -> bindDialogueConnection(connection, true));
-            } else {
-                postUi(() -> unbindDialogueConnection(true));
-            }
-        }
-
-        @Override public void onBatteryUpdate(int level, boolean charging) { }
-        @Override public void onFirmwareVersion(String version) { }
-        @Override public void onMediaFileChanged(int photoCount, int videoCount, int audioCount) { }
-        @Override public void onWifiStateChange(int state) { }
-        @Override public void onWifiConnectionChanged(boolean connected) { }
-        @Override public void onLog(String tag, String message) { }
-        @Override public void onError(String message) { }
-    };
-
-    private final AIDialogueManager.DialogueCallback dialogueCallback =
-            new AIDialogueManager.DialogueCallback() {
+    private final RealtimeGuideManager.Listener realtimeListener =
+            new RealtimeGuideManager.Listener() {
                 @Override
-                public void onDialogueStart() {
-                    if (!viewActive) return;
-
-                    TurnContext turn;
-                    synchronized (turnLock) {
-                        if (activeTurn != null) {
-                            turn = null;
-                        } else {
-                            turn = new TurnContext(TurnSource.GLASSES, TurnPhase.GLASSES_RECORDING);
-                            turn.pcmBuffer = new ByteArrayOutputStream();
-                            activeTurn = turn;
-                        }
-                    }
-
-                    if (turn == null) {
-                        Log.d(TAG, "忽略眼镜左键：上一轮对话仍在进行");
-                        showToast("上一轮对话仍在处理，请稍后再按眼镜左键");
-                        return;
-                    }
-
-                    stopTtsForNewTurn();
-                    Log.d(TAG, "眼镜左键对话开始");
-                    postUiForTurn(turn, () -> turn.listeningMessageIndex = appendMessageDirect(
-                            new DialogueMessage(
-                                    DialogueMessage.Type.AI_REPLY,
-                                    "正在通过眼镜聆听…",
-                                    System.currentTimeMillis())));
-                }
-
-                @Override
-                public void onDialogueAudioChange(byte[] audioData) {
-                    if (!viewActive || audioData == null || audioData.length == 0) return;
-
-                    TurnContext turn;
-                    int byteCount;
-                    boolean updateProgress;
-                    synchronized (turnLock) {
-                        turn = activeTurn;
-                        if (turn == null || turn.terminal
-                                || turn.phase != TurnPhase.GLASSES_RECORDING
-                                || turn.pcmBuffer == null) {
-                            return;
-                        }
-                        turn.pcmBuffer.write(audioData, 0, audioData.length);
-                        turn.audioBytes += audioData.length;
-                        byteCount = turn.audioBytes;
-                        long now = SystemClock.elapsedRealtime();
-                        updateProgress = now - turn.lastProgressUpdateMs >= AUDIO_PROGRESS_INTERVAL_MS;
-                        if (updateProgress) turn.lastProgressUpdateMs = now;
-                    }
-
-                    if (updateProgress) {
-                        int index = turn.listeningMessageIndex;
-                        postUiForTurn(turn, () -> updateMessageDirect(index,
-                                "正在通过眼镜聆听 · " + (byteCount / 1024) + " KB"));
-                    }
-                }
-
-                @Override
-                public void onDialogueImageChange(File imageFile) {
-                    if (!viewActive || imageFile == null) return;
-                    DialogueMessage message = new DialogueMessage(
-                            DialogueMessage.Type.PHOTO,
-                            "眼镜拍照",
-                            System.currentTimeMillis());
-                    message.setImageFile(imageFile);
-                    addMessage(message);
-                }
-
-                @Override
-                public void onDialogueStop(boolean isTimeout) {
-                    TurnContext turn;
-                    byte[] pcm;
-                    int byteCount;
-                    synchronized (turnLock) {
-                        turn = activeTurn;
-                        if (turn == null || turn.terminal
-                                || turn.phase != TurnPhase.GLASSES_RECORDING) {
-                            return;
-                        }
-                        pcm = turn.pcmBuffer == null
-                                ? new byte[0] : turn.pcmBuffer.toByteArray();
-                        byteCount = turn.audioBytes;
-                        turn.pcmBuffer = null;
-                        if (pcm.length > 0) turn.phase = TurnPhase.BACKEND;
-                    }
-
-                    Log.d(TAG, "眼镜左键对话结束, isTimeout=" + isTimeout
-                            + ", bytes=" + byteCount);
-                    int seconds = byteCount / (SAMPLE_RATE * 2);
-                    int index = turn.listeningMessageIndex;
-                    postUiForTurn(turn, () -> updateMessageDirect(index,
-                            "眼镜录音结束 · " + seconds + " 秒 · "
-                                    + (byteCount / 1024) + " KB"));
-
-                    if (pcm.length == 0) {
-                        if (completeTurn(turn)) {
-                            postUi(() -> {
-                                updateMessageDirect(index, "没有收到眼镜音频，请重试");
-                                appendMessageDirect(new DialogueMessage(
-                                        DialogueMessage.Type.AI_REPLY,
-                                        "请再次按眼镜左键说话，或按住 App 下方按钮提问。",
-                                        System.currentTimeMillis()));
-                            });
-                        }
-                        return;
-                    }
-                    beginBackend(turn, pcm);
-                }
-
-                @Override
-                public void onTranslationAudioChange(byte[] audioData) {
-                    Log.d(TAG, "收到同声传译音频: "
-                            + (audioData == null ? 0 : audioData.length) + " bytes");
-                }
-
-                @Override
-                public void onError(String message) {
-                    Log.e(TAG, "眼镜对话错误: " + message);
-                    TurnContext interrupted = null;
-                    synchronized (turnLock) {
-                        TurnContext current = activeTurn;
-                        if (current != null && !current.terminal
-                                && current.phase == TurnPhase.GLASSES_RECORDING) {
-                            current.terminal = true;
-                            current.pcmBuffer = null;
-                            activeTurn = null;
-                            interrupted = current;
-                        }
-                    }
-                    TurnContext finalInterrupted = interrupted;
+                public void onStateChanged(RealtimeGuideManager.State state, String message) {
                     postUi(() -> {
-                        if (finalInterrupted != null) {
-                            updateMessageDirect(finalInterrupted.listeningMessageIndex,
-                                    "眼镜录音异常，已取消");
+                        if (!isVisionReadyState(state)) {
+                            // Manager 负责取消自己的 reservation/HTTP；这里只立即释放
+                            // Fragment 的延迟拍照、BLE listener 和硬件阶段。
+                            cancelVisionCapture(false);
                         }
-                        appendMessageDirect(new DialogueMessage(
-                                DialogueMessage.Type.AI_REPLY,
-                                "识别异常 · " + message,
-                                System.currentTimeMillis()));
+                        renderState(state, message);
+                    });
+                }
+
+                @Override
+                public void onSubtitle(boolean fromSelf, String text,
+                                       boolean definite, long sequence) {
+                    postUi(() -> upsertSubtitle(fromSelf, text, definite, sequence));
+                }
+
+                @Override
+                public boolean onVisionCaptureRequested(String commandId, String question) {
+                    if (!viewActive || getActivity() == null || getView() == null) return false;
+                    return requestVisionCapture(question, commandId, false);
+                }
+
+                @Override
+                public void onVisionOperationChanged(boolean inProgress, String message) {
+                    postUi(() -> {
+                        if (inProgress) {
+                            visionBusy = true;
+                        } else if (visionConnection == null) {
+                            visionBusy = false;
+                        }
+                        renderState(guideManager.getState(), inProgress
+                                ? message : guideManager.getStateMessage());
                     });
                 }
             };
@@ -288,453 +127,348 @@ public class DialogueFragment extends Fragment {
     public void onViewCreated(@NonNull View view, @Nullable Bundle savedInstanceState) {
         super.onViewCreated(view, savedInstanceState);
         viewActive = true;
-        apiClient = new GuideApiClient();
-        micRecorder = new MicRecorder();
-        ttsPlayer = new AudioChunkPlayer();
 
         recyclerMessages = view.findViewById(R.id.recycler_messages);
-        messageAdapter = new MessageAdapter(messages);
         recyclerMessages.setLayoutManager(new LinearLayoutManager(requireContext()));
+        messageAdapter = new MessageAdapter(messages);
         recyclerMessages.setAdapter(messageAdapter);
 
-        view.findViewById(R.id.btn_take_photo).setOnClickListener(clicked -> {
-            BleService service = BleService.getInstance();
-            CRPBleConnection connection = service.getConnection();
-            if (!service.isConnected() || connection == null) {
-                Toast.makeText(requireContext(), "拍照需要先连接眼镜", Toast.LENGTH_SHORT).show();
-                return;
-            }
-            connection.takePhoto(TakePhoto.PhotoMode.ModeAIRecognition);
-            addMessage(new DialogueMessage(
-                    DialogueMessage.Type.AI_REPLY,
-                    "拍照指令已发送，正在等待眼镜返回图片。",
-                    System.currentTimeMillis()));
-        });
+        dialogueButton = view.findViewById(R.id.btn_push_text);
+        photoButton = view.findViewById(R.id.btn_take_photo);
+        rtcStatusText = view.findViewById(R.id.tv_rtc_status);
+        rtcSessionBody = view.findViewById(R.id.tv_rtc_session_body);
+        rtcCardStatusDot = view.findViewById(R.id.rtc_card_status_dot);
+        rtcControlStatusDot = view.findViewById(R.id.rtc_control_status_dot);
 
-        setupPushToTalk(view.findViewById(R.id.btn_push_text));
+        dialogueButton.setOnClickListener(clicked -> handleDialogueButton());
+        photoButton.setOnClickListener(clicked -> requestVisionCapture(null, null, true));
 
-        BleService service = BleService.getInstance();
-        service.addListener(bleListener);
-        CRPBleConnection connection = service.getConnection();
-        boolean connected = service.getConnectionState()
-                == CRPBleConnectionStateListener.STATE_CONNECTED && connection != null;
-        if (connected) {
-            bindDialogueConnection(connection, messages.isEmpty());
-        } else if (messages.isEmpty()) {
+        // 先注册再取快照，避免视图重建时字幕恰好到达而漏掉一条。
+        guideManager.addListener(realtimeListener);
+        List<RealtimeGuideManager.TranscriptEntry> transcript =
+                guideManager.getTranscriptSnapshot();
+        if (messages.isEmpty() && transcript.isEmpty()) {
             appendMessageDirect(new DialogueMessage(
                     DialogueMessage.Type.AI_REPLY,
-                    "未连接眼镜，也可以按住下方按钮使用手机麦克风提问。",
+                    "AI 导览房间会在本次游览中保持在线。点击开始对话后，直接通过眼镜提问。",
                     System.currentTimeMillis()));
         }
+        for (RealtimeGuideManager.TranscriptEntry entry : transcript) {
+            upsertSubtitle(entry.fromSelf, entry.text, entry.definite, entry.sequence);
+        }
+
+        renderState(guideManager.getState(), guideManager.getStateMessage());
 
         if (TourSessionManager.get().consumeFirstTutorial()) {
             new AlertDialog.Builder(requireContext())
-                    .setTitle("开始本次导览")
-                    .setMessage("按眼镜左键可以开始语音提问；也可以在手机上按住“说话”按钮。想识别眼前展品时，可点“拍照提问”。")
+                    .setTitle("开始本次智能导览")
+                    .setMessage("点击“开始对话”后直接说话，声音由眼镜持续采集。点击暂停只停止收音，AI 导览房间仍会保持在线；结束游览时才会关闭。")
                     .setPositiveButton("我知道了", null)
                     .show();
         }
     }
 
-    private void setupPushToTalk(View button) {
-        talkButton = button;
-        setTalkButtonText("按住说话");
-        button.setOnClickListener(clicked -> {
-            // 触摸监听器负责短按提示；保留 performClick 的无障碍语义。
-        });
-        button.setOnTouchListener((pressedView, event) -> {
-            switch (event.getActionMasked()) {
-                case MotionEvent.ACTION_DOWN:
-                    pressStartedAt = SystemClock.elapsedRealtime();
-                    gestureStartedRecording = startMicRecording();
-                    if (gestureStartedRecording) {
-                        pressedView.setPressed(true);
-                        setTalkButtonText("松开结束");
-                    }
-                    return true;
-
-                case MotionEvent.ACTION_UP:
-                    long heldMs = SystemClock.elapsedRealtime() - pressStartedAt;
-                    pressedView.setPressed(false);
-                    setTalkButtonText("按住说话");
-                    if (gestureStartedRecording) stopMicRecording(true, heldMs);
-                    gestureStartedRecording = false;
-                    pressedView.performClick();
-                    return true;
-
-                case MotionEvent.ACTION_CANCEL:
-                    pressedView.setPressed(false);
-                    setTalkButtonText("按住说话");
-                    if (gestureStartedRecording) stopMicRecording(false, 0L);
-                    gestureStartedRecording = false;
-                    return true;
-
-                default:
-                    return true;
-            }
-        });
+    private void handleDialogueButton() {
+        switch (guideManager.getState()) {
+            case READY:
+            case PAUSED:
+                guideManager.startGuidance();
+                break;
+            case LISTENING:
+            case AUDIO_LINK_STARTING:
+                guideManager.pauseGuidance();
+                break;
+            case ERROR:
+                guideManager.retryCurrentTour();
+                break;
+            default:
+                break;
+        }
     }
 
-    /** ACTION_DOWN：独占本轮并立即开始采集手机麦克风。 */
-    private boolean startMicRecording() {
-        if (!viewActive) return false;
-        if (ContextCompat.checkSelfPermission(requireContext(), Manifest.permission.RECORD_AUDIO)
-                != PackageManager.PERMISSION_GRANTED) {
-            microphonePermissionLauncher.launch(Manifest.permission.RECORD_AUDIO);
+    private void renderState(RealtimeGuideManager.State state, String message) {
+        if (!viewActive || dialogueButton == null) return;
+
+        String safeMessage = message == null || message.trim().isEmpty()
+                ? "正在准备 AI 导览房间…" : message;
+        rtcStatusText.setText(safeMessage);
+        rtcSessionBody.setText(safeMessage);
+
+        boolean roomOnline = state == RealtimeGuideManager.State.READY
+                || state == RealtimeGuideManager.State.AUDIO_LINK_STARTING
+                || state == RealtimeGuideManager.State.LISTENING
+                || state == RealtimeGuideManager.State.PAUSED;
+        int dot = roomOnline ? R.drawable.dot_status_connected
+                : R.drawable.dot_status_disconnected;
+        rtcCardStatusDot.setBackgroundResource(dot);
+        rtcControlStatusDot.setBackgroundResource(dot);
+
+        switch (state) {
+            case READY:
+                dialogueButton.setText("开始对话");
+                dialogueButton.setEnabled(true);
+                break;
+            case AUDIO_LINK_STARTING:
+                dialogueButton.setText("正在连接眼镜…");
+                dialogueButton.setEnabled(false);
+                break;
+            case LISTENING:
+                dialogueButton.setText("暂停对话");
+                dialogueButton.setEnabled(true);
+                break;
+            case PAUSED:
+                dialogueButton.setText("继续对话");
+                dialogueButton.setEnabled(true);
+                break;
+            case ERROR:
+                dialogueButton.setText("重试连接");
+                dialogueButton.setEnabled(true);
+                break;
+            case RTC_CONNECTING:
+                dialogueButton.setText("正在进入房间…");
+                dialogueButton.setEnabled(false);
+                break;
+            case STOPPING:
+                dialogueButton.setText("正在结束游览…");
+                dialogueButton.setEnabled(false);
+                break;
+            case IDLE:
+            default:
+                dialogueButton.setText("等待开始游览");
+                dialogueButton.setEnabled(false);
+                break;
+        }
+
+        boolean effectiveVisionBusy = visionBusy || guideManager.isVisionOperationInProgress();
+        if (effectiveVisionBusy) {
+            dialogueButton.setText("识图中，请稍候");
+            dialogueButton.setEnabled(false);
+        }
+
+        boolean photoAvailable = !effectiveVisionBusy
+                && guideManager.isVisionEnabled()
+                && (state == RealtimeGuideManager.State.READY
+                || state == RealtimeGuideManager.State.PAUSED
+                || state == RealtimeGuideManager.State.LISTENING);
+        photoButton.setEnabled(photoAvailable);
+        photoButton.setText(effectiveVisionBusy ? "正在拍照…" : getString(R.string.photo_hint));
+    }
+
+    private void upsertSubtitle(boolean fromSelf, String text,
+                                boolean definite, long sequence) {
+        if (!viewActive || text == null || text.trim().isEmpty()) return;
+        String normalized = text.trim();
+        DialogueMessage.Type type = fromSelf
+                ? DialogueMessage.Type.VOICE : DialogueMessage.Type.AI_REPLY;
+        String key = (fromSelf ? "self:" : "agent:") + sequence;
+        if (finalizedSubtitleKeys.contains(key)) return;
+        Integer existingIndex = subtitleIndexes.get(key);
+        int index = existingIndex == null ? -1 : existingIndex;
+
+        if (index < 0 || index >= messages.size() || messages.get(index).getType() != type) {
+            index = appendMessageDirect(new DialogueMessage(
+                    type, normalized, System.currentTimeMillis()));
+            if (index >= 0) subtitleIndexes.put(key, index);
+        } else {
+            updateMessageDirect(index, normalized);
+        }
+
+        if (definite) finalizedSubtitleKeys.add(key);
+    }
+
+    /** App 主动拍照：抢占眼镜硬件任务，图片返回后注入当前 RTC Agent。 */
+    private boolean requestVisionCapture(@Nullable String requestedQuestion,
+                                         @Nullable String commandId,
+                                         boolean showFailure) {
+        if (visionBusy || guideManager.isVisionOperationInProgress()) return false;
+        if (!guideManager.isVisionEnabled()) {
+            if (showFailure) showToast("当前场馆未开启拍照识别");
+            return false;
+        }
+        RealtimeGuideManager.State state = guideManager.getState();
+        if (state != RealtimeGuideManager.State.READY
+                && state != RealtimeGuideManager.State.PAUSED
+                && state != RealtimeGuideManager.State.LISTENING) {
+            if (showFailure) showToast("AI 导览房间尚未就绪");
             return false;
         }
 
-        MicRecorder recorder = micRecorder;
-        if (recorder == null) return false;
-
-        TurnContext turn;
-        synchronized (turnLock) {
-            if (activeTurn != null) {
-                turn = null;
-            } else {
-                turn = new TurnContext(TurnSource.PHONE, TurnPhase.PHONE_RECORDING);
-                activeTurn = turn;
-            }
+        BleService bleService = BleService.getInstance();
+        CRPBleConnection connection = bleService.getConnection();
+        if (!bleService.isConnected() || connection == null) {
+            if (showFailure) showToast("拍照需要先连接眼镜");
+            return false;
         }
-        if (turn == null) {
-            showToast("上一轮对话仍在处理，请稍后再说");
+        if (!guideManager.reserveVisionCapture(commandId)) {
+            if (showFailure) showToast("已有识图任务，请稍候");
             return false;
         }
 
-        stopTtsForNewTurn();
-        if (!recorder.start()) {
-            completeTurn(turn);
-            showToast("麦克风启动失败");
-            return false;
-        }
-        turn.listeningMessageIndex = appendMessageDirect(new DialogueMessage(
-                DialogueMessage.Type.AI_REPLY,
-                "正在使用手机麦克风录音…松开发送",
-                System.currentTimeMillis()));
+        visionBusy = true;
+        visionImageAccepted = false;
+        visionHardwareStageActive = true;
+        visionCommandId = commandId;
+        visionQuestion = requestedQuestion == null || requestedQuestion.trim().isEmpty()
+                ? "请介绍我眼前的展品或产品"
+                : requestedQuestion.trim();
+        resumeAfterVisionFailure = state == RealtimeGuideManager.State.LISTENING;
+        int operation = ++visionGeneration;
+        visionConnection = connection;
+        if (resumeAfterVisionFailure) guideManager.pauseGuidance();
+        renderState(guideManager.getState(), "正在准备眼镜拍照…");
+
+        long delay = resumeAfterVisionFailure ? HARDWARE_RELEASE_DELAY_MS : 0L;
+        mainHandler.postDelayed(() -> beginVisionCapture(operation, connection), delay);
         return true;
     }
 
-    /** ACTION_UP 才发送；ACTION_CANCEL 和过短录音均停止并丢弃。 */
-    private void stopMicRecording(boolean shouldSend, long heldMs) {
-        TurnContext turn;
-        synchronized (turnLock) {
-            turn = activeTurn;
-            if (turn == null || turn.terminal || turn.phase != TurnPhase.PHONE_RECORDING) {
-                return;
-            }
-        }
-
-        MicRecorder recorder = micRecorder;
-        byte[] pcm = recorder == null ? new byte[0] : recorder.stop();
-        int index = turn.listeningMessageIndex;
-
-        if (!shouldSend) {
-            if (completeTurn(turn)) {
-                postUi(() -> updateMessageDirect(index, "手机录音已取消"));
-            }
+    private void beginVisionCapture(int operation, CRPBleConnection connection) {
+        if (!viewActive || !visionBusy || operation != visionGeneration
+                || connection != visionConnection) {
             return;
         }
-
-        if (heldMs < MIN_LONG_PRESS_MS || pcm.length < MIN_AUDIO_BYTES) {
-            if (completeTurn(turn)) {
-                postUi(() -> updateMessageDirect(index, "录音太短，已取消"));
-            }
-            showToast("请按住说话，松开发送");
+        RealtimeGuideManager.State currentState = guideManager.getState();
+        boolean reservationActive = guideManager.isVisionCaptureReserved(visionCommandId);
+        if (!isVisionReadyState(currentState)
+                || !TourSessionManager.get().isActive()
+                || !reservationActive) {
+            // 状态失效时 Manager 的状态机会取消 reservation；如果只是 tour
+            // 已失效但房间状态尚未来得及变化，则主动归还仍存在的预留。
+            cancelVisionCapture(isVisionReadyState(currentState) && reservationActive);
             return;
         }
-
-        postUiForTurn(turn, () -> updateMessageDirect(index, "手机录音结束，正在识别…"));
-        beginBackend(turn, pcm);
-    }
-
-    /** 手机和眼镜共用：PCM -> WAV -> 上传 -> SSE 文本/TTS。 */
-    private void beginBackend(TurnContext turn, byte[] pcm) {
-        synchronized (turnLock) {
-            if (activeTurn != turn || turn.terminal || turn.backendScheduled) return;
-            turn.phase = TurnPhase.BACKEND;
-            turn.backendScheduled = true;
-        }
-
-        postUiForTurn(turn, () -> {
-            turn.userBubbleIndex = appendMessageDirect(new DialogueMessage(
-                    DialogueMessage.Type.VOICE,
-                    "正在识别…",
-                    System.currentTimeMillis()));
-            turn.replyBubbleIndex = appendMessageDirect(new DialogueMessage(
-                    DialogueMessage.Type.AI_REPLY,
-                    "正在思考…",
-                    System.currentTimeMillis()));
-
-            File audioRoot = requireContext().getExternalFilesDir("audio");
-            GuideApiClient client = apiClient;
-            AudioChunkPlayer player = ttsPlayer;
-            if (audioRoot == null || client == null || player == null) {
-                failBackend(turn, "音频缓存不可用，请重试");
-                return;
-            }
-            player.reset();
-            new Thread(() -> runBackend(turn, pcm, audioRoot, client, player),
-                    "dialogue-backend").start();
-        });
-    }
-
-    private void runBackend(TurnContext turn,
-                            byte[] pcm,
-                            File audioRoot,
-                            GuideApiClient client,
-                            AudioChunkPlayer player) {
-        if (!isTurnActive(turn)) return;
-        File wav = writePcmToWav(pcm, audioRoot);
-        if (wav == null) {
-            failBackend(turn, "音频封装失败，请重试");
-            return;
-        }
-
-        String audioId = client.uploadAudio(wav);
-        if (!isTurnActive(turn)) return;
-        if (audioId == null) {
-            failBackend(turn, "语音上传失败，请检查导览服务连接");
-            return;
-        }
-
-        client.queryVoice(audioId, new GuideApiClient.QueryCallback() {
-            @Override
-            public void onTextDelta(String delta) {
-                if (!isTurnActive(turn) || delta == null || delta.isEmpty()) return;
-                String text;
-                synchronized (turn.replyText) {
-                    turn.replyText.append(delta);
-                    text = turn.replyText.toString();
-                }
-                postUiForTurn(turn, () -> updateMessageDirect(turn.replyBubbleIndex, text));
-            }
-
-            @Override
-            public void onAudioChunk(int sequence, String url, int durationMs) {
-                if (!isTurnActive(turn)) return;
-                Log.d(TAG, "TTS audio_chunk #" + sequence + " duration=" + durationMs);
-                player.enqueue(url);
-            }
-
-            @Override
-            public void onDone(String transcribedText, String fullText, String aigcLabel) {
-                if (!isTurnActive(turn)) return;
-                maybeTriggerPhotoFromTranscription(transcribedText);
-                String recognized = transcribedText == null || transcribedText.isEmpty()
-                        ? "（未识别到语音）" : transcribedText;
-                String streamedReply;
-                synchronized (turn.replyText) {
-                    streamedReply = turn.replyText.toString();
-                }
-                String reply = fullText == null || fullText.isEmpty()
-                        ? streamedReply : fullText;
-                if (reply.isEmpty()) reply = "（暂无回复）";
-
-                sendReplyToConnectedGlasses(reply);
-                if (!completeTurn(turn)) return;
-                String finalReply = reply;
-                postUi(() -> {
-                    updateMessageDirect(turn.userBubbleIndex, recognized);
-                    updateMessageDirect(turn.replyBubbleIndex, finalReply);
-                });
-            }
-
-            @Override
-            public void onError(String message) {
-                failBackend(turn, "讲解服务异常 · " + message);
-            }
-        });
-    }
-
-    private void maybeTriggerPhotoFromTranscription(@Nullable String transcribedText) {
-        if (transcribedText == null) return;
-        String normalized = transcribedText.replace(" ", "");
-        String[] photoIntents = {
-                "帮我看看眼前", "看看眼前", "我眼前", "我面前",
-                "这是什么", "这是啥", "这个是什么", "识别一下"
-        };
-        boolean matched = false;
-        for (String keyword : photoIntents) {
-            if (normalized.contains(keyword)) {
-                matched = true;
-                break;
-            }
-        }
-        if (!matched) return;
-
-        BleService service = BleService.getInstance();
-        CRPBleConnection connection = service.getConnection();
-        if (!service.isConnected() || connection == null) return;
         try {
+            connection.setAiDialogueListener(new CRPAiDialogueListener() {
+                @Override public void onDialogueStart() { }
+                @Override public void onDialogueAudioChange(byte[] audioBytes) { }
+
+                @Override
+                public void onDialogueImageChange(File imageFile) {
+                    if (imageFile == null) return;
+                    postUi(() -> onVisionImage(operation, imageFile));
+                }
+
+                @Override public void onDialogueStop(boolean isTimeout) { }
+            });
             connection.takePhoto(TakePhoto.PhotoMode.ModeAIRecognition);
-            postUi(() -> appendMessageDirect(new DialogueMessage(
-                    DialogueMessage.Type.AI_REPLY,
-                    "已根据你的问题触发眼镜拍照识别。",
-                    System.currentTimeMillis())));
-        } catch (RuntimeException e) {
-            Log.e(TAG, "关键词触发拍照失败", e);
+            visionTimeout = () -> failVisionCapture(
+                    operation, "没有收到眼镜图片，请重试", true);
+            mainHandler.postDelayed(visionTimeout, VISION_CAPTURE_TIMEOUT_MS);
+            renderState(guideManager.getState(), "正在等待眼镜返回图片…");
+        } catch (RuntimeException error) {
+            Log.e(TAG, "触发 AI 识图拍照失败", error);
+            failVisionCapture(operation, "眼镜拍照启动失败", true);
         }
     }
 
-    private void sendReplyToConnectedGlasses(String reply) {
-        BleService service = BleService.getInstance();
-        CRPBleConnection connection = service.getConnection();
-        AIDialogueManager manager = aiDialogueManager;
-        if (viewActive && service.isConnected() && connection != null
-                && connection == boundDialogueConnection && manager != null
-                && reply != null && !reply.isEmpty()) {
+    private void onVisionImage(int operation, File imageFile) {
+        if (!viewActive || !visionBusy || visionImageAccepted
+                || operation != visionGeneration) return;
+        visionImageAccepted = true;
+        visionHardwareStageActive = false;
+        clearVisionHardwareListener();
+
+        DialogueMessage photo = new DialogueMessage(
+                DialogueMessage.Type.PHOTO, "眼镜拍照", System.currentTimeMillis());
+        photo.setImageFile(imageFile);
+        appendMessageDirect(photo);
+        appendMessageDirect(new DialogueMessage(
+                DialogueMessage.Type.AI_REPLY,
+                "照片已收到，正在交给 AI 导览员讲解…",
+                System.currentTimeMillis()));
+
+        boolean wasListening = resumeAfterVisionFailure;
+        String question = visionQuestion;
+        String commandId = visionCommandId;
+        guideManager.injectVisionImage(imageFile, question, commandId,
+                (success, message) -> {
+                    if (operation != visionGeneration) return;
+                    visionBusy = false;
+                    visionImageAccepted = false;
+                    visionHardwareStageActive = false;
+                    resumeAfterVisionFailure = false;
+                    visionQuestion = null;
+                    visionCommandId = null;
+                    renderState(guideManager.getState(), guideManager.getStateMessage());
+                    if (!success) {
+                        appendMessageDirect(new DialogueMessage(
+                                DialogueMessage.Type.AI_REPLY,
+                                message,
+                                System.currentTimeMillis()));
+                        if (wasListening && !guideManager.hasPendingVisionRequest()) {
+                            guideManager.startGuidance();
+                        }
+                    } else if (wasListening) {
+                        appendMessageDirect(new DialogueMessage(
+                                DialogueMessage.Type.AI_REPLY,
+                                "识图讲解期间已暂停收音；听完后点击“继续对话”。",
+                                System.currentTimeMillis()));
+                    }
+                });
+    }
+
+    private void failVisionCapture(int operation, String message, boolean resumeIfNeeded) {
+        if (operation != visionGeneration) return;
+        boolean shouldResume = resumeIfNeeded && resumeAfterVisionFailure;
+        String failedCommandId = visionCommandId;
+        clearVisionHardwareListener();
+        visionBusy = false;
+        visionImageAccepted = false;
+        visionHardwareStageActive = false;
+        resumeAfterVisionFailure = false;
+        visionQuestion = null;
+        visionCommandId = null;
+        guideManager.abandonVisionCapture(
+                failedCommandId, true, message);
+        renderState(guideManager.getState(), guideManager.getStateMessage());
+        appendMessageDirect(new DialogueMessage(
+                DialogueMessage.Type.AI_REPLY, message, System.currentTimeMillis()));
+        if (shouldResume && !guideManager.hasPendingVisionRequest()) {
+            guideManager.startGuidance();
+        }
+    }
+
+    private void clearVisionHardwareListener() {
+        Runnable timeout = visionTimeout;
+        visionTimeout = null;
+        if (timeout != null) mainHandler.removeCallbacks(timeout);
+
+        CRPBleConnection connection = visionConnection;
+        visionConnection = null;
+        if (connection != null) {
             try {
-                manager.sendTextToGlasses(reply);
-            } catch (Exception e) {
-                Log.e(TAG, "回复文字发送到眼镜失败", e);
+                connection.setAiDialogueListener(null);
+            } catch (RuntimeException error) {
+                Log.w(TAG, "释放 AI 图片监听器失败", error);
             }
         }
     }
 
-    private void failBackend(TurnContext turn, String message) {
-        if (!completeTurn(turn)) return;
-        postUi(() -> updateMessageDirect(turn.replyBubbleIndex, message));
+    private void cancelVisionCapture() {
+        cancelVisionCapture(true);
     }
 
-    private boolean isTurnActive(TurnContext turn) {
-        synchronized (turnLock) {
-            return viewActive && activeTurn == turn && !turn.terminal;
-        }
-    }
-
-    private boolean completeTurn(TurnContext turn) {
-        synchronized (turnLock) {
-            if (activeTurn != turn || turn.terminal) return false;
-            turn.terminal = true;
-            turn.pcmBuffer = null;
-            activeTurn = null;
-            return true;
-        }
-    }
-
-    /** BLE 重连后必须在新的 SDK connection 上重新注册左键对话监听。 */
-    private void bindDialogueConnection(@Nullable CRPBleConnection connection, boolean announce) {
-        if (!viewActive || connection == null) return;
-        if (boundDialogueConnection == connection && aiDialogueManager != null) return;
-
-        releaseDialogueManager();
-        AIDialogueManager manager = new AIDialogueManager(connection);
-        try {
-            manager.setCallback(dialogueCallback);
-            manager.setupAiDialogueListener();
-            manager.setupTranslationListener();
-            boundDialogueConnection = connection;
-            aiDialogueManager = manager;
-            if (announce) {
-                appendMessageDirect(new DialogueMessage(
-                        DialogueMessage.Type.AI_REPLY,
-                        "眼镜已就绪：可按眼镜左键，也可按住下方按钮说话。",
-                        System.currentTimeMillis()));
-            }
-        } catch (Exception e) {
-            Log.e(TAG, "绑定眼镜对话监听失败", e);
-            manager.release();
-            boundDialogueConnection = null;
-            aiDialogueManager = null;
-            appendMessageDirect(new DialogueMessage(
-                    DialogueMessage.Type.AI_REPLY,
-                    "眼镜对话通道初始化失败，仍可使用手机按住说话。",
-                    System.currentTimeMillis()));
+    private void cancelVisionCapture(boolean abandonManagerReservation) {
+        boolean abandonHardwareStage = visionHardwareStageActive;
+        String cancelledCommandId = visionCommandId;
+        ++visionGeneration;
+        visionBusy = false;
+        visionImageAccepted = false;
+        visionHardwareStageActive = false;
+        resumeAfterVisionFailure = false;
+        visionQuestion = null;
+        visionCommandId = null;
+        clearVisionHardwareListener();
+        if (abandonManagerReservation && abandonHardwareStage) {
+            guideManager.abandonVisionCapture(
+                    cancelledCommandId, true, "拍照流程已取消");
         }
     }
 
-    private void unbindDialogueConnection(boolean announceDisconnect) {
-        boolean hadBinding = boundDialogueConnection != null || aiDialogueManager != null;
-        releaseDialogueManager();
-
-        TurnContext interrupted = null;
-        synchronized (turnLock) {
-            TurnContext current = activeTurn;
-            if (current != null && !current.terminal
-                    && current.phase == TurnPhase.GLASSES_RECORDING) {
-                current.terminal = true;
-                current.pcmBuffer = null;
-                activeTurn = null;
-                interrupted = current;
-            }
-        }
-        if (interrupted != null) {
-            updateMessageDirect(interrupted.listeningMessageIndex,
-                    "眼镜已断开，本次录音已取消");
-        }
-        if (announceDisconnect && hadBinding) {
-            appendMessageDirect(new DialogueMessage(
-                    DialogueMessage.Type.AI_REPLY,
-                    "眼镜连接已断开；手机按住说话仍可继续使用。",
-                    System.currentTimeMillis()));
-        }
-    }
-
-    private void releaseDialogueManager() {
-        AIDialogueManager manager = aiDialogueManager;
-        aiDialogueManager = null;
-        boundDialogueConnection = null;
-        if (manager != null) {
-            manager.setCallback(null);
-            manager.release();
-        }
-    }
-
-    private File writePcmToWav(byte[] pcm, File audioRoot) {
-        try {
-            File directory = new File(audioRoot, "query");
-            if (!directory.exists() && !directory.mkdirs()) return null;
-
-            String timestamp = new SimpleDateFormat("yyyyMMdd_HHmmss_SSS", Locale.getDefault())
-                    .format(new Date());
-            File wav = new File(directory, "q_" + timestamp + ".wav");
-            try (FileOutputStream output = new FileOutputStream(wav)) {
-                writeWavHeader(output, pcm.length, SAMPLE_RATE, 1, 16);
-                output.write(pcm);
-            }
-            return wav;
-        } catch (Exception e) {
-            Log.e(TAG, "PCM 封装 WAV 失败", e);
-            return null;
-        }
-    }
-
-    private void writeWavHeader(FileOutputStream output,
-                                int dataSize,
-                                int sampleRate,
-                                int channels,
-                                int bitsPerSample) throws Exception {
-        byte[] header = new byte[44];
-        int byteRate = sampleRate * channels * bitsPerSample / 8;
-        int blockAlign = channels * bitsPerSample / 8;
-        int totalSize = 36 + dataSize;
-
-        header[0] = 'R'; header[1] = 'I'; header[2] = 'F'; header[3] = 'F';
-        header[4] = (byte) (totalSize & 0xff);
-        header[5] = (byte) ((totalSize >> 8) & 0xff);
-        header[6] = (byte) ((totalSize >> 16) & 0xff);
-        header[7] = (byte) ((totalSize >> 24) & 0xff);
-        header[8] = 'W'; header[9] = 'A'; header[10] = 'V'; header[11] = 'E';
-        header[12] = 'f'; header[13] = 'm'; header[14] = 't'; header[15] = ' ';
-        header[16] = 16;
-        header[20] = 1;
-        header[22] = (byte) channels;
-        header[24] = (byte) (sampleRate & 0xff);
-        header[25] = (byte) ((sampleRate >> 8) & 0xff);
-        header[26] = (byte) ((sampleRate >> 16) & 0xff);
-        header[27] = (byte) ((sampleRate >> 24) & 0xff);
-        header[28] = (byte) (byteRate & 0xff);
-        header[29] = (byte) ((byteRate >> 8) & 0xff);
-        header[30] = (byte) ((byteRate >> 16) & 0xff);
-        header[31] = (byte) ((byteRate >> 24) & 0xff);
-        header[32] = (byte) blockAlign;
-        header[34] = (byte) bitsPerSample;
-        header[36] = 'd'; header[37] = 'a'; header[38] = 't'; header[39] = 'a';
-        header[40] = (byte) (dataSize & 0xff);
-        header[41] = (byte) ((dataSize >> 8) & 0xff);
-        header[42] = (byte) ((dataSize >> 16) & 0xff);
-        header[43] = (byte) ((dataSize >> 24) & 0xff);
-        output.write(header);
+    private boolean isVisionReadyState(RealtimeGuideManager.State state) {
+        return state == RealtimeGuideManager.State.READY
+                || state == RealtimeGuideManager.State.PAUSED
+                || state == RealtimeGuideManager.State.LISTENING;
     }
 
     private int appendMessageDirect(DialogueMessage message) {
@@ -746,20 +480,11 @@ public class DialogueFragment extends Fragment {
         return index;
     }
 
-    private void addMessage(DialogueMessage message) {
-        postUi(() -> appendMessageDirect(message));
-    }
-
     private void updateMessageDirect(int index, String text) {
         if (!viewActive || messageAdapter == null || index < 0 || index >= messages.size()) return;
         messages.get(index).setText(text);
         messageAdapter.notifyItemChanged(index);
-    }
-
-    private void postUiForTurn(TurnContext turn, Runnable action) {
-        postUi(() -> {
-            if (isTurnActive(turn)) action.run();
-        });
+        recyclerMessages.smoothScrollToPosition(index);
     }
 
     private void postUi(Runnable action) {
@@ -776,48 +501,18 @@ public class DialogueFragment extends Fragment {
         postUi(() -> Toast.makeText(requireContext(), text, Toast.LENGTH_SHORT).show());
     }
 
-    private void setTalkButtonText(String text) {
-        View button = talkButton;
-        if (button instanceof TextView) ((TextView) button).setText(text);
-    }
-
-    /** 用户开始新一轮收音时立即停止上一轮尚未播完的 TTS，避免被麦克风再次录入。 */
-    private void stopTtsForNewTurn() {
-        AudioChunkPlayer player = ttsPlayer;
-        if (player != null) player.reset();
-    }
-
     @Override
     public void onDestroyView() {
+        guideManager.removeListener(realtimeListener);
+        cancelVisionCapture();
+        mainHandler.removeCallbacksAndMessages(null);
         viewActive = false;
-        BleService.getInstance().removeListener(bleListener);
-
-        GuideApiClient client = apiClient;
-        apiClient = null;
-        if (client != null) client.cancelAll();
-
-        synchronized (turnLock) {
-            if (activeTurn != null) {
-                activeTurn.terminal = true;
-                activeTurn.pcmBuffer = null;
-                activeTurn = null;
-            }
-        }
-        gestureStartedRecording = false;
-
-        MicRecorder recorder = micRecorder;
-        micRecorder = null;
-        if (recorder != null) {
-            if (recorder.isRecording()) recorder.stop();
-            recorder.release();
-        }
-
-        AudioChunkPlayer player = ttsPlayer;
-        ttsPlayer = null;
-        if (player != null) player.release();
-
-        releaseDialogueManager();
-        talkButton = null;
+        dialogueButton = null;
+        photoButton = null;
+        rtcStatusText = null;
+        rtcSessionBody = null;
+        rtcCardStatusDot = null;
+        rtcControlStatusDot = null;
         recyclerMessages = null;
         messageAdapter = null;
         super.onDestroyView();

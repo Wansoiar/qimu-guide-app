@@ -41,6 +41,7 @@ import com.moyoung.glasses.conn.listener.CRPBleConnectionStateListener;
 import com.qimu.guide.R;
 import com.qimu.guide.net.TourSessionManager;
 import com.qimu.guide.service.BleService;
+import com.qimu.guide.service.RealtimeGuideManager;
 import com.qimu.guide.service.TourReturnCoordinator;
 import com.qimu.guide.ui.gallery.GallerySelectionStore;
 import com.qimu.guide.ui.gallery.LocalPhoto;
@@ -72,6 +73,7 @@ public class ExportFragment extends Fragment {
     private static final long END_MEDIA_QUERY_TIMEOUT_MS = 5000L;
 
     private BleService bleService;
+    private RealtimeGuideManager realtimeGuideManager;
     private TourSessionManager tourSessionManager;
     private TourReturnCoordinator returnCoordinator;
     private TextView tvDeviceState;
@@ -309,6 +311,7 @@ public class ExportFragment extends Fragment {
     public void onViewCreated(@NonNull View view, @Nullable Bundle savedInstanceState) {
         super.onViewCreated(view, savedInstanceState);
         bleService = BleService.getInstance();
+        realtimeGuideManager = RealtimeGuideManager.get();
         tourSessionManager = TourSessionManager.get();
         returnCoordinator = TourReturnCoordinator.get();
         localPhotoRepository = new LocalPhotoRepository(requireContext());
@@ -427,16 +430,25 @@ public class ExportFragment extends Fragment {
 
         exportRequested = true;
         setBusyUi(true);
-        setStatus("正在开启眼镜 Wi-Fi，App 将自动查找；如系统提示，请确认连接…");
+        setStatus("正在暂停眼镜收音并准备照片传输…");
+        realtimeGuideManager.suspendForMediaTransfer(this::beginPhotoExportAfterAudioReleased);
+    }
+
+    private void beginPhotoExportAfterAudioReleased() {
+        if (!exportRequested) return;
+        if (!bleService.isConnected()) {
+            finishExport(false, "眼镜已断开，照片导出未启动");
+            return;
+        }
+        setStatus("正在开启眼镜 Wi-Fi，App 将自动查找并连接…");
         if (!bleService.startMediaDownload()) {
-            exportRequested = false;
             finishAfterExport = false;
-            setBusyUi(false);
-            setStatus("照片导出未启动，请稍后重试");
+            finishExport(false, "照片导出未启动，请稍后重试");
         }
     }
 
     private void finishExport(boolean success, @Nullable String errorMessage) {
+        if (realtimeGuideManager != null) realtimeGuideManager.completeMediaTransferHold();
         exportRequested = false;
         setBusyUi(false);
         if (success) {

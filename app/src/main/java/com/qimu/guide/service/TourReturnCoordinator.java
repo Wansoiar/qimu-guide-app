@@ -71,6 +71,9 @@ public final class TourReturnCoordinator {
         BleService bleService = BleService.getInstance();
         BleService.ReturnTarget returnTarget = bleService.beginReturnTransaction();
         if (returnTarget == null) return false;
+        // 归还事务已成功占位后立即停止眼镜收音、退 RTC 房并关后端 Agent，
+        // 不等待服务器关 session、眼镜 reset 或本地媒体清理结束。
+        RealtimeGuideManager.get().stopForTour(session.sessionId);
         sessionManager.invalidatePendingSessionRequests();
 
         inProgress = true;

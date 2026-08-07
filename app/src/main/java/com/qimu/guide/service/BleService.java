@@ -9,15 +9,26 @@ import android.bluetooth.le.ScanCallback;
 import android.bluetooth.le.ScanFilter;
 import android.bluetooth.le.ScanResult;
 import android.bluetooth.le.ScanSettings;
+import android.content.BroadcastReceiver;
 import android.content.Context;
+import android.content.Intent;
+import android.content.IntentFilter;
 import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
+import android.net.ConnectivityManager;
+import android.net.MacAddress;
+import android.net.Network;
+import android.net.NetworkRequest;
+import android.net.wifi.WifiManager;
+import android.net.wifi.WifiNetworkSpecifier;
 import android.os.Build;
 import android.os.Handler;
 import android.os.Looper;
 import android.os.ParcelUuid;
+import android.os.SystemClock;
 import android.text.TextUtils;
 import android.util.Log;
+import android.widget.Toast;
 
 import androidx.annotation.Nullable;
 import androidx.core.content.ContextCompat;
@@ -39,6 +50,7 @@ import java.lang.reflect.Method;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import java.util.UUID;
 import java.util.concurrent.CopyOnWriteArrayList;
 
 public class BleService {
@@ -127,19 +139,43 @@ public class BleService {
     private static final String PREFS_NAME = "glasses_connection";
     private static final String KEY_LAST_ADDRESS = "last_ble_address";
     private static final String KEY_LAST_MEDIA_DIR = "last_media_directory";
+    private static final String KEY_WIFI_AP_SSID_PREFIX = "wifi_ap_ssid_";
+    private static final String KEY_WIFI_AP_PASSWORD_PREFIX = "wifi_ap_password_";
+    private static final String KEY_WIFI_AP_APPROVED_BSSID_PREFIX = "wifi_ap_approved_bssid_";
     private static final long CONNECT_TIMEOUT_MS = 15000L;
     private static final long AUDIO_CONNECTION_DELAY_MS = 1200L;
     private static final long FAST_RETRY_DELAY_MS = 2000L;
     private static final long BACKGROUND_RETRY_DELAY_MS = 30000L;
-    private static final long WIFI_ENABLE_TIMEOUT_MS = 35000L;
-    private static final long WIFI_CONNECT_TIMEOUT_MS = 120000L;
+    // The official connector treats an enable request that has not completed
+    // within 20 s as failed. Waiting for the AAR's later 30 s timeout only
+    // makes a dead hotspot look as if it eventually started.
+    private static final long WIFI_ENABLE_TIMEOUT_MS = 20000L;
+    // SDK P2P 发现内部的最长计时为 60 s；外层只留 5 s 回调余量。
+    private static final long WIFI_P2P_CONNECT_TIMEOUT_MS = 65000L;
+    private static final long WIFI_AP_CONNECT_TIMEOUT_MS = 45000L;
+    private static final long WIFI_AP_BROADCAST_STABILIZATION_MS = 800L;
+    private static final long WIFI_AP_SCAN_RETRY_INTERVAL_MS = 7000L;
+    private static final long WIFI_AP_SCAN_CACHE_SETTLE_MS = 500L;
+    private static final long WIFI_AP_SERVICE_POLL_MS = 150L;
+    // Android limits foreground apps to four Wi-Fi scans in a two-minute
+    // window. Space all four across the discovery window instead of spending
+    // them before the glasses AP has started broadcasting reliably.
+    private static final int WIFI_AP_MAX_SCAN_ATTEMPTS = 4;
+    // On the tested Huawei/Android 12 device the system scan may need about
+    // 20 s before the newly-created glasses AP appears. Keep that wait inside
+    // our progress UI instead of exposing a disabled system Connect button.
+    private static final long WIFI_AP_PRESCAN_TIMEOUT_MS = 30000L;
     private static final long WIFI_RETRY_DELAY_MS = 6000L;
+    private static final long WIFI_TASK_RELEASE_TIMEOUT_MS = 10000L;
+    private static final long WIFI_FEATURE_REQUERY_DELAY_MS = 500L;
+    private static final long WIFI_FEATURE_QUERY_WATCHDOG_MS = 1500L;
+    private static final long WIFI_AFTER_TASK_RELEASE_GRACE_MS = 1000L;
     private static final long DOWNLOAD_IDLE_TIMEOUT_MS = 180000L;
     private static final long RETURN_RESET_TIMEOUT_MS = 10000L;
     private static final long NEXT_VISITOR_RECONNECT_DELAY_MS = 8000L;
     private static final long WIFI_PREFLIGHT_DELAY_MS = 500L;
     private static final int MAX_WIFI_BUSY_RETRIES = 2;
-    // Vendor flow: try P2P GO three times, then use AP for the fourth attempt.
+    // 官方策略：前 3 次保持 P2P GO，第 3 次失败后第 4 次才切 AP。
     private static final int MAX_WIFI_CONNECTION_ATTEMPTS = 4;
     private static final String[] FORCED_AP_FIRMWARE_VERSIONS = {
             "MOY-A073-0.1.0", "MOY-A073-0.0.7", "MOY-A073-0.0.6", "MOY-A073-0.0.3",
@@ -199,12 +235,37 @@ public class BleService {
     private int mediaState = MEDIA_IDLE;
     private int mediaGeneration;
     private int wifiBusyRetryCount;
+    private boolean mediaTaskShutdownRequested;
+    private boolean mediaTaskReleaseGraceApplied;
+    private boolean mediaWifiCleanupAttempted;
+    private boolean mediaFeatureQueryInFlight;
+    private boolean mediaFeatureQueryScheduled;
+    private int mediaFeatureQueryToken;
+    private boolean mediaAudioStateQueryInFlight;
+    private boolean mediaAudioReconciled;
+    private int mediaAudioQueryToken;
     private int wifiConnectionAttempt;
+    private int wifiConnectionAttemptLimit;
     private int wifiAttemptToken;
     private boolean wifiUseApMode;
     private boolean wifiSystemApprovalExpected;
+    private boolean wifiApDiscoveryInFlight;
+    private BroadcastReceiver wifiApScanReceiver;
+    private String wifiApResolvedBssid;
+    private ConnectivityManager wifiApConnectivityManager;
+    private ConnectivityManager.NetworkCallback wifiApNetworkCallback;
+    private Network wifiApBoundNetwork;
+    private boolean wifiApProcessBound;
+    private boolean wifiApReadyDispatched;
     private RunningStatus latestMediaFeatureState;
     private Runnable mediaTimeoutRunnable;
+    private long mediaStartedElapsedMs;
+    private long mediaPreflightStartedElapsedMs;
+    private long mediaFeatureStateUpdatedElapsedMs;
+    private long mediaGraceStartedElapsedMs;
+    private boolean mediaGraceFeatureConfirmed;
+    private long wifiAttemptStartedElapsedMs;
+    private String lastMediaStageMessage;
     private String lastDownloadDir;
     private final List<String> lastDownloadedPaths = new ArrayList<>();
 
@@ -867,10 +928,32 @@ public class BleService {
 
         mediaGeneration++;
         wifiBusyRetryCount = 0;
+        mediaTaskShutdownRequested = false;
+        mediaTaskReleaseGraceApplied = false;
+        mediaWifiCleanupAttempted = false;
+        mediaFeatureQueryInFlight = false;
+        mediaFeatureQueryScheduled = false;
+        mediaFeatureQueryToken++;
+        mediaAudioStateQueryInFlight = false;
+        mediaAudioReconciled = false;
+        mediaAudioQueryToken++;
+        mediaFeatureStateUpdatedElapsedMs = 0L;
+        mediaGraceStartedElapsedMs = 0L;
+        mediaGraceFeatureConfirmed = false;
+        lastMediaStageMessage = null;
         wifiConnectionAttempt = 1;
         wifiUseApMode = shouldUseApFirst(firmwareVersion);
+        // Vendor-forced firmware and real-device incompatible pairs use AP
+        // directly; all other combinations keep the official P2P-first flow.
+        wifiConnectionAttemptLimit = wifiUseApMode ? 1 : MAX_WIFI_CONNECTION_ATTEMPTS;
         wifiSystemApprovalExpected = false;
+        clearPendingApDiscovery();
+        mediaStartedElapsedMs = SystemClock.elapsedRealtime();
         lastDownloadedPaths.clear();
+        postLog("WiFi", "导出任务开始: firmware=" + firmwareVersion
+                + ", phone=" + Build.MANUFACTURER + "/" + Build.MODEL
+                + ", firstTransport=" + (wifiUseApMode ? "AP" : "P2P GO")
+                + ", maxAttempts=" + wifiConnectionAttemptLimit);
         prepareMediaWifi(mediaGeneration);
         return true;
     }
@@ -894,10 +977,9 @@ public class BleService {
     }
 
     /**
-     * Mirrors the vendor app's preflight. A previous FILE/LIVE task can leave
-     * the glasses' Wi-Fi state occupied even though the phone is disconnected;
-     * sending another enable command in that state is accepted over BLE but
-     * never produces the Wi-Fi-ready callback.
+     * Reads the glasses' actual task state before FILE transfer. The official
+     * app only issues forceTaskShutdown when a real conflicting task exists;
+     * doing it unconditionally can tear down an otherwise idle Wi-Fi service.
      */
     private void prepareMediaWifi(int generation) {
         CRPBleConnection current = bleConnection;
@@ -908,57 +990,405 @@ public class BleService {
 
         mediaState = MEDIA_PREPARING_WIFI;
         latestMediaFeatureState = null;
-        notifyMediaStage("正在检查眼镜 Wi-Fi 状态…");
+        mediaTaskShutdownRequested = false;
+        mediaTaskReleaseGraceApplied = false;
+        mediaFeatureQueryInFlight = false;
+        mediaFeatureQueryScheduled = false;
+        mediaFeatureQueryToken++;
+        mediaAudioStateQueryInFlight = false;
+        mediaAudioReconciled = false;
+        mediaAudioQueryToken++;
+        mediaFeatureStateUpdatedElapsedMs = 0L;
+        mediaGraceStartedElapsedMs = 0L;
+        mediaGraceFeatureConfirmed = false;
+        mediaPreflightStartedElapsedMs = SystemClock.elapsedRealtime();
+        notifyMediaStage("正在检查眼镜任务状态…");
+        scheduleMediaTimeout(generation, WIFI_TASK_RELEASE_TIMEOUT_MS,
+                () -> failMediaTransfer(CRPWifiChangeListener.STATE_BUSY,
+                        latestMediaFeatureState == null
+                                ? "无法读取眼镜任务状态，请保持眼镜靠近后重试"
+                                : "眼镜上的其他任务尚未停止，请稍后重试"));
         try {
             current.setFeatureActiveStateListener(status -> mainHandler.post(() -> {
-                if (generation != mediaGeneration || current != bleConnection) return;
+                if (generation != mediaGeneration || current != bleConnection
+                        || mediaState != MEDIA_PREPARING_WIFI) return;
+                mediaFeatureQueryInFlight = false;
+                mediaFeatureQueryToken++;
+                mediaFeatureStateUpdatedElapsedMs = SystemClock.elapsedRealtime();
                 latestMediaFeatureState = status;
                 postLog("WiFi", "任务预检: " + describeWifiTasks(status));
+                evaluateMediaWifiPreflight(generation, current, status);
             }));
-            current.queryFeatureActiveState();
+            requestMediaFeatureState(generation, current);
         } catch (RuntimeException queryFailure) {
-            Log.w(TAG, "查询眼镜任务状态失败，将先清理 Wi-Fi", queryFailure);
+            Log.w(TAG, "查询眼镜任务状态失败", queryFailure);
+            failMediaTransfer(CRPWifiChangeListener.STATE_BUSY,
+                    "无法查询眼镜任务状态，请重试");
         }
-
-        mainHandler.postDelayed(() -> finishMediaWifiPreflight(generation, current),
-                WIFI_PREFLIGHT_DELAY_MS);
     }
 
-    private void finishMediaWifiPreflight(int generation, CRPBleConnection connection) {
+    /** Keep at most one HIGH-priority feature query in flight. */
+    private void requestMediaFeatureState(int generation, CRPBleConnection connection) {
         if (generation != mediaGeneration || connection != bleConnection
-                || mediaState != MEDIA_PREPARING_WIFI) return;
+                || mediaState != MEDIA_PREPARING_WIFI || mediaFeatureQueryInFlight) return;
+        mediaFeatureQueryInFlight = true;
+        final int queryToken = ++mediaFeatureQueryToken;
+        try {
+            connection.queryFeatureActiveState();
+        } catch (RuntimeException queryFailure) {
+            mediaFeatureQueryInFlight = false;
+            Log.w(TAG, "轮询眼镜任务状态失败", queryFailure);
+            scheduleMediaFeatureQuery(generation, connection,
+                    WIFI_FEATURE_REQUERY_DELAY_MS);
+        }
+        mainHandler.postDelayed(() -> {
+            if (generation != mediaGeneration || connection != bleConnection
+                    || mediaState != MEDIA_PREPARING_WIFI
+                    || queryToken != mediaFeatureQueryToken
+                    || !mediaFeatureQueryInFlight) return;
+            mediaFeatureQueryInFlight = false;
+            postLog("WiFi", "眼镜任务状态查询超时，正在重试");
+            requestMediaFeatureState(generation, connection);
+        }, WIFI_FEATURE_QUERY_WATCHDOG_MS);
+    }
 
-        RunningStatus status = latestMediaFeatureState;
-        if (!hasActiveWifiTask(status)) {
-            beginWifiEnable(generation);
+    private void scheduleMediaFeatureQuery(int generation,
+                                           CRPBleConnection connection,
+                                           long delayMs) {
+        if (generation != mediaGeneration || connection != bleConnection
+                || mediaState != MEDIA_PREPARING_WIFI || mediaFeatureQueryScheduled) return;
+        mediaFeatureQueryScheduled = true;
+        mainHandler.postDelayed(() -> {
+            mediaFeatureQueryScheduled = false;
+            requestMediaFeatureState(generation, connection);
+        }, delayMs);
+    }
+
+    private void evaluateMediaWifiPreflight(int generation,
+                                            CRPBleConnection connection,
+                                            @Nullable RunningStatus status) {
+        if (generation != mediaGeneration || connection != bleConnection
+                || mediaState != MEDIA_PREPARING_WIFI || status == null) return;
+
+        boolean hasActiveTask = hasActiveGlassesTask(status);
+        if (mediaTaskReleaseGraceApplied
+                && mediaFeatureStateUpdatedElapsedMs >= mediaGraceStartedElapsedMs) {
+            if (!hasActiveTask) {
+                mediaGraceFeatureConfirmed = true;
+            } else if (mediaAudioReconciled && isOnlyAudioTask(status)) {
+                // The feature bit can lag behind the real recorder state. This
+                // fresh response confirms every other task stayed idle; the
+                // audio query below is the authority for the remaining bit.
+                mediaGraceFeatureConfirmed = true;
+                verifyMediaAudioStopped(generation, connection);
+                return;
+            }
+        }
+        if (mediaTaskReleaseGraceApplied && hasActiveTask) {
+            // A new hardware task started during the quiet window. Abort the
+            // pending transition and resolve the new state before FILE starts.
+            mediaTaskReleaseGraceApplied = false;
+            mediaGraceFeatureConfirmed = false;
+            scheduleMediaTimeout(generation, WIFI_TASK_RELEASE_TIMEOUT_MS,
+                    () -> failMediaTransfer(CRPWifiChangeListener.STATE_BUSY,
+                            "眼镜上的其他任务尚未停止，请稍后重试"));
+        }
+
+        if (!hasActiveTask) {
+            proceedAfterMediaPreflight(generation, connection);
             return;
         }
 
-        mediaState = MEDIA_RETRY_WAIT;
-        notifyMediaStage(status == null
-                ? "未读取到眼镜任务状态，正在先清理 Wi-Fi…"
-                : "检测到眼镜上次 Wi-Fi 任务，正在关闭后重试…");
-        cleanupWifiChannel();
-        mainHandler.postDelayed(() -> {
-            if (generation == mediaGeneration && mediaState == MEDIA_RETRY_WAIT) {
-                beginWifiEnable(generation);
+        if (mediaTaskShutdownRequested) {
+            if (isOnlyAudioTask(status)) {
+                verifyMediaAudioStopped(generation, connection);
+            } else {
+                notifyMediaStage("正在确认眼镜任务已停止…");
+                scheduleMediaFeatureQuery(generation, connection,
+                        WIFI_FEATURE_REQUERY_DELAY_MS);
             }
-        }, WIFI_RETRY_DELAY_MS);
+            return;
+        }
+
+        if (status.getSlaveOta() || status.getJieliOta()) {
+            failMediaTransfer(CRPWifiChangeListener.STATE_BUSY,
+                    "眼镜正在升级，完成后才能导出照片");
+            return;
+        }
+
+        if (hasRestartableWifiTask(status) && !hasNonWifiConflict(status)) {
+            if (mediaWifiCleanupAttempted) {
+                failMediaTransfer(CRPWifiChangeListener.STATE_BUSY,
+                        "眼镜上次 Wi-Fi 任务未释放，请重启眼镜后重试");
+                return;
+            }
+            mediaWifiCleanupAttempted = true;
+            cancelMediaTimeout();
+            mediaState = MEDIA_RETRY_WAIT;
+            notifyMediaStage("检测到上次 Wi-Fi 任务，正在关闭后重新开启…");
+            cleanupWifiChannel();
+            mainHandler.postDelayed(() -> {
+                if (generation == mediaGeneration && mediaState == MEDIA_RETRY_WAIT) {
+                    prepareMediaWifi(generation);
+                }
+            }, WIFI_RETRY_DELAY_MS);
+            return;
+        }
+
+        // A transient slaveActive bit without a concrete task means the
+        // firmware is still synchronizing its state. Let the 10 s observer
+        // window resolve it instead of shutting everything down immediately.
+        if (status.getSlaveActive() && !hasConcreteGlassesTask(status)) {
+            notifyMediaStage("眼镜正在同步任务状态…");
+            scheduleMediaFeatureQuery(generation, connection,
+                    WIFI_FEATURE_REQUERY_DELAY_MS);
+            return;
+        }
+
+        mediaTaskShutdownRequested = true;
+        notifyMediaStage("正在停止眼镜上的其他任务…");
+        try {
+            connection.forceTaskShutdown(new CRPCommandCallback() {
+                @Override
+                public void onSuccess() {
+                    mainHandler.post(() -> {
+                        if (generation == mediaGeneration && connection == bleConnection
+                                && mediaState == MEDIA_PREPARING_WIFI) {
+                            postLog("WiFi", "眼镜任务关闭指令已确认");
+                            scheduleMediaFeatureQuery(generation, connection, 100L);
+                        }
+                    });
+                }
+
+                @Override
+                public void onFailure(int errorCode) {
+                    mainHandler.post(() -> {
+                        if (generation == mediaGeneration && connection == bleConnection
+                                && mediaState == MEDIA_PREPARING_WIFI) {
+                            failMediaTransfer(CRPWifiChangeListener.STATE_BUSY,
+                                    "无法停止眼镜上的其他任务，请稍后重试");
+                        }
+                    });
+                }
+            });
+            // Some firmware revisions execute the command but omit its ACK.
+            // Allow it to leave the NORMAL queue before issuing one HIGH query.
+            scheduleMediaFeatureQuery(generation, connection, 1000L);
+        } catch (RuntimeException shutdownFailure) {
+            Log.w(TAG, "关闭眼镜冲突任务失败", shutdownFailure);
+            failMediaTransfer(CRPWifiChangeListener.STATE_BUSY,
+                    "无法停止眼镜上的其他任务，请稍后重试");
+        }
     }
 
-    /** A missing fresh response is treated as busy, matching the vendor app. */
-    private boolean hasActiveWifiTask(@Nullable RunningStatus status) {
-        return status == null
+    private void proceedAfterMediaPreflight(int generation,
+                                            CRPBleConnection connection) {
+        if (mediaTaskReleaseGraceApplied) return;
+        mediaTaskReleaseGraceApplied = true;
+        cancelMediaTimeout();
+        mediaGraceStartedElapsedMs = SystemClock.elapsedRealtime();
+        mediaGraceFeatureConfirmed = !mediaTaskShutdownRequested;
+        long delayMs;
+        if (mediaTaskShutdownRequested) {
+            delayMs = WIFI_AFTER_TASK_RELEASE_GRACE_MS;
+            notifyMediaStage("眼镜任务已停止，正在切换到照片传输…");
+            scheduleMediaTimeout(generation, WIFI_TASK_RELEASE_TIMEOUT_MS,
+                    () -> failMediaTransfer(CRPWifiChangeListener.STATE_BUSY,
+                            "无法再次确认眼镜任务已停止，请稍后重试"));
+            scheduleMediaFeatureQuery(generation, connection, 250L);
+            if (mediaAudioReconciled) {
+                mainHandler.postDelayed(() -> {
+                    if (generation == mediaGeneration && connection == bleConnection
+                            && mediaState == MEDIA_PREPARING_WIFI
+                            && mediaTaskReleaseGraceApplied) {
+                        verifyMediaAudioStopped(generation, connection);
+                    }
+                }, WIFI_FEATURE_REQUERY_DELAY_MS);
+            }
+        } else {
+            long elapsedMs = elapsedSince(mediaPreflightStartedElapsedMs);
+            delayMs = Math.max(0L, WIFI_PREFLIGHT_DELAY_MS - elapsedMs);
+            notifyMediaStage("眼镜空闲，正在准备照片传输…");
+        }
+        mainHandler.postDelayed(
+                () -> completeMediaPreflightAfterGrace(generation, connection), delayMs);
+    }
+
+    private void completeMediaPreflightAfterGrace(int generation,
+                                                  CRPBleConnection connection) {
+        if (generation != mediaGeneration || connection != bleConnection
+                || mediaState != MEDIA_PREPARING_WIFI
+                || !mediaTaskReleaseGraceApplied) return;
+        if (mediaAudioStateQueryInFlight || mediaFeatureQueryInFlight
+                || (mediaTaskShutdownRequested && !mediaGraceFeatureConfirmed)) {
+            mainHandler.postDelayed(
+                    () -> completeMediaPreflightAfterGrace(generation, connection), 250L);
+            return;
+        }
+        RunningStatus latest = latestMediaFeatureState;
+        if (latest != null && !hasActiveGlassesTask(latest)) {
+            mediaState = MEDIA_RETRY_WAIT;
+            beginWifiEnable(generation);
+        } else {
+            mediaTaskReleaseGraceApplied = false;
+            scheduleMediaTimeout(generation, WIFI_TASK_RELEASE_TIMEOUT_MS,
+                    () -> failMediaTransfer(CRPWifiChangeListener.STATE_BUSY,
+                            "眼镜上的其他任务尚未停止，请稍后重试"));
+            evaluateMediaWifiPreflight(generation, connection, latest);
+        }
+    }
+
+    private void verifyMediaAudioStopped(int generation, CRPBleConnection connection) {
+        if (mediaAudioStateQueryInFlight) return;
+        mediaAudioStateQueryInFlight = true;
+        final int audioQueryToken = ++mediaAudioQueryToken;
+        try {
+            connection.queryAudioState(info -> mainHandler.post(() -> {
+                if (audioQueryToken != mediaAudioQueryToken) return;
+                mediaAudioStateQueryInFlight = false;
+                if (generation != mediaGeneration || connection != bleConnection
+                        || mediaState != MEDIA_PREPARING_WIFI) return;
+                if (info == null) {
+                    handleMediaAudioVerificationFailure(generation, connection,
+                            "录音状态查询无响应，继续等待设备状态更新");
+                    return;
+                }
+                if (!info.isRecording()) {
+                    mediaAudioReconciled = true;
+                    postLog("WiFi", "已确认眼镜没有实际录音，忽略残留录音标记");
+                    RunningStatus latest = latestMediaFeatureState;
+                    if (latest != null) {
+                        RunningStatus reconciled = latest.toBuilder()
+                                .setAudioRecording(false)
+                                .build();
+                        latestMediaFeatureState = reconciled;
+                        evaluateMediaWifiPreflight(generation, connection, reconciled);
+                    }
+                } else {
+                    handleMediaAudioVerificationFailure(generation, connection,
+                            "眼镜仍在录音，继续等待任务关闭");
+                }
+            }));
+            mainHandler.postDelayed(() -> {
+                if (audioQueryToken != mediaAudioQueryToken
+                        || !mediaAudioStateQueryInFlight) return;
+                mediaAudioStateQueryInFlight = false;
+                mediaAudioQueryToken++;
+                if (generation != mediaGeneration || connection != bleConnection
+                        || mediaState != MEDIA_PREPARING_WIFI) return;
+                handleMediaAudioVerificationFailure(generation, connection,
+                        "眼镜录音状态查询超时，继续等待任务状态");
+            }, WIFI_FEATURE_QUERY_WATCHDOG_MS);
+        } catch (RuntimeException audioQueryFailure) {
+            mediaAudioStateQueryInFlight = false;
+            mediaAudioQueryToken++;
+            Log.w(TAG, "核验眼镜录音状态失败", audioQueryFailure);
+            handleMediaAudioVerificationFailure(generation, connection,
+                    "无法确认眼镜录音已停止，继续等待设备状态");
+        }
+    }
+
+    private void handleMediaAudioVerificationFailure(int generation,
+                                                       CRPBleConnection connection,
+                                                       String logMessage) {
+        if (generation != mediaGeneration || connection != bleConnection
+                || mediaState != MEDIA_PREPARING_WIFI) return;
+        mediaAudioReconciled = false;
+        RunningStatus latest = latestMediaFeatureState;
+        if (latest != null && !latest.getAudioRecording()) {
+            latestMediaFeatureState = latest.toBuilder()
+                    .setAudioRecording(true)
+                    .build();
+        }
+        if (mediaTaskReleaseGraceApplied) {
+            mediaTaskReleaseGraceApplied = false;
+            mediaGraceFeatureConfirmed = false;
+            scheduleMediaTimeout(generation, WIFI_TASK_RELEASE_TIMEOUT_MS,
+                    () -> failMediaTransfer(CRPWifiChangeListener.STATE_BUSY,
+                            "无法确认眼镜录音已停止，请稍后重试"));
+        }
+        postLog("WiFi", logMessage);
+        scheduleMediaFeatureQuery(generation, connection,
+                WIFI_FEATURE_REQUERY_DELAY_MS);
+    }
+
+    /** Task-closure check with the official audio-recording reconciliation. */
+    private boolean hasActiveGlassesTask(RunningStatus status) {
+        return status.getSlaveActive()
+                || status.getTakePicture()
+                || status.getAiVisual()
+                || status.getAudioRecording()
+                || status.getVideoRecording()
                 || status.getFileSync()
+                || status.getFileDelete()
                 || status.getLivingMode()
+                || status.getStaLive()
+                || status.getSimuInterpretation()
+                || status.getAiDialogue()
+                || status.getAiTranslate()
                 || status.getSlaveOta()
-                || status.getSlaveActive();
+                || status.getJieliOta();
+    }
+
+    private boolean hasConcreteGlassesTask(RunningStatus status) {
+        return status.getTakePicture()
+                || status.getAiVisual()
+                || status.getAudioRecording()
+                || status.getVideoRecording()
+                || status.getFileSync()
+                || status.getFileDelete()
+                || status.getLivingMode()
+                || status.getStaLive()
+                || status.getSimuInterpretation()
+                || status.getAiDialogue()
+                || status.getAiTranslate()
+                || status.getSlaveOta()
+                || status.getJieliOta();
+    }
+
+    private boolean hasRestartableWifiTask(RunningStatus status) {
+        return status.getFileSync() || status.getLivingMode();
+    }
+
+    private boolean hasNonWifiConflict(RunningStatus status) {
+        return status.getTakePicture()
+                || status.getAiVisual()
+                || status.getAudioRecording()
+                || status.getVideoRecording()
+                || status.getFileDelete()
+                || status.getStaLive()
+                || status.getSimuInterpretation()
+                || status.getAiDialogue()
+                || status.getAiTranslate()
+                || status.getJieliOta();
+    }
+
+    private boolean isOnlyAudioTask(RunningStatus status) {
+        return status.getAudioRecording()
+                && !status.getSlaveActive()
+                && !status.getTakePicture()
+                && !status.getAiVisual()
+                && !status.getVideoRecording()
+                && !status.getFileSync()
+                && !status.getFileDelete()
+                && !status.getLivingMode()
+                && !status.getStaLive()
+                && !status.getSimuInterpretation()
+                && !status.getAiDialogue()
+                && !status.getAiTranslate()
+                && !status.getSlaveOta()
+                && !status.getJieliOta();
     }
 
     private String describeWifiTasks(@Nullable RunningStatus status) {
         if (status == null) return "无响应";
-        return "fileSync=" + status.getFileSync()
+        return "takePicture=" + status.getTakePicture()
+                + ", aiVisual=" + status.getAiVisual()
+                + ", audioRecording=" + status.getAudioRecording()
+                + ", videoRecording=" + status.getVideoRecording()
+                + ", fileSync=" + status.getFileSync()
                 + ", living=" + status.getLivingMode()
+                + ", aiTranslate=" + status.getAiTranslate()
                 + ", slaveOta=" + status.getSlaveOta()
                 + ", slaveActive=" + status.getSlaveActive();
     }
@@ -969,11 +1399,16 @@ public class BleService {
             return;
         }
         final int attemptToken = ++wifiAttemptToken;
+        wifiAttemptStartedElapsedMs = SystemClock.elapsedRealtime();
         mediaState = MEDIA_ENABLING_WIFI;
+        wifiApResolvedBssid = null;
+        wifiApReadyDispatched = false;
         notifyMediaStage(wifiConnectionAttempt > 1
                 ? "正在重试开启眼镜 Wi-Fi…"
                 : "正在开启眼镜 Wi-Fi…");
-        postLog("WiFi", "开启 FILE Wi-Fi，连接尝试 " + wifiConnectionAttempt);
+        postLog("WiFi", "开启 FILE Wi-Fi，连接尝试 " + wifiConnectionAttempt
+                + "/" + wifiConnectionAttemptLimit
+                + ", transport=" + (wifiUseApMode ? "AP" : "P2P GO"));
         try {
             // The vendor app's DeviceCmdManager does this immediately before
             // calling enableWifi(). Without it, the first heartbeat request
@@ -992,13 +1427,18 @@ public class BleService {
             // The SDK stores one process-wide listener. Reinstall ours before
             // every attempt so no screen or stale task can steal callbacks.
             bleConnection.setWifiListener(createWifiListener(generation, attemptToken));
-            bleConnection.enableWifi(CRPWifiType.FILE);
+            if (wifiUseApMode) {
+                String[] credentials = getOrCreateStableApCredentials();
+                bleConnection.enableWifi(
+                        CRPWifiType.FILE, credentials[0], credentials[1]);
+            } else {
+                bleConnection.enableWifi(CRPWifiType.FILE);
+            }
             scheduleMediaTimeout(generation, WIFI_ENABLE_TIMEOUT_MS,
                     () -> {
                         if (attemptToken == wifiAttemptToken
                                 && mediaState == MEDIA_ENABLING_WIFI) {
-                            failMediaTransfer(CRPWifiChangeListener.STATE_TIMEOUT,
-                                    wifiStateError(CRPWifiChangeListener.STATE_TIMEOUT));
+                            handleWifiEnableFailure(CRPWifiChangeListener.STATE_TIMEOUT);
                         }
                     });
         } catch (RuntimeException e) {
@@ -1036,7 +1476,8 @@ public class BleService {
 
     private void handleWifiStateChange(int generation, int attemptToken,
                                        CRPWifiType type, int state) {
-        postLog("WiFi", "状态变化: type=" + type + ", state=" + state);
+        postLog("WiFi", "状态变化: type=" + type + ", state=" + state
+                + ", attemptElapsed=" + elapsedSince(wifiAttemptStartedElapsedMs) + "ms");
         notifyListeners(l -> l.onWifiStateChange(state));
         if (generation != mediaGeneration || attemptToken != wifiAttemptToken
                 || type != CRPWifiType.FILE || mediaState != MEDIA_ENABLING_WIFI) {
@@ -1044,22 +1485,407 @@ public class BleService {
         }
         if (state == CRPWifiChangeListener.STATE_SUCCESS) {
             cancelMediaTimeout();
-            requestGlassesWifiJoin(generation, attemptToken);
+            if (wifiUseApMode) {
+                prepareApSystemJoin(generation, attemptToken);
+            } else {
+                requestGlassesWifiJoin(generation, attemptToken);
+            }
         } else if (state == CRPWifiChangeListener.STATE_TIMEOUT) {
-            // The AAR has a hard-coded 30 s timer. This firmware has been
-            // observed reporting the real success 331 ms later, so keep the
-            // heartbeat and our 35 s deadline alive instead of disabling Wi-Fi.
-            postLog("WiFi", "SDK 30 秒超时，继续等待眼镜最终开启结果");
-            notifyMediaStage("眼镜热点启动较慢，正在完成开启…");
+            cancelMediaTimeout();
+            handleWifiEnableFailure(state);
         } else {
             cancelMediaTimeout();
             handleWifiEnableFailure(state);
         }
     }
 
+    /**
+     * Resolve the glasses AP's BSSID before requesting it. Android can reuse a
+     * previous user approval only for an exact SSID + exact BSSID specifier;
+     * the bundled SDK supplies the SSID alone and therefore reopens Huawei's
+     * broken chooser on every export. This is currently scoped through Android
+     * 12, where the export permission flow already guarantees FINE_LOCATION.
+     */
+    private void prepareApSystemJoin(int generation, int attemptToken) {
+        if (generation != mediaGeneration || attemptToken != wifiAttemptToken
+                || mediaState != MEDIA_ENABLING_WIFI || wifiApDiscoveryInFlight) return;
+        wifiApDiscoveryInFlight = true;
+        notifyMediaStage("眼镜热点已开启，正在等待手机发现…");
+        mainHandler.postDelayed(() -> preScanGlassesAp(generation, attemptToken),
+                WIFI_AP_BROADCAST_STABILIZATION_MS);
+    }
+
+    /**
+     * The bundled SDK otherwise generates a new SSID on every app process.
+     * Keep the identity stable so discovery can target one exact AP and the
+     * system sheet does not change names between exports. Together with the
+     * BSSID resolved below, Android can reuse the one-time system approval.
+     */
+    private String[] getOrCreateStableApCredentials() {
+        String identity = TextUtils.isEmpty(connectedAddress)
+                ? "default" : connectedAddress.replace(":", "");
+        String ssidKey = KEY_WIFI_AP_SSID_PREFIX + identity;
+        String passwordKey = KEY_WIFI_AP_PASSWORD_PREFIX + identity;
+        String ssid = preferences.getString(ssidKey, null);
+        String password = preferences.getString(passwordKey, null);
+        if (!TextUtils.isEmpty(ssid) && !TextUtils.isEmpty(password)) {
+            return new String[]{ssid, password};
+        }
+
+        String token = UUID.randomUUID().toString().replace("-", "");
+        ssid = "qimu_" + token.substring(0, 12);
+        password = "Qm" + token.substring(12, 28);
+        boolean saved = preferences.edit()
+                .putString(ssidKey, ssid)
+                .putString(passwordKey, password)
+                .commit();
+        postLog("WiFi", "已为当前眼镜创建固定热点身份");
+        if (!saved) postLog("WiFi", "持久热点身份保存失败，下次启动可能需要再次确认");
+        return new String[]{ssid, password};
+    }
+
+    private void preScanGlassesAp(int generation, int attemptToken) {
+        if (generation != mediaGeneration || attemptToken != wifiAttemptToken
+                || mediaState != MEDIA_ENABLING_WIFI || !wifiApDiscoveryInFlight) return;
+
+        if (Build.VERSION.SDK_INT > Build.VERSION_CODES.S_V2
+                || ContextCompat.checkSelfPermission(appContext,
+                Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
+            postLog("WiFi", "当前系统跳过 AP 预扫描，由系统连接框完成发现");
+            clearPendingApDiscovery();
+            requestGlassesWifiJoin(generation, attemptToken);
+            return;
+        }
+
+        WifiManager wifiManager = (WifiManager) appContext.getSystemService(Context.WIFI_SERVICE);
+        String expectedSsid = getSdkWifiSsid();
+        if (wifiManager == null || TextUtils.isEmpty(expectedSsid)) {
+            postLog("WiFi", "无法读取热点信息，交由系统连接框发现");
+            clearPendingApDiscovery();
+            requestGlassesWifiJoin(generation, attemptToken);
+            return;
+        }
+
+        final long scanSessionStartedElapsedUs =
+                SystemClock.elapsedRealtimeNanos() / 1000L;
+        final BroadcastReceiver receiver = new BroadcastReceiver() {
+            @Override
+            public void onReceive(Context context, Intent intent) {
+                if (!WifiManager.SCAN_RESULTS_AVAILABLE_ACTION.equals(intent.getAction())) return;
+                if (generation != mediaGeneration || attemptToken != wifiAttemptToken
+                        || mediaState != MEDIA_ENABLING_WIFI
+                        || wifiApScanReceiver != this) return;
+                android.net.wifi.ScanResult matchingResult = findExpectedAp(
+                        wifiManager, expectedSsid, scanSessionStartedElapsedUs);
+                if (matchingResult == null || TextUtils.isEmpty(matchingResult.BSSID)) return;
+                wifiApResolvedBssid = matchingResult.BSSID;
+                postLog("WiFi", "AP 预扫描已确认目标热点和精确接入点");
+                clearPendingApDiscovery();
+                // Let WifiNetworkFactory consume the fresh result. For an AP
+                // approved previously, the exact request below bypasses UI
+                // before Huawei Settings is started.
+                mainHandler.postDelayed(
+                        () -> requestGlassesWifiJoin(generation, attemptToken),
+                        WIFI_AP_SCAN_CACHE_SETTLE_MS);
+            }
+        };
+        wifiApScanReceiver = receiver;
+        try {
+            appContext.registerReceiver(receiver,
+                    new IntentFilter(WifiManager.SCAN_RESULTS_AVAILABLE_ACTION));
+            requestApScan(generation, attemptToken, wifiManager, receiver, 1);
+        } catch (RuntimeException scanFailure) {
+            Log.w(TAG, "AP 预扫描不可用", scanFailure);
+            clearPendingApDiscovery();
+            failMediaTransfer(CRPFileDownloadCallback.CODE_NOT_NETWORK,
+                    "手机无法扫描眼镜热点，请确认 Wi-Fi 和定位已开启后重试");
+            return;
+        }
+
+        mainHandler.postDelayed(() -> {
+            if (generation != mediaGeneration || attemptToken != wifiAttemptToken
+                    || mediaState != MEDIA_ENABLING_WIFI
+                    || wifiApScanReceiver != receiver) return;
+            postLog("WiFi", "AP 预扫描超时，未打开空的系统连接框");
+            clearPendingApDiscovery();
+            failMediaTransfer(CRPFileDownloadCallback.CODE_NOT_NETWORK,
+                    "手机暂未发现眼镜热点，请保持眼镜靠近并重试");
+        }, WIFI_AP_PRESCAN_TIMEOUT_MS);
+    }
+
+    private void requestApScan(int generation,
+                               int attemptToken,
+                               WifiManager wifiManager,
+                               BroadcastReceiver receiver,
+                               int scanAttempt) {
+        if (generation != mediaGeneration || attemptToken != wifiAttemptToken
+                || mediaState != MEDIA_ENABLING_WIFI
+                || wifiApScanReceiver != receiver
+                || scanAttempt > WIFI_AP_MAX_SCAN_ATTEMPTS) return;
+        boolean started;
+        try {
+            started = wifiManager.startScan();
+        } catch (RuntimeException scanFailure) {
+            Log.w(TAG, "第 " + scanAttempt + " 次 AP 预扫描请求失败", scanFailure);
+            started = false;
+        }
+        postLog("WiFi", "AP 预扫描请求 " + scanAttempt + "/"
+                + WIFI_AP_MAX_SCAN_ATTEMPTS + ": started=" + started);
+
+        if (scanAttempt < WIFI_AP_MAX_SCAN_ATTEMPTS) {
+            mainHandler.postDelayed(
+                    () -> requestApScan(generation, attemptToken, wifiManager,
+                            receiver, scanAttempt + 1),
+                    WIFI_AP_SCAN_RETRY_INTERVAL_MS);
+        }
+    }
+
+    @Nullable
+    private android.net.wifi.ScanResult findExpectedAp(WifiManager wifiManager,
+                                                       String expectedSsid,
+                                                       long notBeforeElapsedUs) {
+        try {
+            List<android.net.wifi.ScanResult> results = wifiManager.getScanResults();
+            if (results == null) return null;
+            android.net.wifi.ScanResult strongest = null;
+            for (android.net.wifi.ScanResult result : results) {
+                if (result != null
+                        && TextUtils.equals(expectedSsid, result.SSID)
+                        && result.timestamp >= notBeforeElapsedUs
+                        && (strongest == null || result.level > strongest.level)) {
+                    strongest = result;
+                }
+            }
+            return strongest;
+        } catch (RuntimeException scanFailure) {
+            Log.w(TAG, "读取 Wi-Fi 扫描结果失败", scanFailure);
+        }
+        return null;
+    }
+
+    @Nullable
+    private String getSdkWifiSsid() {
+        return getSdkWifiProviderValue("f");
+    }
+
+    @Nullable
+    private String getSdkWifiPassword() {
+        return getSdkWifiProviderValue("g");
+    }
+
+    @Nullable
+    private String getSdkWifiBaseUrl() {
+        return getSdkWifiProviderValue("a");
+    }
+
+    @Nullable
+    private String getSdkWifiProviderValue(String methodName) {
+        try {
+            Class<?> providerClass = Class.forName("com.moyoung.z.e");
+            Method getInstance = providerClass.getDeclaredMethod("c");
+            getInstance.setAccessible(true);
+            Object provider = getInstance.invoke(null);
+            Method getter = providerClass.getDeclaredMethod(methodName);
+            getter.setAccessible(true);
+            Object value = getter.invoke(provider);
+            return value instanceof String ? (String) value : null;
+        } catch (Exception reflectionFailure) {
+            Log.w(TAG, "读取 SDK Wi-Fi 状态失败: " + methodName, reflectionFailure);
+            return null;
+        }
+    }
+
+    private String wifiPreferenceIdentity() {
+        return TextUtils.isEmpty(connectedAddress)
+                ? "default" : connectedAddress.replace(":", "");
+    }
+
+    private boolean hasRecordedApApproval(String bssid) {
+        if (TextUtils.isEmpty(bssid)) return false;
+        return TextUtils.equals(bssid, preferences.getString(
+                KEY_WIFI_AP_APPROVED_BSSID_PREFIX + wifiPreferenceIdentity(), null));
+    }
+
+    private void recordApApproval(String bssid) {
+        if (TextUtils.isEmpty(bssid)) return;
+        preferences.edit().putString(
+                KEY_WIFI_AP_APPROVED_BSSID_PREFIX + wifiPreferenceIdentity(), bssid).apply();
+    }
+
+    /**
+     * The AAR requests an AP by SSID only. Huawei therefore always opens its
+     * chooser, even when the same access point was approved before. Supplying
+     * the BSSID makes this a single-access-point request, which Android can
+     * match directly against its persisted approval map.
+     */
+    @android.annotation.TargetApi(Build.VERSION_CODES.Q)
+    private boolean requestExactApNetwork(int generation, int attemptToken) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q
+                || TextUtils.isEmpty(wifiApResolvedBssid)) return false;
+
+        String ssid = getSdkWifiSsid();
+        String password = getSdkWifiPassword();
+        ConnectivityManager connectivityManager = (ConnectivityManager)
+                appContext.getSystemService(Context.CONNECTIVITY_SERVICE);
+        if (connectivityManager == null || TextUtils.isEmpty(ssid)
+                || TextUtils.isEmpty(password)) return false;
+
+        final MacAddress bssid;
+        try {
+            bssid = MacAddress.fromString(wifiApResolvedBssid);
+        } catch (IllegalArgumentException invalidBssid) {
+            Log.w(TAG, "眼镜 AP BSSID 无效", invalidBssid);
+            return false;
+        }
+
+        releaseExactApNetworkRequest();
+        WifiNetworkSpecifier specifier = new WifiNetworkSpecifier.Builder()
+                .setSsid(ssid)
+                .setBssid(bssid)
+                .setWpa2Passphrase(password)
+                .build();
+        NetworkRequest request = new NetworkRequest.Builder()
+                .addTransportType(android.net.NetworkCapabilities.TRANSPORT_WIFI)
+                .setNetworkSpecifier(specifier)
+                .build();
+
+        ConnectivityManager.NetworkCallback callback =
+                new ConnectivityManager.NetworkCallback() {
+                    @Override
+                    public void onAvailable(Network network) {
+                        mainHandler.post(() -> handleExactApAvailable(
+                                generation, attemptToken, this, network));
+                    }
+
+                    @Override
+                    public void onUnavailable() {
+                        mainHandler.post(() -> handleExactApUnavailable(
+                                generation, attemptToken, this));
+                    }
+
+                    @Override
+                    public void onLost(Network network) {
+                        mainHandler.post(() -> handleExactApLost(
+                                generation, attemptToken, this, network));
+                    }
+                };
+        wifiApConnectivityManager = connectivityManager;
+        wifiApNetworkCallback = callback;
+        wifiApBoundNetwork = null;
+        wifiApProcessBound = false;
+        wifiApReadyDispatched = false;
+        try {
+            connectivityManager.requestNetwork(request, callback);
+            postLog("WiFi", "已按固定 SSID 和精确接入点请求眼镜热点");
+            return true;
+        } catch (RuntimeException requestFailure) {
+            Log.w(TAG, "精确请求眼镜热点失败，将回退 SDK 连接", requestFailure);
+            wifiApConnectivityManager = null;
+            wifiApNetworkCallback = null;
+            return false;
+        }
+    }
+
+    @android.annotation.TargetApi(Build.VERSION_CODES.M)
+    private void handleExactApAvailable(int generation,
+                                        int attemptToken,
+                                        ConnectivityManager.NetworkCallback callback,
+                                        Network network) {
+        if (generation != mediaGeneration || attemptToken != wifiAttemptToken
+                || mediaState != MEDIA_WAITING_WIFI_APPROVAL
+                || callback != wifiApNetworkCallback
+                || wifiApConnectivityManager == null) return;
+        wifiApBoundNetwork = network;
+        wifiApProcessBound = wifiApConnectivityManager.bindProcessToNetwork(network);
+        if (!wifiApProcessBound) {
+            failMediaTransfer(CRPFileDownloadCallback.CODE_NOT_NETWORK,
+                    "手机无法切换到眼镜热点");
+            return;
+        }
+        postLog("WiFi", "精确眼镜热点已连接并绑定到下载通道");
+        notifyMediaStage("眼镜热点已连接，正在确认下载服务…");
+        awaitExactApService(generation, attemptToken, callback, network);
+    }
+
+    private void awaitExactApService(int generation,
+                                     int attemptToken,
+                                     ConnectivityManager.NetworkCallback callback,
+                                     Network network) {
+        if (generation != mediaGeneration || attemptToken != wifiAttemptToken
+                || mediaState != MEDIA_WAITING_WIFI_APPROVAL
+                || callback != wifiApNetworkCallback
+                || network != wifiApBoundNetwork || wifiApReadyDispatched) return;
+        if (!TextUtils.isEmpty(getSdkWifiBaseUrl())) {
+            wifiApReadyDispatched = true;
+            recordApApproval(wifiApResolvedBssid);
+            handleWifiConnectionStateChange(generation, attemptToken, true);
+            return;
+        }
+        mainHandler.postDelayed(() -> awaitExactApService(
+                generation, attemptToken, callback, network), WIFI_AP_SERVICE_POLL_MS);
+    }
+
+    private void handleExactApUnavailable(int generation,
+                                          int attemptToken,
+                                          ConnectivityManager.NetworkCallback callback) {
+        if (callback != wifiApNetworkCallback) return;
+        postLog("WiFi", "精确眼镜热点请求不可用");
+        handleWifiConnectionStateChange(generation, attemptToken, false);
+    }
+
+    private void handleExactApLost(int generation,
+                                   int attemptToken,
+                                   ConnectivityManager.NetworkCallback callback,
+                                   Network network) {
+        if (callback != wifiApNetworkCallback || network != wifiApBoundNetwork) return;
+        postLog("WiFi", "精确眼镜热点连接已断开");
+        handleWifiConnectionStateChange(generation, attemptToken, false);
+    }
+
+    private void releaseExactApNetworkRequest() {
+        ConnectivityManager connectivityManager = wifiApConnectivityManager;
+        ConnectivityManager.NetworkCallback callback = wifiApNetworkCallback;
+        boolean processWasBound = wifiApProcessBound;
+        wifiApConnectivityManager = null;
+        wifiApNetworkCallback = null;
+        wifiApBoundNetwork = null;
+        wifiApProcessBound = false;
+        wifiApReadyDispatched = false;
+        if (connectivityManager == null) return;
+        if (callback != null) {
+            try {
+                connectivityManager.unregisterNetworkCallback(callback);
+            } catch (RuntimeException ignored) {
+                // Callback may already have been released after onUnavailable.
+            }
+        }
+        if (processWasBound && Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            try {
+                connectivityManager.bindProcessToNetwork(null);
+            } catch (RuntimeException unbindFailure) {
+                Log.w(TAG, "恢复手机默认网络失败", unbindFailure);
+            }
+        }
+    }
+
+    private void clearPendingApDiscovery() {
+        wifiApDiscoveryInFlight = false;
+        BroadcastReceiver receiver = wifiApScanReceiver;
+        wifiApScanReceiver = null;
+        if (receiver != null) {
+            try {
+                appContext.unregisterReceiver(receiver);
+            } catch (RuntimeException ignored) {
+                // It may already have been unregistered by a racing callback.
+            }
+        }
+    }
+
     private void handleWifiConnectionStateChange(int generation, int attemptToken,
                                                   boolean connected) {
-        postLog("WiFi", "连接状态: " + connected);
+        postLog("WiFi", "连接状态: " + connected
+                + ", transport=" + (wifiUseApMode ? "AP" : "P2P GO")
+                + ", attemptElapsed=" + elapsedSince(wifiAttemptStartedElapsedMs) + "ms");
         notifyListeners(l -> l.onWifiConnectionChanged(connected));
         if (generation != mediaGeneration || attemptToken != wifiAttemptToken) return;
         if (mediaState == MEDIA_WAITING_WIFI_APPROVAL) {
@@ -1067,7 +1893,7 @@ public class BleService {
             if (connected) startSdkMediaDownload(generation, attemptToken);
             else if (wifiSystemApprovalExpected) {
                 failMediaTransfer(CRPFileDownloadCallback.CODE_NOT_NETWORK,
-                        "未加入眼镜 Wi-Fi，可能已取消系统确认；请点导出后在弹窗中选择连接");
+                        "未连接眼镜热点；若出现系统确认，请等待热点名称显示后再点连接");
             } else {
                 retryWifiConnectionOrFail("眼镜 Wi-Fi 连接失败");
             }
@@ -1079,23 +1905,37 @@ public class BleService {
 
     private void requestGlassesWifiJoin(int generation, int attemptToken) {
         if (generation != mediaGeneration || attemptToken != wifiAttemptToken
-                || bleConnection == null) return;
+                || bleConnection == null || mediaState != MEDIA_ENABLING_WIFI) return;
         mediaState = MEDIA_WAITING_WIFI_APPROVAL;
-        notifyMediaStage(wifiSystemApprovalExpected
-                ? "眼镜 Wi-Fi 已开启，请在系统弹窗中确认加入…"
-                : "眼镜 Wi-Fi 已开启，正在自动查找并连接热点…");
+        boolean canRequestExactAp = wifiUseApMode
+                && Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q
+                && !TextUtils.isEmpty(wifiApResolvedBssid);
+        notifyMediaStage(canRequestExactAp
+                ? "已发现眼镜热点，正在自动连接…"
+                : wifiSystemApprovalExpected
+                        ? "已发现眼镜热点，首次连接可能需要系统确认…"
+                        : "眼镜 Wi-Fi 已开启，正在自动查找并连接热点…");
         try {
-            // In AP mode this calls WifiNetworkSpecifier/requestNetwork inside
-            // the SDK. Android owns the confirmation dialog; the app must not
-            // attempt to silently accept it on the user's behalf.
-            bleConnection.connectWifi();
-            scheduleMediaTimeout(generation, WIFI_CONNECT_TIMEOUT_MS,
+            boolean exactApStarted = canRequestExactAp
+                    && requestExactApNetwork(generation, attemptToken);
+            if (exactApStarted && !hasRecordedApApproval(wifiApResolvedBssid)) {
+                Toast.makeText(appContext,
+                        "若出现系统确认，请等待热点名称显示后再点“连接”",
+                        Toast.LENGTH_LONG).show();
+            }
+            if (!exactApStarted) {
+                // P2P and compatibility fallbacks remain owned by the SDK.
+                bleConnection.connectWifi();
+            }
+            long connectTimeoutMs = wifiUseApMode
+                    ? WIFI_AP_CONNECT_TIMEOUT_MS : WIFI_P2P_CONNECT_TIMEOUT_MS;
+            scheduleMediaTimeout(generation, connectTimeoutMs,
                     () -> {
                         if (attemptToken == wifiAttemptToken
                                 && mediaState == MEDIA_WAITING_WIFI_APPROVAL) {
                             if (wifiSystemApprovalExpected) {
                                 failMediaTransfer(CRPFileDownloadCallback.CODE_NOT_NETWORK,
-                                        "等待加入眼镜 Wi-Fi 超时；请重新导出并在系统弹窗中选择连接");
+                                        "连接眼镜热点超时；若出现系统确认，请等待热点名称显示后再点连接");
                             } else {
                                 retryWifiConnectionOrFail("眼镜 Wi-Fi 连接超时");
                             }
@@ -1120,13 +1960,13 @@ public class BleService {
 
     private void retryWifiConnectionOrFail(String reason) {
         if (mediaState == MEDIA_IDLE) return;
-        if (wifiConnectionAttempt >= MAX_WIFI_CONNECTION_ATTEMPTS) {
+        if (wifiConnectionAttempt >= wifiConnectionAttemptLimit) {
             failMediaTransfer(CRPFileDownloadCallback.CODE_NOT_NETWORK, reason);
             return;
         }
         wifiConnectionAttempt++;
-        // Vendor app uses P2P GO for attempts 1-3, then AP for attempt 4.
-        boolean switchTransport = wifiConnectionAttempt == MAX_WIFI_CONNECTION_ATTEMPTS;
+        boolean switchTransport = !wifiUseApMode
+                && wifiConnectionAttempt == MAX_WIFI_CONNECTION_ATTEMPTS;
         retryWholeWifiAttempt(reason + "，准备第 " + wifiConnectionAttempt + " 次尝试",
                 switchTransport);
     }
@@ -1247,7 +2087,8 @@ public class BleService {
         cleanupWifiChannel();
         String directory = getDownloadDir();
         List<String> paths = new ArrayList<>(lastDownloadedPaths);
-        postLog("下载", "全部下载成功，共 " + paths.size() + " 个文件");
+        postLog("下载", "全部下载成功，共 " + paths.size() + " 个文件"
+                + ", totalElapsed=" + elapsedSince(mediaStartedElapsedMs) + "ms");
         MediaDownloadListener listener = mediaDownloadListener;
         if (listener != null) {
             mainHandler.post(() -> listener.onCompleted(directory, paths));
@@ -1267,11 +2108,14 @@ public class BleService {
         }
         mediaState = MEDIA_IDLE;
         cleanupWifiChannel();
-        postLog("下载", "导出失败: code=" + code + ", " + message);
+        postLog("下载", "导出失败: code=" + code + ", " + message
+                + ", totalElapsed=" + elapsedSince(mediaStartedElapsedMs) + "ms");
         notifyMediaFailure(code, message);
     }
 
     private void cleanupWifiChannel() {
+        releaseExactApNetworkRequest();
+        clearPendingApDiscovery();
         setSdkWifiHeartbeatAlive(false);
         CRPBleConnection current = bleConnection;
         if (current != null) {
@@ -1328,6 +2172,8 @@ public class BleService {
     }
 
     private void notifyMediaStage(String message) {
+        if (TextUtils.equals(lastMediaStageMessage, message)) return;
+        lastMediaStageMessage = message;
         postLog("下载", message);
         MediaDownloadListener listener = mediaDownloadListener;
         if (listener != null) mainHandler.post(() -> listener.onStageChanged(message));
@@ -1382,13 +2228,17 @@ public class BleService {
     }
 
     /**
-     * The vendor defaults this firmware to P2P GO. On the connected Huawei
-     * JAD-AL00, three real-device attempts reached group negotiation but never
-     * produced the file-server URL, while AP reliably opened the system-owned
-     * join dialog. Keep that verified workaround scoped to the exact pair.
+     * Keep the official firmware policy, plus one narrowly verified hardware
+     * compatibility shortcut. On JAD-AL00 + A253 0.0.6, three consecutive
+     * real-device runs discovered the peer but failed in GroupNegotiationState;
+     * the AP fallback then started in about 6 s and downloaded successfully.
      */
     private boolean shouldUseApFirst(@Nullable String version) {
-        if (shouldForceApForFirmware(version)) return true;
+        return shouldForceApForFirmware(version)
+                || isKnownP2pIncompatiblePair(version);
+    }
+
+    private boolean isKnownP2pIncompatiblePair(@Nullable String version) {
         return "HUAWEI".equalsIgnoreCase(Build.MANUFACTURER)
                 && "JAD-AL00".equalsIgnoreCase(Build.MODEL)
                 && "MOY-A253-0.0.6".equals(version);
@@ -1412,10 +2262,14 @@ public class BleService {
         }
     }
 
-    /** The vendor app switches to AP only after three failed P2P connections. */
+    /** 连续 3 次 P2P 失败后，按官方策略使用系统 AP 作为最后一次兜底。 */
     private void switchSdkWifiTransportToFallback() {
         wifiUseApMode = true;
-        postLog("WiFi", "P2P 连续连接失败，下一次改用 AP 热点模式");
+        postLog("WiFi", "P2P 连续 3 次连接失败，下一次改用 AP 热点模式");
+    }
+
+    private long elapsedSince(long startedElapsedMs) {
+        return startedElapsedMs <= 0L ? -1L : SystemClock.elapsedRealtime() - startedElapsedMs;
     }
 
     /** Uses the real SDK callback directory, with the SDK's internal path as first-run fallback. */
@@ -1433,7 +2287,7 @@ public class BleService {
             case MEDIA_ENABLING_WIFI: return "正在开启眼镜 Wi-Fi…";
             case MEDIA_WAITING_WIFI_APPROVAL:
                 return wifiSystemApprovalExpected
-                        ? "请在系统弹窗中确认加入眼镜 Wi-Fi…"
+                        ? "正在连接眼镜热点；首次使用可能需要系统确认…"
                         : "正在自动查找并连接眼镜 Wi-Fi…";
             case MEDIA_DOWNLOADING: return "正在下载照片…";
             case MEDIA_RETRY_WAIT: return "正在清理 Wi-Fi 并准备重试…";

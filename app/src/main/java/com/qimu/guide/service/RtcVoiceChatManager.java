@@ -1,0 +1,330 @@
+package com.qimu.guide.service;
+
+import android.content.Context;
+import android.util.Log;
+
+import androidx.annotation.NonNull;
+
+import com.qimu.guide.net.GuideApiClient;
+import com.ss.bytertc.engine.RTCEngine;
+import com.ss.bytertc.engine.RTCRoom;
+import com.ss.bytertc.engine.RTCRoomConfig;
+import com.ss.bytertc.engine.UserInfo;
+import com.ss.bytertc.engine.data.AudioChannel;
+import com.ss.bytertc.engine.data.AudioSampleRate;
+import com.ss.bytertc.engine.data.AudioSourceType;
+import com.ss.bytertc.engine.data.EngineConfig;
+import com.ss.bytertc.engine.handler.IRTCEngineEventHandler;
+import com.ss.bytertc.engine.handler.IRTCRoomEventHandler;
+import com.ss.bytertc.engine.type.AudioScenarioType;
+import com.ss.bytertc.engine.type.ChannelProfile;
+import com.ss.bytertc.engine.type.RoomState;
+import com.ss.bytertc.engine.type.RoomStateChangeReason;
+import com.ss.bytertc.engine.type.SubtitleMessage;
+import com.ss.bytertc.engine.utils.AudioFrame;
+
+import java.util.concurrent.ArrayBlockingQueue;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.TimeUnit;
+
+/**
+ * 火山 RTC 纯音频房间。
+ *
+ * 本端不打开手机麦克风。眼镜 Translation 回调给出的 16 kHz/mono/PCM16 会先重帧为
+ * 10 ms，再通过 ByteRTC external audio source 注入；AI 下行音频仍由 SDK 自动订阅播放。
+ */
+public class RtcVoiceChatManager {
+
+    private static final String TAG = "RtcVoiceChat";
+    private static final int PCM_FRAME_BYTES = 320; // 10 ms, 16kHz, mono, PCM16
+    private static final int PCM_FRAME_SAMPLES = 160;
+    private static final int PCM_QUEUE_CAPACITY = 50; // 最多缓存 500 ms，避免延迟无限增长
+
+    public interface Listener {
+        void onRoomJoined(boolean success, String reason);
+        default void onRoomInterrupted(boolean recoverable, String reason) { }
+        default void onTokenWillExpire() { }
+        void onAgentJoined(String uid);
+        void onUserLeave(String uid);
+        void onSubtitle(boolean fromSelf, String text, boolean definite, int sequence);
+        default void onCommand(String senderUid, String payload) { }
+        void onError(int code, String desc);
+    }
+
+    private final Context appContext;
+    private final Object pcmLock = new Object();
+    private final ArrayBlockingQueue<byte[]> pcmFrames =
+            new ArrayBlockingQueue<>(PCM_QUEUE_CAPACITY);
+    private final byte[] pendingPcm = new byte[PCM_FRAME_BYTES];
+
+    private volatile RTCEngine engine;
+    private RTCRoom room;
+    private volatile Listener listener;
+    private volatile boolean inputEnabled;
+    private int pendingPcmSize;
+    private String selfUid;
+    private ScheduledExecutorService framePump;
+
+    public RtcVoiceChatManager(@NonNull Context context) {
+        appContext = context.getApplicationContext();
+    }
+
+    /** 创建引擎并进房；默认保持静音，调用 setInputEnabled(true) 后才会注入眼镜 PCM。 */
+    public void start(@NonNull GuideApiClient.RtcSessionInfo session,
+                      @NonNull Listener listener) {
+        stop();
+        this.listener = listener;
+        selfUid = session.uid;
+
+        if (session.appId == null || session.appId.isEmpty()) {
+            listener.onError(-100, "appId 为空（后端返回异常）");
+            return;
+        }
+
+        EngineConfig config = new EngineConfig();
+        config.context = appContext;
+        config.appID = session.appId;
+        RTCEngine created = RTCEngine.createRTCEngine(config, engineHandler);
+        if (created == null) {
+            listener.onError(-101, "RTC 引擎创建失败");
+            return;
+        }
+        engine = created;
+        created.setAudioScenario(AudioScenarioType.AICLIENT);
+        int sourceResult = created.setAudioSourceType(
+                AudioSourceType.AUDIO_SOURCE_TYPE_EXTERNAL);
+        if (sourceResult != 0) {
+            listener.onError(sourceResult, "RTC 外部音频源初始化失败");
+            stop();
+            return;
+        }
+
+        startFramePump();
+        room = created.createRTCRoom(session.roomId);
+        if (room == null) {
+            listener.onError(-102, "RTC 房间创建失败");
+            stop();
+            return;
+        }
+        room.setRTCRoomEventHandler(roomHandler);
+        UserInfo userInfo = new UserInfo(session.uid, "");
+        RTCRoomConfig roomConfig = new RTCRoomConfig(
+                ChannelProfile.CHANNEL_PROFILE_CHAT_ROOM,
+                true,
+                false,
+                true,
+                false);
+        int joinResult = room.joinRoom(session.token, userInfo, true, roomConfig);
+        Log.d(TAG, "joinRoom ret=" + joinResult + " room=" + session.roomId);
+        if (joinResult != 0) {
+            listener.onRoomJoined(false, "joinRoom=" + joinResult);
+        }
+    }
+
+    /** Translation PCM 的唯一入口；任意长度均可，内部按 10 ms 重帧并限流。 */
+    public void pushExternalPcm(byte[] pcm) {
+        if (!inputEnabled || pcm == null || pcm.length == 0) return;
+        synchronized (pcmLock) {
+            if (!inputEnabled) return;
+            int offset = 0;
+            while (offset < pcm.length) {
+                int copyLength = Math.min(PCM_FRAME_BYTES - pendingPcmSize,
+                        pcm.length - offset);
+                System.arraycopy(pcm, offset, pendingPcm, pendingPcmSize, copyLength);
+                pendingPcmSize += copyLength;
+                offset += copyLength;
+                if (pendingPcmSize == PCM_FRAME_BYTES) {
+                    byte[] frame = pendingPcm.clone();
+                    if (!pcmFrames.offer(frame)) {
+                        pcmFrames.poll();
+                        pcmFrames.offer(frame);
+                        Log.w(TAG, "PCM 队列已满，丢弃最旧 10 ms 音频");
+                    }
+                    pendingPcmSize = 0;
+                }
+            }
+        }
+    }
+
+    /** 开关外部 PCM gate。关闭时立即丢弃尚未发送的数据，避免暂停后迟到音频上送。 */
+    public void setInputEnabled(boolean enabled) {
+        synchronized (pcmLock) {
+            inputEnabled = enabled;
+            if (!enabled) clearPcmQueueLocked();
+        }
+    }
+
+    public boolean isInputEnabled() {
+        return inputEnabled;
+    }
+
+    /** 兼容旧测试入口；外部音频模式下“静音”就是关闭 PCM gate。 */
+    public void setMuted(boolean muted) {
+        setInputEnabled(!muted);
+    }
+
+    /** 退房并销毁引擎。后端 VoiceChat Agent 仍需由 API 显式停止。 */
+    public void stop() {
+        // 先切断回调，再触发 leave/destroy。部分 RTC 实现会在 leaveRoom 期间同步回调，
+        // 若此时新会话已经开始，旧会话事件不能再污染新的游览状态。
+        listener = null;
+        setInputEnabled(false);
+        stopFramePump();
+        RTCRoom currentRoom = room;
+        room = null;
+        if (currentRoom != null) {
+            try {
+                currentRoom.leaveRoom();
+            } catch (RuntimeException e) {
+                Log.w(TAG, "leaveRoom 失败", e);
+            }
+            try {
+                currentRoom.destroy();
+            } catch (RuntimeException e) {
+                Log.w(TAG, "destroy room 失败", e);
+            }
+        }
+        if (engine != null) {
+            engine = null;
+            try {
+                RTCEngine.destroyRTCEngine();
+            } catch (RuntimeException e) {
+                Log.w(TAG, "destroy engine 失败", e);
+            }
+        }
+        selfUid = null;
+    }
+
+    private void startFramePump() {
+        stopFramePump();
+        framePump = Executors.newSingleThreadScheduledExecutor(runnable -> {
+            Thread thread = new Thread(runnable, "rtc-pcm-pump");
+            thread.setDaemon(true);
+            return thread;
+        });
+        // fixed-delay 避免 App 从 cached 状态恢复时补跑积压 tick，形成旧音频突发上送。
+        framePump.scheduleWithFixedDelay(this::pushNextFrame, 0, 10, TimeUnit.MILLISECONDS);
+    }
+
+    private void stopFramePump() {
+        ScheduledExecutorService pump = framePump;
+        framePump = null;
+        if (pump != null) pump.shutdownNow();
+        clearPcmQueue();
+    }
+
+    private void clearPcmQueue() {
+        synchronized (pcmLock) {
+            clearPcmQueueLocked();
+        }
+    }
+
+    private void clearPcmQueueLocked() {
+        pendingPcmSize = 0;
+        pcmFrames.clear();
+    }
+
+    private void pushNextFrame() {
+        synchronized (pcmLock) {
+            if (!inputEnabled) return;
+            byte[] pcm = pcmFrames.poll();
+            RTCEngine currentEngine = engine;
+            if (pcm == null || currentEngine == null) return;
+            try {
+                AudioFrame frame = new AudioFrame(
+                        pcm,
+                        PCM_FRAME_SAMPLES,
+                        AudioSampleRate.AUDIO_SAMPLE_RATE_16000,
+                        AudioChannel.AUDIO_CHANNEL_MONO);
+                int result = currentEngine.pushExternalAudioFrame(frame);
+                if (result != 0) Log.w(TAG, "pushExternalAudioFrame ret=" + result);
+            } catch (RuntimeException e) {
+                Log.e(TAG, "外部 PCM 注入失败", e);
+            }
+        }
+    }
+
+    private final IRTCEngineEventHandler engineHandler = new IRTCEngineEventHandler() {
+        @Override
+        public void onError(int errorCode) {
+            Listener current = listener;
+            if (current != null) current.onError(errorCode, "engine error");
+        }
+    };
+
+    private final IRTCRoomEventHandler roomHandler = new IRTCRoomEventHandler() {
+        @Override
+        public void onRoomStateChangedWithReason(String roomId, String uid,
+                                                 RoomState state,
+                                                 RoomStateChangeReason reason) {
+            Listener current = listener;
+            if (current == null) return;
+            if (state == RoomState.JOIN_SUCCESS) {
+                current.onRoomJoined(true, null);
+                return;
+            }
+            boolean recoverable = reason == RoomStateChangeReason.RECONNECT;
+            current.onRoomInterrupted(recoverable,
+                    "state=" + state + " reason=" + reason);
+        }
+
+        @Override
+        public void onTokenWillExpire() {
+            Listener current = listener;
+            if (current != null) current.onTokenWillExpire();
+        }
+
+        @Override
+        public void onUserJoined(UserInfo userInfo) {
+            Listener current = listener;
+            if (current != null) {
+                current.onAgentJoined(userInfo == null ? "" : userInfo.getUid());
+            }
+        }
+
+        @Override
+        public void onUserLeave(String uid, int reason) {
+            Listener current = listener;
+            if (current != null) current.onUserLeave(uid);
+        }
+
+        @Override
+        public void onSubtitleMessageReceived(SubtitleMessage[] subtitles) {
+            Listener current = listener;
+            if (current == null || subtitles == null) return;
+            for (SubtitleMessage subtitle : subtitles) {
+                if (subtitle == null || subtitle.text == null || subtitle.text.isEmpty()) continue;
+                boolean fromSelf = selfUid != null && selfUid.equals(subtitle.userId);
+                current.onSubtitle(fromSelf, subtitle.text, subtitle.definite,
+                        subtitle.sequence);
+            }
+        }
+
+        @Override
+        public void onUserMessageReceived(String uid, String message) {
+            dispatchCommand(uid, message);
+        }
+
+        @Override
+        public void onUserMessageReceived(long messageId, String uid, String message) {
+            dispatchCommand(uid, message);
+        }
+
+        @Override
+        public void onRoomMessageReceived(String uid, String message) {
+            dispatchCommand(uid, message);
+        }
+
+        @Override
+        public void onRoomMessageReceived(long messageId, String uid, String message) {
+            dispatchCommand(uid, message);
+        }
+
+        private void dispatchCommand(String uid, String message) {
+            Listener current = listener;
+            if (current == null || message == null || message.trim().isEmpty()) return;
+            current.onCommand(uid, message);
+        }
+    };
+}

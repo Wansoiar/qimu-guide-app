@@ -83,11 +83,11 @@
 
     <string name="dialogue">对话</string>
     <string name="current_venue">本次导览</string>
-    <string name="dialogue_placeholder">可在手机上按住说话，眼镜左键也可触发语音提问</string>
-    <string name="dialogue_session_title">AI 导览已就绪</string>
-    <string name="dialogue_session_body">按住下方按钮说话；眼镜左键是另一种对话入口</string>
+    <string name="dialogue_placeholder">点击开始对话后，眼镜会持续收音；暂停时仍保留本次导览房间</string>
+    <string name="dialogue_session_title">AI 导览房间</string>
+    <string name="dialogue_session_body">开始游览后自动连接，结束游览时才关闭</string>
     <string name="photo_hint">拍照提问</string>
-    <string name="voice_hint">按住说话</string>
+    <string name="voice_hint">开始对话</string>
     <string name="replay_hint">重播讲解</string>
     <string name="ai_state_idle">空闲</string>
     <string name="ai_state_listening">聆听中…</string>
@@ -101,7 +101,7 @@
     <string name="message_photo_label">眼镜拍摄</string>
 
     <string name="export">导出</string>
-    <string name="export_title">导出数据</string>
+    <string name="export_title">导出与分享</string>
     <string name="export_description">将眼镜照片导出到本机，再生成本次导览分享码</string>
     <string name="export_session_title">本次导览</string>
     <string name="export_session_ready">设备在线 · 可开始导出</string>
@@ -110,18 +110,18 @@
     <string name="export_photos_body">通过眼镜 Wi-Fi 将本次拍摄的原图保存到手机。</string>
     <string name="export_pending">眼镜待导出</string>
     <string name="export_local">本机已保存</string>
-    <string name="export_refresh">刷新数量</string>
+    <string name="export_refresh">刷新</string>
     <string name="export_start">导出到本机</string>
     <string name="export_idle">等待导出</string>
     <string name="export_nothing_pending">眼镜上暂无待导出的照片</string>
-    <string name="export_step_qr">本次导览分享码</string>
+    <string name="export_step_qr">分享本次导览</string>
     <string name="export_qr_body">生成时选择要分享的照片，并决定是否同时生成游览 Vlog。</string>
-    <string name="export_qr_pending">选择照片后生成分享码</string>
+    <string name="export_qr_pending">选择本机照片作为分享内容</string>
     <string name="export_view_photos">查看本机照片</string>
     <string name="export_share_selection_hint">生成时选择照片，并决定是否同时生成 Vlog</string>
     <string name="export_share_selection_summary">已选 %1$d 张 · Vlog %2$s</string>
     <string name="export_share_selection_ready">分享内容已确认，上传与二维码服务待接入</string>
-    <string name="export_share_select_first">选择照片并生成分享码</string>
+    <string name="export_share_select_first">选择分享照片</string>
     <string name="gallery_view_title">本机照片</string>
     <string name="gallery_select_title">挑选要分享的照片</string>
     <string name="gallery_count_summary">共 %1$d 张</string>

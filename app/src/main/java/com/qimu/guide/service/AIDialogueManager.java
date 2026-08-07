@@ -35,6 +35,7 @@ public class AIDialogueManager {
     private AudioTrack audioTrack;
     private volatile DialogueCallback callback;
     private volatile boolean isDialogueActive = false;
+    private volatile boolean translationListenerInstalled;
     private volatile boolean released;
     private int audioChunkCount = 0; // 调试用
 
@@ -130,6 +131,7 @@ public class AIDialogueManager {
     public void setupTranslationListener() {
         synchronized (callbackLock) {
             if (released) return;
+            translationListenerInstalled = true;
             connection.setTranslationListener(audioBytes -> {
                 if (released || audioBytes == null) return;
                 Log.d(TAG, "收到同声传译音频: " + audioBytes.length + " bytes");
@@ -266,10 +268,13 @@ public class AIDialogueManager {
         } catch (Exception e) {
             Log.w(TAG, "清理 AI 对话监听器失败", e);
         }
-        try {
-            connection.setTranslationListener(null);
-        } catch (Exception e) {
-            Log.w(TAG, "清理同声传译监听器失败", e);
+        if (translationListenerInstalled) {
+            translationListenerInstalled = false;
+            try {
+                connection.setTranslationListener(null);
+            } catch (Exception e) {
+                Log.w(TAG, "清理同声传译监听器失败", e);
+            }
         }
         synchronized (this) {
             AudioTrack track = audioTrack;

@@ -15,6 +15,8 @@ allprojects {
         maven {
             url 'https://maven.aliyun.com/repository/public'
         }
+        // 火山引擎 RTC SDK 仓库（feat/volc-rtc）
+        maven { url 'https://artifact.bytedance.com/repository/Volcengine/' }
         maven {
             credentials {
                 username '5ff28ca9ed01613630f9d551'

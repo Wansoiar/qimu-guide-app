@@ -63,6 +63,12 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <!-- 仅保留为内部诊断页；主流程统一由 MainActivity 管理唯一 RTC 引擎。 -->
+        <activity
+            android:name=".ui.rtc.RtcTestActivity"
+            android:exported="false"
+            android:label="RTC语音测试" />
     </application>
 
 </manifest>

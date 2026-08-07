@@ -73,10 +73,10 @@
     </style>
 
     <style name="Widget.Qimu.Button.Outline" parent="Widget.MaterialComponents.Button.OutlinedButton">
-        <item name="backgroundTint">@color/qimu_surface</item>
-        <item name="android:textColor">@color/qimu_gold_dark</item>
-        <item name="iconTint">@color/qimu_gold_dark</item>
-        <item name="strokeColor">@color/qimu_outline_gold</item>
+        <item name="backgroundTint">@color/qimu_button_outline_background</item>
+        <item name="android:textColor">@color/qimu_button_outline_foreground</item>
+        <item name="iconTint">@color/qimu_button_outline_foreground</item>
+        <item name="strokeColor">@color/qimu_button_outline_stroke</item>
         <item name="strokeWidth">1dp</item>
         <item name="cornerRadius">14dp</item>
         <item name="android:minHeight">48dp</item>
@@ -97,9 +97,9 @@
     </style>
 
     <style name="Widget.Qimu.Button.DangerOutline" parent="Widget.MaterialComponents.Button.OutlinedButton">
-        <item name="backgroundTint">@color/qimu_surface</item>
-        <item name="android:textColor">@color/qimu_error</item>
-        <item name="strokeColor">@color/qimu_error</item>
+        <item name="backgroundTint">@color/qimu_button_outline_background</item>
+        <item name="android:textColor">@color/qimu_button_danger_foreground</item>
+        <item name="strokeColor">@color/qimu_button_danger_stroke</item>
         <item name="strokeWidth">1dp</item>
         <item name="cornerRadius">14dp</item>
         <item name="android:minHeight">48dp</item>

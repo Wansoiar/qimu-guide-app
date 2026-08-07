@@ -1,10 +1,23 @@
 <?xml version="1.0" encoding="utf-8"?>
-<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:background="@drawable/bg_screen_warm"
-    android:orientation="vertical">
+    android:background="@color/qimu_background">
+
+    <ImageView
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:alpha="0.2"
+        android:contentDescription="@null"
+        android:importantForAccessibility="no"
+        android:scaleType="centerCrop"
+        android:src="@drawable/qimu_dialogue_page_background" />
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:orientation="vertical">
 
     <TextView
         android:layout_width="wrap_content"
@@ -51,10 +64,21 @@
             android:layout_weight="1"
             android:orientation="vertical">
             <TextView android:layout_width="match_parent" android:layout_height="wrap_content" android:text="@string/dialogue_session_title" android:textColor="@color/qimu_text_primary" android:textSize="15sp" android:textStyle="bold" />
-            <TextView android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="2dp" android:text="@string/dialogue_session_body" android:textColor="@color/qimu_text_secondary" android:textSize="12sp" />
+            <TextView
+                android:id="@+id/tv_rtc_session_body"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="2dp"
+                android:text="@string/dialogue_session_body"
+                android:textColor="@color/qimu_text_secondary"
+                android:textSize="12sp" />
         </LinearLayout>
 
-        <View android:layout_width="7dp" android:layout_height="7dp" android:background="@drawable/dot_status_connected" />
+        <View
+            android:id="@+id/rtc_card_status_dot"
+            android:layout_width="7dp"
+            android:layout_height="7dp"
+            android:background="@drawable/dot_status_disconnected" />
     </LinearLayout>
 
     <androidx.recyclerview.widget.RecyclerView
@@ -83,8 +107,20 @@
             android:layout_height="wrap_content"
             android:gravity="center_vertical"
             android:orientation="horizontal">
-            <View android:layout_width="7dp" android:layout_height="7dp" android:background="@drawable/dot_status_connected" />
-            <TextView android:layout_width="0dp" android:layout_height="wrap_content" android:layout_marginStart="8dp" android:layout_weight="1" android:text="眼镜已就绪，可随时开始提问" android:textColor="@color/qimu_text_secondary" android:textSize="12sp" />
+            <View
+                android:id="@+id/rtc_control_status_dot"
+                android:layout_width="7dp"
+                android:layout_height="7dp"
+                android:background="@drawable/dot_status_disconnected" />
+            <TextView
+                android:id="@+id/tv_rtc_status"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="8dp"
+                android:layout_weight="1"
+                android:text="正在准备 AI 导览房间…"
+                android:textColor="@color/qimu_text_secondary"
+                android:textSize="12sp" />
         </LinearLayout>
 
         <LinearLayout
@@ -121,4 +157,5 @@
                 app:iconSize="18dp" />
         </LinearLayout>
     </LinearLayout>
-</LinearLayout>
+    </LinearLayout>
+</FrameLayout>

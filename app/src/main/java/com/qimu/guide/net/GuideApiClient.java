@@ -2,6 +2,8 @@ package com.qimu.guide.net;
 
 import android.util.Log;
 
+import androidx.annotation.Nullable;
+
 import org.json.JSONObject;
 
 import java.io.BufferedReader;
@@ -35,6 +37,9 @@ public class GuideApiClient {
     private final Set<Call> activeCalls = java.util.Collections.newSetFromMap(
             new ConcurrentHashMap<Call, Boolean>());
     private final Object callLock = new Object();
+    private final Object visionCallLock = new Object();
+    private Call activeVisionCall;
+    private boolean visionCallsCancelled;
     private boolean closed;
 
     public interface QueryCallback {
@@ -45,6 +50,43 @@ public class GuideApiClient {
         void onDone(String transcribedText, String fullText, String aigcLabel);
 
         void onError(String message);
+    }
+
+    public static final class UploadedImage {
+        public final String fileId;
+        public final String url;
+
+        UploadedImage(String fileId, String url) {
+            this.fileId = fileId;
+            this.url = url;
+        }
+    }
+
+    /** 后端创建 RTC 房间并启动 VoiceChat Agent 后返回的进房信息。 */
+    public static final class RtcSessionInfo {
+        public final String sessionId;
+        public final String appId;
+        public final String roomId;
+        public final String uid;
+        public final String token;
+        public final String taskId;
+        public final String botUid;
+        public final boolean photoEnabled;
+        public final boolean mocked;
+
+        RtcSessionInfo(String sessionId, String appId, String roomId, String uid,
+                       String token, String taskId, String botUid,
+                       boolean photoEnabled, boolean mocked) {
+            this.sessionId = sessionId;
+            this.appId = appId;
+            this.roomId = roomId;
+            this.uid = uid;
+            this.token = token;
+            this.taskId = taskId;
+            this.botUid = botUid;
+            this.photoEnabled = photoEnabled;
+            this.mocked = mocked;
+        }
     }
 
     /** 上传整段 WAV，成功返回 audio_id；失败返回 null。 */
@@ -78,6 +120,44 @@ public class GuideApiClient {
             Log.e(TAG, "uploadAudio 异常", e);
             return null;
         } finally {
+            unregister(call);
+        }
+    }
+
+    /** 上传眼镜照片，返回供 RTC Agent 访问的图片 URL。阻塞调用。 */
+    public UploadedImage uploadImage(File imageFile) {
+        Call call = null;
+        try {
+            RequestBody fileBody = RequestBody.create(imageFile, MediaType.parse("image/jpeg"));
+            MultipartBody body = new MultipartBody.Builder()
+                    .setType(MultipartBody.FORM)
+                    .addFormDataPart("file", imageFile.getName(), fileBody)
+                    .build();
+            Request request = new Request.Builder()
+                    .url(ApiConfig.UPLOAD_IMAGE)
+                    .header("X-Client-Type", "android")
+                    .post(body)
+                    .build();
+            call = client.newCall(request);
+            if (!register(call) || !registerVisionCall(call)) return null;
+            try (Response response = call.execute()) {
+                String responseBody = response.body() != null ? response.body().string() : "";
+                JSONObject json = new JSONObject(responseBody);
+                if (!response.isSuccessful() || json.optInt("code", -1) != 0) {
+                    Log.e(TAG, "uploadImage 后端错误: " + json.optString("message"));
+                    return null;
+                }
+                JSONObject data = json.getJSONObject("data");
+                String fileId = data.optString("file_id", "");
+                String url = data.optString("url", "");
+                return fileId.isEmpty() || url.isEmpty() ? null : new UploadedImage(fileId, url);
+            }
+        } catch (Exception e) {
+            if (call != null && call.isCanceled()) return null;
+            Log.e(TAG, "uploadImage 异常", e);
+            return null;
+        } finally {
+            unregisterVisionCall(call);
             unregister(call);
         }
     }
@@ -119,6 +199,170 @@ public class GuideApiClient {
             Log.e(TAG, "queryVoice 异常", e);
             callback.onError("query 异常: " + e.getMessage());
         } finally {
+            unregister(call);
+        }
+    }
+
+    /** 创建 RTC 会话；当前后端会同时启动 VoiceChat Agent。阻塞调用。 */
+    public RtcSessionInfo createRtcSession(@Nullable String venueId,
+                                           @Nullable String tourSessionId) {
+        Call call = null;
+        try {
+            JSONObject body = new JSONObject();
+            if (venueId != null && !venueId.trim().isEmpty()) {
+                body.put("venue_id", venueId.trim());
+            }
+            if (tourSessionId != null && !tourSessionId.trim().isEmpty()) {
+                body.put("session_id", tourSessionId.trim());
+            }
+            Request request = new Request.Builder()
+                    .url(ApiConfig.RTC_SESSION)
+                    .header("X-Client-Type", "android")
+                    .post(RequestBody.create(body.toString(), JSON))
+                    .build();
+            call = client.newCall(request);
+            if (!register(call)) return null;
+            try (Response response = call.execute()) {
+                String responseBody = response.body() != null ? response.body().string() : "";
+                JSONObject json = new JSONObject(responseBody);
+                if (!response.isSuccessful() || json.optInt("code", -1) != 0) {
+                    Log.e(TAG, "createRtcSession 后端错误: " + json.optString("message"));
+                    return null;
+                }
+                JSONObject data = json.getJSONObject("data");
+                JSONObject settings = data.optJSONObject("settings");
+                return new RtcSessionInfo(
+                        data.optString("session_id", tourSessionId == null ? "" : tourSessionId),
+                        data.optString("app_id", ""),
+                        data.optString("room_id", ""),
+                        data.optString("uid", ""),
+                        data.optString("token", ""),
+                        data.optString("task_id", ""),
+                        data.optString("bot_uid", ""),
+                        settings == null || settings.optBoolean("photo_enabled", true),
+                        data.optBoolean("mocked", false));
+            }
+        } catch (Exception e) {
+            if (call != null && call.isCanceled()) return null;
+            Log.e(TAG, "createRtcSession 异常", e);
+            return null;
+        } finally {
+            unregister(call);
+        }
+    }
+
+    /** 兼容独立 RTC 测试页。 */
+    public RtcSessionInfo createRtcSession(@Nullable String venueId) {
+        return createRtcSession(venueId, null);
+    }
+
+    /** 停止后端 VoiceChat Agent，避免结束游览后继续占用。阻塞调用。 */
+    public boolean stopRtcSession(String roomId, String taskId) {
+        return stopRtcSession(roomId, taskId, null);
+    }
+
+    public boolean stopRtcSession(String roomId, String taskId,
+                                  @Nullable String tourSessionId) {
+        Call call = null;
+        try {
+            JSONObject body = new JSONObject();
+            body.put("room_id", roomId);
+            body.put("task_id", taskId);
+            if (tourSessionId != null && !tourSessionId.trim().isEmpty()) {
+                body.put("session_id", tourSessionId.trim());
+            }
+            Request request = new Request.Builder()
+                    .url(ApiConfig.RTC_SESSION_STOP)
+                    .header("X-Client-Type", "android")
+                    .post(RequestBody.create(body.toString(), JSON))
+                    .build();
+            call = client.newCall(request);
+            if (!register(call)) return false;
+            try (Response response = call.execute()) {
+                String responseBody = response.body() != null ? response.body().string() : "";
+                JSONObject json = new JSONObject(responseBody);
+                if (!response.isSuccessful() || json.optInt("code", -1) != 0) {
+                    Log.e(TAG, "stopRtcSession 后端错误: " + json.optString("message"));
+                    return false;
+                }
+                JSONObject data = json.optJSONObject("data");
+                return data == null || data.optBoolean("stopped", true);
+            }
+        } catch (Exception e) {
+            if (call != null && call.isCanceled()) return false;
+            Log.e(TAG, "stopRtcSession 异常", e);
+            return false;
+        } finally {
+            unregister(call);
+        }
+    }
+
+    /** 为一次“拍照→上传→注入”事务打开专用取消域。 */
+    public void beginVisionCalls() {
+        synchronized (visionCallLock) {
+            if (activeVisionCall != null) activeVisionCall.cancel();
+            activeVisionCall = null;
+            visionCallsCancelled = false;
+        }
+    }
+
+    /** 只取消识图相关 HTTP，不关闭 RTC create/stop 所共用的客户端。 */
+    public void cancelVisionCalls() {
+        synchronized (visionCallLock) {
+            visionCallsCancelled = true;
+            if (activeVisionCall != null) activeVisionCall.cancel();
+        }
+    }
+
+    private boolean registerVisionCall(Call call) {
+        synchronized (visionCallLock) {
+            if (visionCallsCancelled) {
+                call.cancel();
+                return false;
+            }
+            activeVisionCall = call;
+            return true;
+        }
+    }
+
+    private void unregisterVisionCall(@Nullable Call call) {
+        if (call == null) return;
+        synchronized (visionCallLock) {
+            if (activeVisionCall == call) activeVisionCall = null;
+        }
+    }
+
+    /** 把图片 URL 作为一条外部用户消息注入当前 RTC Agent。阻塞调用。 */
+    public boolean injectRtcMessage(String roomId, String taskId, String message) {
+        Call call = null;
+        try {
+            JSONObject body = new JSONObject();
+            body.put("room_id", roomId);
+            body.put("task_id", taskId);
+            body.put("message", message);
+            body.put("interrupt_mode", 1);
+            Request request = new Request.Builder()
+                    .url(ApiConfig.RTC_SESSION_INJECT)
+                    .header("X-Client-Type", "android")
+                    .post(RequestBody.create(body.toString(), JSON))
+                    .build();
+            call = client.newCall(request);
+            if (!register(call) || !registerVisionCall(call)) return false;
+            try (Response response = call.execute()) {
+                String responseBody = response.body() != null ? response.body().string() : "";
+                JSONObject json = new JSONObject(responseBody);
+                if (!response.isSuccessful() || json.optInt("code", -1) != 0) {
+                    Log.e(TAG, "injectRtcMessage 后端错误: " + json.optString("message"));
+                    return false;
+                }
+                return true;
+            }
+        } catch (Exception e) {
+            if (call != null && call.isCanceled()) return false;
+            Log.e(TAG, "injectRtcMessage 异常", e);
+            return false;
+        } finally {
+            unregisterVisionCall(call);
             unregister(call);
         }
     }

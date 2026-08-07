@@ -18,6 +18,7 @@ import com.moyoung.glasses.conn.listener.CRPBleConnectionStateListener;
 import com.qimu.guide.config.OperatorConfigStore;
 import com.qimu.guide.net.TourSessionManager;
 import com.qimu.guide.service.BleService;
+import com.qimu.guide.service.RealtimeGuideManager;
 import com.qimu.guide.ui.device.DeviceFragment;
 import com.qimu.guide.ui.dialogue.DialogueFragment;
 import com.qimu.guide.ui.export.ExportFragment;
@@ -31,6 +32,7 @@ public class MainActivity extends AppCompatActivity implements TourSessionManage
     private BottomNavigationView bottomNav;
     private BleService bleService;
     private TourSessionManager tourSessionManager;
+    private RealtimeGuideManager realtimeGuideManager;
     private OperatorConfigStore operatorConfigStore;
     private DrawerLayout drawerLayout;
     private TextInputLayout venueNameInputLayout;
@@ -68,6 +70,7 @@ public class MainActivity extends AppCompatActivity implements TourSessionManage
         bleService.addListener(bleListener);
         tourSessionManager = TourSessionManager.get();
         tourSessionManager.addListener(this);
+        realtimeGuideManager = RealtimeGuideManager.get();
         operatorConfigStore = OperatorConfigStore.get(this);
 
         bottomNav = findViewById(R.id.bottom_navigation);
@@ -114,6 +117,8 @@ public class MainActivity extends AppCompatActivity implements TourSessionManage
             bottomNav.setSelectedItemId(R.id.nav_device);
         }
         invalidateTabs();
+        TourSessionManager.TourSession activeSession = tourSessionManager.current();
+        if (activeSession != null) realtimeGuideManager.startForTour(activeSession);
     }
 
     private void bindOperatorConfigDrawer() {
@@ -213,6 +218,12 @@ public class MainActivity extends AppCompatActivity implements TourSessionManage
     @Override
     public void onTourSessionChanged(boolean active) {
         runOnUiThread(() -> {
+            TourSessionManager.TourSession session = tourSessionManager.current();
+            if (active && session != null) {
+                realtimeGuideManager.startForTour(session);
+            } else if (!active) {
+                realtimeGuideManager.stopForTour(null);
+            }
             invalidateTabs();
             removeSessionFragments();
             bottomNav.setSelectedItemId(active ? R.id.nav_dialogue : R.id.nav_device);
