@@ -1510,6 +1510,20 @@ public class BleService {
         if (generation != mediaGeneration || attemptToken != wifiAttemptToken
                 || mediaState != MEDIA_ENABLING_WIFI || wifiApDiscoveryInFlight) return;
         wifiApDiscoveryInFlight = true;
+        String approvedBssid = getRecordedApBssid();
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q
+                && !TextUtils.isEmpty(approvedBssid)) {
+            wifiApResolvedBssid = approvedBssid;
+            notifyMediaStage("眼镜热点已开启，正在复用已授权连接…");
+            mainHandler.postDelayed(() -> {
+                if (generation != mediaGeneration || attemptToken != wifiAttemptToken
+                        || mediaState != MEDIA_ENABLING_WIFI
+                        || !wifiApDiscoveryInFlight) return;
+                clearPendingApDiscovery();
+                requestGlassesWifiJoin(generation, attemptToken);
+            }, WIFI_AP_BROADCAST_STABILIZATION_MS);
+            return;
+        }
         notifyMediaStage("眼镜热点已开启，正在等待手机发现…");
         mainHandler.postDelayed(() -> preScanGlassesAp(generation, attemptToken),
                 WIFI_AP_BROADCAST_STABILIZATION_MS);
@@ -1702,8 +1716,13 @@ public class BleService {
 
     private boolean hasRecordedApApproval(String bssid) {
         if (TextUtils.isEmpty(bssid)) return false;
-        return TextUtils.equals(bssid, preferences.getString(
-                KEY_WIFI_AP_APPROVED_BSSID_PREFIX + wifiPreferenceIdentity(), null));
+        return TextUtils.equals(bssid, getRecordedApBssid());
+    }
+
+    @Nullable
+    private String getRecordedApBssid() {
+        return preferences.getString(
+                KEY_WIFI_AP_APPROVED_BSSID_PREFIX + wifiPreferenceIdentity(), null);
     }
 
     private void recordApApproval(String bssid) {
