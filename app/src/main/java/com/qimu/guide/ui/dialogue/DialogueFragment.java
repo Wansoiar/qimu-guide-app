@@ -739,10 +739,11 @@ public class DialogueFragment extends Fragment {
      */
     private void setupVenueSpinner(View v) {
         // 名称 与 venue_id 一一对应（与后端库对齐）
-        final String[] names = {"义净寺（语音/文字）", "大雁塔（图片识物）"};
+        final String[] names = {"演示博物馆（真RAG·有佛像/方鼎/莲花尊）", "义净寺", "大雁塔"};
         final String[] ids = {
-                "61f1f93d-fe42-49d0-b392-bcbf9cd1c13d",  // 义净寺
-                "58cf0bef-90b9-4117-bd83-f59f4b05d9eb",  // 大雁塔
+                "a3bf2489-0b25-416d-9c7f-635fff041a5d",  // Spec005 演示博物馆（真 embedding，RAG 可搜）
+                "61f1f93d-fe42-49d0-b392-bcbf9cd1c13d",  // 义净寺（数据已丢，待重录）
+                "58cf0bef-90b9-4117-bd83-f59f4b05d9eb",  // 大雁塔（seed随机向量）
         };
         android.widget.Spinner spinner = v.findViewById(R.id.spinner_venue);
         android.widget.ArrayAdapter<String> adapter = new android.widget.ArrayAdapter<>(
