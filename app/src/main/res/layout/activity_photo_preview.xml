@@ -1,0 +1,68 @@
+<?xml version="1.0" encoding="utf-8"?>
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="#080604">
+
+    <com.qimu.guide.ui.gallery.ZoomImageView
+        android:id="@+id/photo_preview_image"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:background="#080604"
+        android:contentDescription="照片预览" />
+
+    <ProgressBar
+        android:id="@+id/photo_preview_progress"
+        android:layout_width="40dp"
+        android:layout_height="40dp"
+        android:layout_gravity="center"
+        android:indeterminateTint="@color/qimu_gold" />
+
+    <TextView
+        android:id="@+id/photo_preview_error"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="center"
+        android:gravity="center"
+        android:lineSpacingExtra="4dp"
+        android:padding="28dp"
+        android:text="无法显示照片"
+        android:textColor="#FFF9EF"
+        android:textSize="14sp"
+        android:visibility="gone" />
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="64dp"
+        android:layout_gravity="top"
+        android:background="@drawable/gallery_bg_preview_bar"
+        android:gravity="center_vertical"
+        android:orientation="horizontal"
+        android:paddingStart="8dp"
+        android:paddingEnd="16dp">
+
+        <ImageButton
+            android:id="@+id/photo_preview_back"
+            android:layout_width="48dp"
+            android:layout_height="48dp"
+            android:background="?attr/selectableItemBackgroundBorderless"
+            android:contentDescription="返回照片列表"
+            android:padding="12dp"
+            android:src="@drawable/gallery_ic_arrow_back_24"
+            app:tint="#FFF9EF" />
+
+        <TextView
+            android:id="@+id/photo_preview_title"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="4dp"
+            android:layout_weight="1"
+            android:ellipsize="middle"
+            android:singleLine="true"
+            android:text="照片预览"
+            android:textColor="#FFF9EF"
+            android:textSize="15sp"
+            android:textStyle="bold" />
+    </LinearLayout>
+</FrameLayout>

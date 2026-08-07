@@ -2,14 +2,14 @@
 <menu xmlns:android="http://schemas.android.com/apk/res/android">
     <item
         android:id="@+id/nav_device"
-        android:icon="@android:drawable/ic_menu_compass"
+        android:icon="@drawable/ic_nav_device_24"
         android:title="@string/tab_device" />
     <item
         android:id="@+id/nav_dialogue"
-        android:icon="@android:drawable/ic_menu_sort_by_size"
+        android:icon="@drawable/ic_nav_dialogue_24"
         android:title="@string/tab_dialogue" />
     <item
         android:id="@+id/nav_export"
-        android:icon="@android:drawable/ic_menu_share"
+        android:icon="@drawable/ic_nav_export_24"
         android:title="@string/tab_export" />
 </menu>

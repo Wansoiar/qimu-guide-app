@@ -5,6 +5,7 @@ import android.content.Context;
 
 import com.moyoung.glasses.CRPBleClient;
 import com.moyoung.glasses.util.BleLog;
+import com.qimu.guide.net.TourSessionManager;
 
 public class QimuApplication extends Application {
 
@@ -26,5 +27,6 @@ public class QimuApplication extends Application {
         appContext = this;
         BleLog.isPrint = true;
         mBleClient = CRPBleClient.create(this);
+        TourSessionManager.get().initialize(this);
     }
 }

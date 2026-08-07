@@ -1,153 +1,514 @@
 <?xml version="1.0" encoding="utf-8"?>
-<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+<androidx.core.widget.NestedScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:orientation="vertical"
-    android:padding="12dp">
+    android:background="@drawable/bg_screen_warm"
+    android:clipToPadding="false"
+    android:fillViewport="true">
 
-    <TextView
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:text="@string/device_management"
-        android:textSize="20sp"
-        android:textColor="@color/text_primary"
-        android:textStyle="bold" />
-
-    <TextView
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:text="@string/device_subtitle"
-        android:textSize="14sp"
-        android:textColor="@color/text_secondary"
-        android:layout_marginTop="4dp" />
-
-    <!-- 已连接状态卡片 -->
     <LinearLayout
-        android:id="@+id/layout_connected"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:orientation="vertical"
-        android:visibility="gone"
-        android:background="@drawable/card_background"
-        android:padding="16dp"
-        android:layout_marginTop="12dp">
+        android:paddingStart="20dp"
+        android:paddingTop="22dp"
+        android:paddingEnd="20dp"
+        android:paddingBottom="28dp">
 
         <TextView
-            android:id="@+id/tv_device_name"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:textSize="18sp"
-            android:textColor="@color/text_primary"
-            android:textStyle="bold" />
+            android:text="@string/device_management"
+            android:textAppearance="@style/TextAppearance.Qimu.PageTitle" />
 
         <TextView
-            android:id="@+id/tv_device_id"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:textSize="12sp"
-            android:textColor="@color/text_hint"
-            android:layout_marginTop="4dp" />
-
-        <View
             android:layout_width="match_parent"
-            android:layout_height="1dp"
-            android:background="@color/divider"
-            android:layout_marginVertical="8dp" />
+            android:layout_height="wrap_content"
+            android:layout_marginTop="5dp"
+            android:lineSpacingExtra="3dp"
+            android:text="@string/device_subtitle"
+            android:textColor="@color/qimu_text_secondary"
+            android:textSize="15sp" />
 
         <LinearLayout
+            android:id="@+id/layout_cleanup_warning"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:orientation="horizontal"
-            android:weightSum="3">
+            android:layout_marginTop="14dp"
+            android:background="@drawable/bg_card_soft"
+            android:orientation="vertical"
+            android:padding="14dp"
+            android:visibility="gone">
 
-            <LinearLayout android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:orientation="vertical" android:gravity="center">
-                <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="@string/battery" android:textSize="12sp" android:textColor="@color/text_hint" />
-                <TextView android:id="@+id/tv_battery" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="--" android:textSize="16sp" android:textColor="@color/text_primary" />
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="上次归还的数据清理未完成，请管理员检查眼镜及本机缓存"
+                android:textColor="@color/qimu_error"
+                android:textSize="14sp"
+                android:textStyle="bold" />
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/btn_confirm_cleanup"
+                style="@style/Widget.Qimu.Button.Outline"
+                android:layout_width="match_parent"
+                android:layout_height="44dp"
+                android:layout_marginTop="10dp"
+                android:text="管理员确认已清理" />
+        </LinearLayout>
+
+        <LinearLayout
+            android:id="@+id/layout_connected"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="20dp"
+            android:background="@drawable/bg_card_default"
+            android:orientation="vertical"
+            android:padding="16dp"
+            android:visibility="gone">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:gravity="center_vertical"
+                android:orientation="horizontal">
+
+                <FrameLayout
+                    android:layout_width="48dp"
+                    android:layout_height="48dp"
+                    android:background="@drawable/bg_icon_tile_gold"
+                    android:padding="11dp">
+
+                    <ImageView
+                        android:layout_width="match_parent"
+                        android:layout_height="match_parent"
+                        android:contentDescription="@string/device_connected"
+                        android:src="@drawable/ic_glasses_24"
+                        app:tint="@color/qimu_gold_dark" />
+                </FrameLayout>
+
+                <LinearLayout
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="12dp"
+                    android:layout_weight="1"
+                    android:orientation="vertical">
+
+                    <TextView
+                        android:id="@+id/tv_device_name"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:ellipsize="end"
+                        android:maxLines="1"
+                        android:text="@string/unknown_device"
+                        android:textAppearance="@style/TextAppearance.Qimu.SectionTitle" />
+
+                    <TextView
+                        android:id="@+id/tv_device_id"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="3dp"
+                        android:ellipsize="end"
+                        android:maxLines="1"
+                        android:textColor="@color/qimu_text_tertiary"
+                        android:textSize="12sp" />
+                </LinearLayout>
+
             </LinearLayout>
-            <LinearLayout android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:orientation="vertical" android:gravity="center">
-                <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="@string/signal" android:textSize="12sp" android:textColor="@color/text_hint" />
-                <TextView android:id="@+id/tv_signal" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="--" android:textSize="16sp" android:textColor="@color/text_primary" />
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="16dp"
+                android:orientation="horizontal"
+                android:weightSum="2">
+
+                <LinearLayout
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_marginEnd="4dp"
+                    android:layout_weight="1"
+                    android:background="@drawable/bg_metric_tile"
+                    android:gravity="center_vertical"
+                    android:minHeight="60dp"
+                    android:orientation="horizontal"
+                    android:padding="11dp">
+
+                    <ImageView
+                        android:id="@+id/iv_ble_status"
+                        android:layout_width="20dp"
+                        android:layout_height="20dp"
+                        android:contentDescription="@string/ble_connection"
+                        android:src="@drawable/ic_link_20"
+                        app:tint="@color/qimu_connecting" />
+
+                    <LinearLayout
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_marginStart="8dp"
+                        android:layout_weight="1"
+                        android:orientation="vertical">
+
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="@string/ble_connection"
+                            android:textColor="@color/qimu_text_tertiary"
+                            android:textSize="11sp" />
+
+                        <TextView
+                            android:id="@+id/tv_ble_status"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:layout_marginTop="2dp"
+                            android:ellipsize="end"
+                            android:maxLines="1"
+                            android:text="@string/connection_connecting"
+                            android:textColor="@color/qimu_connecting"
+                            android:textSize="13sp"
+                            android:textStyle="bold" />
+                    </LinearLayout>
+                </LinearLayout>
+
+                <LinearLayout
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="4dp"
+                    android:layout_weight="1"
+                    android:background="@drawable/bg_metric_tile"
+                    android:gravity="center_vertical"
+                    android:minHeight="60dp"
+                    android:orientation="horizontal"
+                    android:padding="11dp">
+
+                    <ImageView
+                        android:id="@+id/iv_audio_status"
+                        android:layout_width="20dp"
+                        android:layout_height="20dp"
+                        android:contentDescription="@string/audio_connection"
+                        android:src="@drawable/ic_headset_off_20"
+                        app:tint="@color/qimu_error" />
+
+                    <LinearLayout
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_marginStart="8dp"
+                        android:layout_weight="1"
+                        android:orientation="vertical">
+
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="@string/audio_connection"
+                            android:textColor="@color/qimu_text_tertiary"
+                            android:textSize="11sp" />
+
+                        <TextView
+                            android:id="@+id/tv_audio_status"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:layout_marginTop="2dp"
+                            android:ellipsize="end"
+                            android:maxLines="1"
+                            android:text="@string/connection_disconnected"
+                            android:textColor="@color/qimu_error"
+                            android:textSize="13sp"
+                            android:textStyle="bold" />
+                    </LinearLayout>
+                </LinearLayout>
             </LinearLayout>
-            <LinearLayout android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:orientation="vertical" android:gravity="center">
-                <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="@string/firmware_version" android:textSize="12sp" android:textColor="@color/text_hint" />
-                <TextView android:id="@+id/tv_firmware" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="--" android:textSize="16sp" android:textColor="@color/text_primary" />
+
+            <View
+                android:layout_width="match_parent"
+                android:layout_height="1dp"
+                android:layout_marginTop="14dp"
+                android:layout_marginBottom="14dp"
+                android:background="@color/qimu_outline" />
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:weightSum="2">
+
+                <LinearLayout
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:gravity="center"
+                    android:orientation="vertical">
+                    <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="@string/battery" android:textColor="@color/qimu_text_tertiary" android:textSize="12sp" />
+                    <TextView android:id="@+id/tv_battery" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginTop="3dp" android:text="—" android:textColor="@color/qimu_text_primary" android:textSize="17sp" android:textStyle="bold" />
+                </LinearLayout>
+
+                <LinearLayout
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:gravity="center"
+                    android:orientation="vertical">
+                    <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="@string/firmware_version" android:textColor="@color/qimu_text_tertiary" android:textSize="12sp" />
+                    <TextView android:id="@+id/tv_firmware" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginTop="3dp" android:ellipsize="end" android:maxLines="1" android:text="—" android:textColor="@color/qimu_text_primary" android:textSize="15sp" android:textStyle="bold" />
+                </LinearLayout>
+            </LinearLayout>
+
+            <TextView
+                android:id="@+id/tv_device_ready"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="16dp"
+                android:background="@drawable/bg_card_soft"
+                android:drawableStart="@drawable/ic_info_20"
+                android:drawablePadding="9dp"
+                android:lineSpacingExtra="2dp"
+                android:padding="12dp"
+                android:text="@string/device_ready_body"
+                android:textColor="@color/qimu_text_secondary"
+                android:textSize="13sp"
+                app:drawableTint="@color/qimu_gold_dark" />
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/btn_debug_disconnect"
+                style="@style/Widget.Qimu.Button.Outline"
+                android:layout_width="match_parent"
+                android:layout_height="48dp"
+                android:layout_marginTop="14dp"
+                android:text="@string/disconnect_device" />
+        </LinearLayout>
+
+        <LinearLayout
+            android:id="@+id/layout_disconnected"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="20dp"
+            android:orientation="vertical">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:background="@drawable/bg_card_default"
+                android:orientation="vertical"
+                android:padding="16dp">
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal">
+
+                    <FrameLayout
+                        android:layout_width="48dp"
+                        android:layout_height="48dp"
+                        android:background="@drawable/bg_icon_tile"
+                        android:padding="11dp">
+                        <ImageView android:layout_width="match_parent" android:layout_height="match_parent" android:contentDescription="@string/device_connect_title" android:src="@drawable/ic_glasses_24" app:tint="@color/qimu_text_secondary" />
+                    </FrameLayout>
+
+                    <LinearLayout
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_marginStart="12dp"
+                        android:layout_weight="1"
+                        android:orientation="vertical">
+                        <TextView android:layout_width="match_parent" android:layout_height="wrap_content" android:text="@string/device_connect_title" android:textAppearance="@style/TextAppearance.Qimu.SectionTitle" />
+                        <TextView android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="3dp" android:lineSpacingExtra="2dp" android:text="@string/device_connect_body" android:textColor="@color/qimu_text_secondary" android:textSize="13sp" />
+                    </LinearLayout>
+                </LinearLayout>
+
+                <TextView
+                    android:id="@+id/tv_scan_status"
+                    android:layout_width="wrap_content"
+                    android:layout_height="32dp"
+                    android:layout_marginTop="16dp"
+                    android:background="@drawable/bg_status_neutral"
+                    android:gravity="center"
+                    android:paddingStart="12dp"
+                    android:paddingEnd="12dp"
+                    android:text="@string/state_disconnected"
+                    android:textColor="@color/qimu_text_secondary"
+                    android:textSize="12sp" />
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/btn_scan"
+                    style="@style/Widget.Qimu.Button.Primary"
+                    android:layout_width="match_parent"
+                    android:layout_height="52dp"
+                    android:layout_marginTop="14dp"
+                    android:text="@string/scan_and_connect" />
+            </LinearLayout>
+
+            <androidx.recyclerview.widget.RecyclerView
+                android:id="@+id/recycler_devices"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="10dp"
+                android:clipToPadding="false"
+                android:nestedScrollingEnabled="false" />
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="14dp"
+                android:background="@drawable/bg_card_soft"
+                android:gravity="center_vertical"
+                android:orientation="horizontal"
+                android:padding="14dp">
+
+                <ImageView
+                    android:layout_width="20dp"
+                    android:layout_height="20dp"
+                    android:contentDescription="@string/device_tips_title"
+                    android:src="@drawable/ic_info_20"
+                    app:tint="@color/qimu_gold_dark" />
+
+                <LinearLayout
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="10dp"
+                    android:layout_weight="1"
+                    android:orientation="vertical">
+                    <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="@string/device_tips_title" android:textColor="@color/qimu_text_primary" android:textSize="14sp" android:textStyle="bold" />
+                    <TextView android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="3dp" android:lineSpacingExtra="2dp" android:text="@string/device_tips_body" android:textColor="@color/qimu_text_secondary" android:textSize="12sp" />
+                </LinearLayout>
             </LinearLayout>
         </LinearLayout>
-    </LinearLayout>
 
-    <!-- 未连接状态 -->
-    <LinearLayout
-        android:id="@+id/layout_disconnected"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:orientation="vertical"
-        android:visibility="visible"
-        android:layout_marginTop="12dp">
-
-        <TextView android:id="@+id/tv_scan_status" android:layout_width="wrap_content" android:layout_height="wrap_content"
-            android:text="@string/state_disconnected" android:textSize="14sp" android:textColor="@color/text_secondary" android:layout_marginBottom="8dp" />
-
-        <androidx.appcompat.widget.AppCompatButton
-            android:id="@+id/btn_scan"
-            android:layout_width="match_parent"
-            android:layout_height="44dp"
-            android:background="@color/colorPrimary"
-            android:text="@string/scan_and_connect"
-            android:textColor="@android:color/white"
-            android:textAllCaps="false" />
-    </LinearLayout>
-
-    <!-- 设备列表 -->
-    <androidx.recyclerview.widget.RecyclerView
-        android:id="@+id/recycler_devices"
-        android:layout_width="match_parent"
-        android:layout_height="0dp"
-        android:layout_weight="1"
-        android:layout_marginTop="6dp"
-        android:visibility="visible" />
-
-    <!-- ── 调试分隔线 ── -->
-    <TextView
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:text="━━━ 调试控制 ━━━"
-        android:textSize="12sp"
-        android:textColor="@color/colorPrimary"
-        android:gravity="center"
-        android:layout_marginTop="4dp" />
-
-    <!-- 调试按钮行1 -->
-    <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="horizontal">
-        <Button android:id="@+id/btn_debug_disconnect" android:layout_width="0dp" android:layout_height="36dp" android:layout_weight="1" android:text="断开" android:textSize="10sp" android:textAllCaps="false" android:layout_marginEnd="1dp" />
-        <Button android:id="@+id/btn_debug_query_battery" android:layout_width="0dp" android:layout_height="36dp" android:layout_weight="1" android:text="查电量" android:textSize="10sp" android:textAllCaps="false" android:layout_marginHorizontal="1dp" />
-        <Button android:id="@+id/btn_debug_sync_time" android:layout_width="0dp" android:layout_height="36dp" android:layout_weight="1" android:text="同步时间" android:textSize="10sp" android:textAllCaps="false" android:layout_marginStart="1dp" />
-    </LinearLayout>
-    <!-- 调试按钮行2 -->
-    <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="horizontal" android:layout_marginTop="2dp">
-        <Button android:id="@+id/btn_debug_query_file" android:layout_width="0dp" android:layout_height="36dp" android:layout_weight="1" android:text="查询文件" android:textSize="10sp" android:textAllCaps="false" android:layout_marginEnd="1dp" />
-        <Button android:id="@+id/btn_debug_wifi_download" android:layout_width="0dp" android:layout_height="36dp" android:layout_weight="1" android:text="WiFi下载" android:textSize="10sp" android:textAllCaps="false" android:layout_marginHorizontal="1dp" />
-        <Button android:id="@+id/btn_debug_a2dp" android:layout_width="0dp" android:layout_height="36dp" android:layout_weight="1" android:text="A2DP配对" android:textSize="10sp" android:textAllCaps="false" android:layout_marginStart="1dp" />
-    </LinearLayout>
-    <!-- 调试按钮行3 -->
-    <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="horizontal" android:layout_marginTop="2dp">
-        <Button android:id="@+id/btn_debug_play_tone" android:layout_width="0dp" android:layout_height="36dp" android:layout_weight="1" android:text="播放测试音" android:textSize="10sp" android:textAllCaps="false" android:layout_marginEnd="1dp" />
-        <Button android:id="@+id/btn_debug_clear_log" android:layout_width="0dp" android:layout_height="36dp" android:layout_weight="1" android:text="清日志" android:textSize="10sp" android:textAllCaps="false" android:layout_marginStart="1dp" />
-    </LinearLayout>
-    <ScrollView
-        android:layout_width="match_parent"
-        android:layout_height="120dp"
-        android:layout_marginTop="4dp"
-        android:background="#1A000000">
-
-        <TextView
-            android:id="@+id/tv_debug_log"
+        <LinearLayout
+            android:id="@+id/layout_tour_start"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:textSize="9sp"
-            android:textColor="#CC000000"
-            android:padding="4dp"
-            android:lineSpacingExtra="2dp"
-            android:typeface="monospace" />
-    </ScrollView>
+            android:layout_marginTop="14dp"
+            android:background="@drawable/bg_card_accent"
+            android:orientation="vertical"
+            android:padding="16dp">
 
-</LinearLayout>
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="@string/venue_configured_for_next_tour"
+                android:textColor="@color/qimu_text_tertiary"
+                android:textSize="12sp" />
+
+            <TextView
+                android:id="@+id/tv_default_venue"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="3dp"
+                android:text="@string/operator_venue_section"
+                android:textAppearance="@style/TextAppearance.Qimu.SectionTitle" />
+
+            <TextView
+                android:id="@+id/tv_tour_start_hint"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="5dp"
+                android:text="@string/venue_session_hint"
+                android:textColor="@color/qimu_text_secondary"
+                android:textSize="13sp" />
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/btn_start_tour"
+                style="@style/Widget.Qimu.Button.Primary"
+                android:layout_width="match_parent"
+                android:layout_height="52dp"
+                android:layout_marginTop="14dp"
+                android:text="@string/start_tour" />
+        </LinearLayout>
+
+        <LinearLayout
+            android:id="@+id/layout_tour_active"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="14dp"
+            android:background="@drawable/bg_card_accent"
+            android:orientation="vertical"
+            android:padding="16dp"
+            android:visibility="gone">
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="导览进行中"
+                android:textColor="@color/qimu_connected"
+                android:textSize="15sp"
+                android:textStyle="bold" />
+
+            <TextView
+                android:id="@+id/tv_active_tour"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="4dp"
+                android:textColor="@color/qimu_text_secondary"
+                android:textSize="13sp" />
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="7dp"
+                android:text="可在对话页提问，结束前请到导出页确认并保存照片。"
+                android:textColor="@color/qimu_text_secondary"
+                android:textSize="13sp" />
+        </LinearLayout>
+
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/btn_toggle_debug"
+            style="@style/Widget.Qimu.Button.Outline"
+            android:layout_width="match_parent"
+            android:layout_height="46dp"
+            android:layout_marginTop="18dp"
+            android:text="@string/device_diagnostics_show" />
+
+        <LinearLayout
+            android:id="@+id/layout_debug"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="10dp"
+            android:background="@drawable/bg_card_default"
+            android:orientation="vertical"
+            android:padding="12dp"
+            android:visibility="gone">
+
+            <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="设备诊断" android:textAppearance="@style/TextAppearance.Qimu.SectionTitle" />
+            <TextView android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="2dp" android:text="仅用于眼镜联调与故障排查" android:textAppearance="@style/TextAppearance.Qimu.Caption" />
+
+            <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="10dp" android:orientation="horizontal">
+                <com.google.android.material.button.MaterialButton android:id="@+id/btn_debug_query_battery" style="@style/Widget.Qimu.Button.Soft" android:layout_width="0dp" android:layout_height="42dp" android:layout_marginEnd="3dp" android:layout_weight="1" android:text="查电量" android:textSize="12sp" />
+                <com.google.android.material.button.MaterialButton android:id="@+id/btn_debug_sync_time" style="@style/Widget.Qimu.Button.Soft" android:layout_width="0dp" android:layout_height="42dp" android:layout_marginStart="3dp" android:layout_weight="1" android:text="同步时间" android:textSize="12sp" />
+            </LinearLayout>
+            <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="6dp" android:orientation="horizontal">
+                <com.google.android.material.button.MaterialButton android:id="@+id/btn_debug_query_file" style="@style/Widget.Qimu.Button.Soft" android:layout_width="0dp" android:layout_height="42dp" android:layout_marginEnd="3dp" android:layout_weight="1" android:text="查询文件" android:textSize="12sp" />
+                <com.google.android.material.button.MaterialButton android:id="@+id/btn_debug_wifi_download" style="@style/Widget.Qimu.Button.Soft" android:layout_width="0dp" android:layout_height="42dp" android:layout_marginStart="3dp" android:layout_weight="1" android:text="Wi-Fi 下载" android:textSize="12sp" />
+            </LinearLayout>
+            <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="6dp" android:orientation="horizontal">
+                <com.google.android.material.button.MaterialButton android:id="@+id/btn_debug_a2dp" style="@style/Widget.Qimu.Button.Soft" android:layout_width="0dp" android:layout_height="42dp" android:layout_marginEnd="3dp" android:layout_weight="1" android:text="音频配对" android:textSize="12sp" />
+                <com.google.android.material.button.MaterialButton android:id="@+id/btn_debug_play_tone" style="@style/Widget.Qimu.Button.Soft" android:layout_width="0dp" android:layout_height="42dp" android:layout_marginStart="3dp" android:layout_weight="1" android:text="播放测试音" android:textSize="12sp" />
+            </LinearLayout>
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/btn_debug_clear_log"
+                style="@style/Widget.Qimu.Button.Outline"
+                android:layout_width="match_parent"
+                android:layout_height="42dp"
+                android:layout_marginTop="6dp"
+                android:text="清空诊断日志"
+                android:textSize="12sp" />
+
+            <ScrollView
+                android:layout_width="match_parent"
+                android:layout_height="140dp"
+                android:layout_marginTop="8dp"
+                android:background="@drawable/bg_debug_console">
+                <TextView
+                    android:id="@+id/tv_debug_log"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:lineSpacingExtra="2dp"
+                    android:padding="10dp"
+                    android:textColor="@color/qimu_app_bar"
+                    android:textSize="10sp"
+                    android:typeface="monospace" />
+            </ScrollView>
+        </LinearLayout>
+    </LinearLayout>
+</androidx.core.widget.NestedScrollView>
