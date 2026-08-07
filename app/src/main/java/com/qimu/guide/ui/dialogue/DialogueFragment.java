@@ -289,11 +289,14 @@ public class DialogueFragment extends Fragment {
             }
 
             ttsPlayer.reset();
-            boolean glassesConnected = BleService.getInstance().getConnection() != null;
-            playBackendTtsThisTurn = (TTS_OUTPUT == TtsOutput.BACKEND_ALWAYS) || !glassesConnected;
+            // 拍照轮始终用手机 TTS 播（AudioChunkPlayer 已改走通话流，能挤进眼镜 SCO 发声）。
+            // sendTextToGlasses 只让眼镜显示文字、不发声，故声音靠这里播。
+            playBackendTtsThisTurn = true;
 
-            // 拍照轮：加"我拍了张照片"气泡（无 ASR，不回填）+ AI 回复气泡
-            setupTurnBubbles("📷 我拍了张照片，请讲解", DialogueMessage.Type.PHOTO);
+            // 拍照轮：加"我拍了张照片"文字气泡（无 ASR，不回填）+ AI 回复气泡。
+            // 用 VOICE(纯文字)而非 PHOTO——真图气泡已由 onDialogueImageChange 显示，
+            // 这里再用 PHOTO 会多出一个无图气泡（RecyclerView 复用致残留/显示上一张图）。
+            setupTurnBubbles("📷 我拍了张照片，请讲解", DialogueMessage.Type.VOICE);
             apiClient.queryPhoto(imageId, newRenderCallback(/*fillUserBubbleWithAsr=*/false));
         }).start();
     }

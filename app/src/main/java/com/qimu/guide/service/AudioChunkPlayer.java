@@ -58,8 +58,10 @@ public class AudioChunkPlayer {
         playing = true;
         try {
             MediaPlayer mp = new MediaPlayer();
+            // 用通话流(VOICE_COMMUNICATION)而非媒体流(MEDIA)：火山对话时眼镜在 SCO 通话模式，
+            // MEDIA(A2DP) 流会被压制→没声。走通话流才能挤进眼镜的 SCO 通道发声。
             mp.setAudioAttributes(new AudioAttributes.Builder()
-                    .setUsage(AudioAttributes.USAGE_MEDIA)
+                    .setUsage(AudioAttributes.USAGE_VOICE_COMMUNICATION)
                     .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
                     .build());
             mp.setDataSource(url);

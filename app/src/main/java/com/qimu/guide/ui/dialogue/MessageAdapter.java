@@ -60,6 +60,8 @@ public class MessageAdapter extends RecyclerView.Adapter<RecyclerView.ViewHolder
             h.tvTime.setText(time);
             if (msg.getImageFile() != null && msg.getImageFile().exists()) {
                 h.ivPhoto.setImageURI(android.net.Uri.fromFile(msg.getImageFile()));
+            } else {
+                h.ivPhoto.setImageURI(null);  // 复用 ViewHolder 时清空，避免残留上一张图
             }
         } else if (holder instanceof VoiceViewHolder) {
             VoiceViewHolder h = (VoiceViewHolder) holder;
