@@ -114,6 +114,17 @@ public class DialogueFragment extends Fragment {
      */
     private static final boolean STREAM_UPLOAD_GLASSES = false;
 
+    /**
+     * ⭐ 主链路开关（2026-08-06）：true = 走火山 RTC 全双工（进页自动进房、随时说随时答、字幕上屏）；
+     * false = 走旧自建 SSE「按住说话」链路（保留作退路）。以 WebRTC 为准，默认 true。
+     * 火山模式下：隐藏「按住说话」；眼镜走蓝牙耳机路由（系统音频，零代码）；旧 SSE 那套不走。
+     */
+    private static final boolean USE_VOLC_RTC = true;
+
+    // 火山 RTC 会话（USE_VOLC_RTC 时持有；进页 start，离页 stop）
+    private com.qimu.guide.service.RtcVoiceChatManager rtcManager;
+    private GuideApiClient.RtcSessionInfo rtcSession;
+
     // 流式会话句柄（按住说话/眼镜说话期间持有；松手/判停后由 done/error 自然失效）
     private volatile GuideApiClient.StreamSession streamSession;
 
@@ -405,6 +416,24 @@ public class DialogueFragment extends Fragment {
 
         setupVenueSpinner(v);
 
+        // 拍照按钮（火山/旧链路都用眼镜拍照，共用）
+        v.findViewById(R.id.btn_take_photo).setOnClickListener(vi -> {
+            CRPBleConnection c = BleService.getInstance().getConnection();
+            if (c == null) { Toast.makeText(getContext(), "拍照需连接眼镜", Toast.LENGTH_SHORT).show(); return; }
+            c.takePhoto(TakePhoto.PhotoMode.ModeAIRecognition);
+            uiAddMessage(new DialogueMessage(DialogueMessage.Type.AI_REPLY,
+                    "📷 拍照指令已发送", System.currentTimeMillis()));
+        });
+
+        // ⭐ 火山主链路：进页自动进房全双工对话，隐藏「按住说话」；眼镜走蓝牙耳机路由
+        if (USE_VOLC_RTC) {
+            View push = v.findViewById(R.id.btn_push_text);
+            if (push != null) push.setVisibility(View.GONE);
+            startVolcChat();
+            return;
+        }
+
+        // ── 以下为旧自建 SSE 链路（USE_VOLC_RTC=false 时的退路）──
         CRPBleConnection conn = BleService.getInstance().getConnection();
         if (conn != null) {
             aiDialogueManager = new AIDialogueManager(conn);
@@ -418,14 +447,6 @@ public class DialogueFragment extends Fragment {
             uiAddMessage(new DialogueMessage(DialogueMessage.Type.AI_REPLY,
                     "🟡 未连接眼镜，可用手机麦克风：按住下方「🎤 按住说话」提问", System.currentTimeMillis()));
         }
-
-        v.findViewById(R.id.btn_take_photo).setOnClickListener(vi -> {
-            CRPBleConnection c = BleService.getInstance().getConnection();
-            if (c == null) { Toast.makeText(getContext(), "拍照需连接眼镜", Toast.LENGTH_SHORT).show(); return; }
-            c.takePhoto(TakePhoto.PhotoMode.ModeAIRecognition);
-            uiAddMessage(new DialogueMessage(DialogueMessage.Type.AI_REPLY,
-                    "📷 拍照指令已发送", System.currentTimeMillis()));
-        });
 
         // 调试：从相册选图走 photo query（眼镜不在时验证图片识物）
         v.findViewById(R.id.btn_pick_image).setOnClickListener(vi -> pickImageLauncher.launch("image/*"));
@@ -593,6 +614,69 @@ public class DialogueFragment extends Fragment {
         fos.write(header);
     }
 
+    // ── 火山 RTC 主链路（USE_VOLC_RTC）──────────────────────────────
+
+    /** 进对话页自动建 session + 进房，全双工对话。字幕经 onSubtitle 上屏。 */
+    private void startVolcChat() {
+        if (ContextCompat.checkSelfPermission(requireContext(), Manifest.permission.RECORD_AUDIO)
+                != PackageManager.PERMISSION_GRANTED) {
+            micPermLauncher.launch(Manifest.permission.RECORD_AUDIO);
+            // 权限授予后用户重进页即可；此处先提示
+        }
+        uiAddMessage(new DialogueMessage(DialogueMessage.Type.AI_REPLY,
+                "🎙️ 正在连接 AI 讲解员…", System.currentTimeMillis()));
+        rtcManager = new com.qimu.guide.service.RtcVoiceChatManager(requireContext());
+        final String venueId = com.qimu.guide.net.SessionContext.get().venueId();
+        new Thread(() -> {
+            GuideApiClient.RtcSessionInfo s = apiClient.createRtcSession(venueId);
+            if (s == null) {
+                uiAddMessage(new DialogueMessage(DialogueMessage.Type.AI_REPLY,
+                        "⚠️ 连接失败（检查后端/网络），可稍后重进本页重试", System.currentTimeMillis()));
+                return;
+            }
+            rtcSession = s;
+            if (s.mocked) {
+                uiAddMessage(new DialogueMessage(DialogueMessage.Type.AI_REPLY,
+                        "⚠️ 后端未配火山凭证（mock），AI 不会进房", System.currentTimeMillis()));
+            }
+            requireActivitySafe(() -> rtcManager.start(s, volcListener));
+        }).start();
+    }
+
+    /** 离页/销毁时停会话（退房 + 关后端智能体，避免持续计费）。 */
+    private void stopVolcChat() {
+        if (rtcManager != null) { rtcManager.stop(); rtcManager = null; }
+        final GuideApiClient.RtcSessionInfo s = rtcSession;
+        rtcSession = null;
+        if (s != null) {
+            new Thread(() -> apiClient.stopRtcSession(s.roomId, s.taskId)).start();
+        }
+    }
+
+    private final com.qimu.guide.service.RtcVoiceChatManager.Listener volcListener =
+            new com.qimu.guide.service.RtcVoiceChatManager.Listener() {
+        @Override
+        public void onRoomJoined(boolean success, String reason) {
+            uiAddMessage(new DialogueMessage(DialogueMessage.Type.AI_REPLY,
+                    success ? "🟢 已连接，直接开口说话就行" : ("⚠️ 进房失败：" + reason),
+                    System.currentTimeMillis()));
+        }
+        @Override public void onAgentJoined(String uid) {}
+        @Override public void onUserLeave(String uid) {}
+        @Override
+        public void onSubtitle(boolean fromSelf, String text, boolean definite) {
+            if (!definite || text == null || text.isEmpty()) return;  // 只上最终结果，避免刷屏
+            uiAddMessage(new DialogueMessage(
+                    fromSelf ? DialogueMessage.Type.VOICE : DialogueMessage.Type.AI_REPLY,
+                    (fromSelf ? "🗣️ 你说：" : "") + text, System.currentTimeMillis()));
+        }
+        @Override
+        public void onError(int code, String desc) {
+            uiAddMessage(new DialogueMessage(DialogueMessage.Type.AI_REPLY,
+                    "⚠️ RTC 错误 " + code, System.currentTimeMillis()));
+        }
+    };
+
     /**
      * 调试用场馆切换：义净寺（语音/文字 demo，有全量文字）↔ 大雁塔（图片识物测试图所在馆）。
      * 选中即 SessionContext.setVenueId，后续 query 带上新 venue_id。
@@ -632,6 +716,7 @@ public class DialogueFragment extends Fragment {
     @Override
     public void onDestroyView() {
         super.onDestroyView();
+        stopVolcChat();  // 火山模式：退房 + 关后端智能体（避免持续计费）
         if (aiDialogueManager != null) aiDialogueManager.release();
         if (streamSession != null) { streamSession.cancel(); streamSession = null; }
         micRecorder.release();

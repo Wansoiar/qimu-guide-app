@@ -14,10 +14,20 @@ public final class ApiConfig {
 
     private ApiConfig() {}
 
-    /** 后端基址（adb reverse 场景走本机回环）。 */
-    public static final String BASE_URL = "http://127.0.0.1:8787";
-    /** WebSocket 基址（与 BASE_URL 同主机，http→ws）。 */
-    public static final String WS_BASE_URL = "ws://127.0.0.1:8787";
+    // ── 多环境（2026-08-06）──────────────────────────────────────────
+    // debug 包：走本机回环（USB + adb reverse tcp:8787），本地联调。
+    // release 包：走公网（部署后把 PROD_HOST 换成线上域名/公 IP）。
+    // 后续如需测试/线上多套，可再引 build flavor 或 App 内设置页覆盖。
+    private static final String PROD_HOST = "https://your-domain-or-ip";  // TODO 部署后填线上地址
+    private static final String DEV_HOST = "http://127.0.0.1:8787";
+
+    private static final String HOST =
+            com.qimu.guide.BuildConfig.DEBUG ? DEV_HOST : PROD_HOST;
+
+    /** 后端基址（debug=本机回环 / release=公网）。 */
+    public static final String BASE_URL = HOST;
+    /** WebSocket 基址（与 BASE_URL 同主机，http→ws / https→wss）。 */
+    public static final String WS_BASE_URL = HOST.replaceFirst("^http", "ws");
 
     public static final String UPLOAD_AUDIO = BASE_URL + "/v1/upload/audio";
     public static final String UPLOAD_IMAGE = BASE_URL + "/v1/upload/image";
