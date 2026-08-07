@@ -1,43 +1,59 @@
 package com.qimu.guide.net;
 
+import android.content.Context;
+import android.content.SharedPreferences;
+
 /**
- * 后端 ai-guided 服务的接入配置。
+ * 后端 ai-guided 服务的接入配置（2026-08-07 改为运行时可切换环境）。
  *
- * 联调方式（阶段 2）：安卓手机 USB 直连电脑，执行
- *   adb reverse tcp:8787 tcp:8787
- * 后，手机上的 127.0.0.1:8787 会被反向转发到电脑本机后端，无需路由器/局域网 IP。
- * 明文 http 已在 network_security_config.xml 放开（cleartextTrafficPermitted=true）。
+ * host 存 SharedPreferences，可在 App 内（设备页）填写切换：
+ *   本地联调：http://127.0.0.1:8787（USB + adb reverse tcp:8787）
+ *   线上：http://115.190.147.152:8787（或域名）
+ * 首次默认值按 BuildConfig：debug=本地回环，release=线上公网。
+ * 明文 http 已在 network_security_config.xml 放开。
  *
- * 上云后把 BASE_URL 换成公网域名即可（后续可做成可配置项）。
+ * 用法：Application/启动时调 ApiConfig.init(context) 一次；设备页调 setHost() 切换。
  */
 public final class ApiConfig {
 
     private ApiConfig() {}
 
-    // ── 多环境（2026-08-06）──────────────────────────────────────────
-    // debug 包：走本机回环（USB + adb reverse tcp:8787），本地联调。
-    // release 包：走公网（部署后把 PROD_HOST 换成线上域名/公 IP）。
-    // 后续如需测试/线上多套，可再引 build flavor 或 App 内设置页覆盖。
-    private static final String PROD_HOST = "https://your-domain-or-ip";  // TODO 部署后填线上地址
+    private static final String PREFS = "api_config";
+    private static final String KEY_HOST = "host";
+
     private static final String DEV_HOST = "http://127.0.0.1:8787";
+    private static final String PROD_HOST = "http://115.190.147.152:8787";
 
-    private static final String HOST =
-            com.qimu.guide.BuildConfig.DEBUG ? DEV_HOST : PROD_HOST;
+    private static SharedPreferences sp;
+    // 内存缓存当前 host（init 后填充；未 init 时回落默认）
+    private static volatile String host = com.qimu.guide.BuildConfig.DEBUG ? DEV_HOST : PROD_HOST;
 
-    /** 后端基址（debug=本机回环 / release=公网）。 */
-    public static final String BASE_URL = HOST;
-    /** WebSocket 基址（与 BASE_URL 同主机，http→ws / https→wss）。 */
-    public static final String WS_BASE_URL = HOST.replaceFirst("^http", "ws");
+    /** 启动时初始化：从 SharedPreferences 读上次设置的 host（没有则用默认）。 */
+    public static void init(Context ctx) {
+        sp = ctx.getApplicationContext().getSharedPreferences(PREFS, Context.MODE_PRIVATE);
+        String saved = sp.getString(KEY_HOST, null);
+        if (saved != null && !saved.isEmpty()) host = saved;
+    }
 
-    public static final String UPLOAD_AUDIO = BASE_URL + "/v1/upload/audio";
-    public static final String UPLOAD_IMAGE = BASE_URL + "/v1/upload/image";
-    public static final String QUERY = BASE_URL + "/v1/query";
-    /** 流式语音上行 WS（边采边推 PCM，边收 asr_partial/text_delta/audio_chunk/done）。 */
-    public static final String QUERY_STREAM_WS = WS_BASE_URL + "/v1/query/stream";
+    /** 运行时切换 host（设备页调用）。传如 "http://115.190.147.152:8787"。 */
+    public static void setHost(String newHost) {
+        if (newHost == null || newHost.trim().isEmpty()) return;
+        host = newHost.trim().replaceAll("/+$", "");  // 去尾部斜杠
+        if (sp != null) sp.edit().putString(KEY_HOST, host).apply();
+    }
 
-    // ── 火山 RTC 会话编排（feat/volc-rtc）──────────────────────────────
-    /** 创建 RTC 会话：签进房 Token + 调 StartVoiceChat，返回 app_id/room_id/uid/token/task_id。 */
-    public static final String RTC_SESSION = BASE_URL + "/v1/rtc/session";
-    /** 结束 RTC 会话（退房后调，避免持续计费）。 */
-    public static final String RTC_SESSION_STOP = BASE_URL + "/v1/rtc/session/stop";
+    /** 当前后端基址。 */
+    public static String baseUrl() { return host; }
+    /** WebSocket 基址（http→ws / https→wss）。 */
+    public static String wsBaseUrl() { return host.replaceFirst("^http", "ws"); }
+
+    public static String uploadAudio() { return baseUrl() + "/v1/upload/audio"; }
+    public static String uploadImage() { return baseUrl() + "/v1/upload/image"; }
+    public static String query() { return baseUrl() + "/v1/query"; }
+    /** 流式语音上行 WS。 */
+    public static String queryStreamWs() { return wsBaseUrl() + "/v1/query/stream"; }
+
+    // ── 火山 RTC 会话编排 ──────────────────────────────
+    public static String rtcSession() { return baseUrl() + "/v1/rtc/session"; }
+    public static String rtcSessionStop() { return baseUrl() + "/v1/rtc/session/stop"; }
 }

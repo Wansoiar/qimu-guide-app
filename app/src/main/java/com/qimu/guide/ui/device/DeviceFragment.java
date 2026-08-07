@@ -97,6 +97,8 @@ public class DeviceFragment extends Fragment {
         bleService = BleService.getInstance();
         bleService.addListener(bleListener);
 
+        addServerConfigRow(v);  // 顶部加"后端地址"设置行(本地/线上切换)
+
         layoutDisconnected = v.findViewById(R.id.layout_disconnected);
         layoutConnected = v.findViewById(R.id.layout_connected);
         tvScanStatus = v.findViewById(R.id.tv_scan_status);
@@ -230,6 +232,47 @@ public class DeviceFragment extends Fragment {
                 appendLog("扫描完成, 共 " + r.size() + " 个设备");
             }
         }, SCAN_TIMEOUT_MS);
+    }
+
+    /** 顶部动态加"后端地址"设置行：填地址/一键本地/一键线上/保存（本地↔线上切换,无需重打包）。 */
+    private void addServerConfigRow(View root) {
+        if (!(root instanceof android.view.ViewGroup)) return;
+        android.content.Context ctx = requireContext();
+        android.widget.LinearLayout row = new android.widget.LinearLayout(ctx);
+        row.setOrientation(android.widget.LinearLayout.VERTICAL);
+        row.setPadding(0, 8, 0, 16);
+
+        final android.widget.EditText et = new android.widget.EditText(ctx);
+        et.setHint("后端地址，如 http://115.190.147.152:8787");
+        et.setText(com.qimu.guide.net.ApiConfig.baseUrl());
+        et.setTextSize(13);
+        row.addView(et);
+
+        android.widget.LinearLayout btns = new android.widget.LinearLayout(ctx);
+        btns.setOrientation(android.widget.LinearLayout.HORIZONTAL);
+        String[] labels = {"用本地", "用线上", "保存"};
+        final String LOCAL = "http://127.0.0.1:8787", PROD = "http://115.190.147.152:8787";
+        for (int i = 0; i < labels.length; i++) {
+            final int idx = i;
+            android.widget.Button b = new android.widget.Button(ctx);
+            b.setText(labels[i]);
+            b.setTextSize(12);
+            android.widget.LinearLayout.LayoutParams lp = new android.widget.LinearLayout.LayoutParams(
+                    0, android.view.ViewGroup.LayoutParams.WRAP_CONTENT, 1f);
+            b.setLayoutParams(lp);
+            b.setOnClickListener(vi -> {
+                if (idx == 0) et.setText(LOCAL);
+                else if (idx == 1) et.setText(PROD);
+                else {
+                    com.qimu.guide.net.ApiConfig.setHost(et.getText().toString());
+                    Toast.makeText(ctx, "已保存: " + com.qimu.guide.net.ApiConfig.baseUrl(), Toast.LENGTH_SHORT).show();
+                    appendLog("后端地址切换为: " + com.qimu.guide.net.ApiConfig.baseUrl());
+                }
+            });
+            btns.addView(b);
+        }
+        row.addView(btns);
+        ((android.view.ViewGroup) root).addView(row, 1);  // 插到标题下方
     }
 
     private void connectToDevice(String addr) { tvScanStatus.setText(R.string.state_connecting); appendLog("连接: " + addr); bleService.connect(addr); }

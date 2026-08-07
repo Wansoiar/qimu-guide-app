@@ -26,5 +26,6 @@ public class QimuApplication extends Application {
         appContext = this;
         BleLog.isPrint = true;
         mBleClient = CRPBleClient.create(this);
+        com.qimu.guide.net.ApiConfig.init(this);  // 初始化后端地址(从SharedPreferences读上次设置)
     }
 }

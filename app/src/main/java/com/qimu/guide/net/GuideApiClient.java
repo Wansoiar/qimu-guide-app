@@ -68,7 +68,7 @@ public class GuideApiClient {
                     .addFormDataPart("file", wavFile.getName(), fileBody)
                     .build();
             Request req = new Request.Builder()
-                    .url(ApiConfig.UPLOAD_AUDIO)
+                    .url(ApiConfig.uploadAudio())
                     .header("X-Client-Type", "android")
                     .post(body)
                     .build();
@@ -105,7 +105,7 @@ public class GuideApiClient {
                     .addFormDataPart("file", imageFile.getName(), fileBody)
                     .build();
             Request req = new Request.Builder()
-                    .url(ApiConfig.UPLOAD_IMAGE)
+                    .url(ApiConfig.uploadImage())
                     .header("X-Client-Type", "android")
                     .post(body)
                     .build();
@@ -141,7 +141,7 @@ public class GuideApiClient {
             reqBody.put("language", "zh");
 
             Request req = new Request.Builder()
-                    .url(ApiConfig.QUERY)
+                    .url(ApiConfig.query())
                     .header("X-Client-Type", "android")
                     .header("Accept", "text/event-stream")
                     .post(RequestBody.create(reqBody.toString(), JSON))
@@ -179,7 +179,7 @@ public class GuideApiClient {
             reqBody.put("language", "zh");
 
             Request req = new Request.Builder()
-                    .url(ApiConfig.QUERY)
+                    .url(ApiConfig.query())
                     .header("X-Client-Type", "android")
                     .header("Accept", "text/event-stream")
                     .post(RequestBody.create(reqBody.toString(), JSON))
@@ -221,7 +221,7 @@ public class GuideApiClient {
      */
     public StreamSession queryVoiceStream(QueryCallback cb) {
         SessionContext ctx = SessionContext.get();
-        String url = ApiConfig.QUERY_STREAM_WS
+        String url = ApiConfig.queryStreamWs()
                 + "?venue_id=" + ctx.venueId()
                 + "&session_id=" + ctx.sessionId()
                 + "&client_query_id=" + ctx.nextClientQueryId()
@@ -375,7 +375,7 @@ public class GuideApiClient {
             JSONObject reqBody = new JSONObject();
             if (venueId != null && !venueId.isEmpty()) reqBody.put("venue_id", venueId);
             Request req = new Request.Builder()
-                    .url(ApiConfig.RTC_SESSION)
+                    .url(ApiConfig.rtcSession())
                     .header("X-Client-Type", "android")
                     .post(RequestBody.create(reqBody.toString(), JSON))
                     .build();
@@ -405,7 +405,7 @@ public class GuideApiClient {
             reqBody.put("room_id", roomId);
             reqBody.put("task_id", taskId);
             Request req = new Request.Builder()
-                    .url(ApiConfig.RTC_SESSION_STOP)
+                    .url(ApiConfig.rtcSessionStop())
                     .header("X-Client-Type", "android")
                     .post(RequestBody.create(reqBody.toString(), JSON))
                     .build();
