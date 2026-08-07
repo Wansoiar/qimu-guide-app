@@ -124,6 +124,12 @@ public class DialogueFragment extends Fragment {
     // 火山 RTC 会话（USE_VOLC_RTC 时持有；进页 start，离页 stop）
     private com.qimu.guide.service.RtcVoiceChatManager rtcManager;
     private GuideApiClient.RtcSessionInfo rtcSession;
+    // 防重入：Fragment 重建/导航重复触发时，避免建出多个并存的火山会话（多计费+体验乱）
+    private volatile boolean volcStarting = false;
+    // 火山字幕气泡合并：同一说话人的分段字幕累积进同一气泡，切换说话人才开新气泡
+    private int volcBubbleIndex = -1;
+    private boolean volcBubbleFromSelf = false;
+    private final StringBuilder volcBubbleText = new StringBuilder();
 
     // 流式会话句柄（按住说话/眼镜说话期间持有；松手/判停后由 done/error 自然失效）
     private volatile GuideApiClient.StreamSession streamSession;
@@ -425,11 +431,22 @@ public class DialogueFragment extends Fragment {
                     "📷 拍照指令已发送", System.currentTimeMillis()));
         });
 
-        // ⭐ 火山主链路：进页自动进房全双工对话，隐藏「按住说话」；眼镜走蓝牙耳机路由
+        // ⭐ 火山主链路：全双工，无需「按住说话」。复用该按钮为「结束对话」（省钱：随手可停）。
+        // 进房放 onResume、停会话放 onPause —— 切后台/切页即停，避免不说话也持续计费。
         if (USE_VOLC_RTC) {
             View push = v.findViewById(R.id.btn_push_text);
-            if (push != null) push.setVisibility(View.GONE);
-            startVolcChat();
+            if (push instanceof android.widget.TextView) {
+                ((android.widget.TextView) push).setText("⏹ 结束对话");
+            }
+            if (push != null) {
+                push.setOnTouchListener(null);
+                push.setOnClickListener(vi -> {
+                    stopVolcChat();
+                    uiAddMessage(new DialogueMessage(DialogueMessage.Type.AI_REPLY,
+                            "⏹ 已结束对话。返回本页可重新开始。", System.currentTimeMillis()));
+                });
+            }
+            // 进房交给 onResume（避免与 onViewCreated 重复建，且切回页自动恢复）
             return;
         }
 
@@ -618,6 +635,11 @@ public class DialogueFragment extends Fragment {
 
     /** 进对话页自动建 session + 进房，全双工对话。字幕经 onSubtitle 上屏。 */
     private void startVolcChat() {
+        // 防重入：已在建或已有活会话 → 先清理，保证同一时刻只有一个火山会话
+        if (volcStarting || rtcManager != null || rtcSession != null) {
+            stopVolcChat();
+        }
+        volcStarting = true;
         if (ContextCompat.checkSelfPermission(requireContext(), Manifest.permission.RECORD_AUDIO)
                 != PackageManager.PERMISSION_GRANTED) {
             micPermLauncher.launch(Manifest.permission.RECORD_AUDIO);
@@ -630,11 +652,18 @@ public class DialogueFragment extends Fragment {
         new Thread(() -> {
             GuideApiClient.RtcSessionInfo s = apiClient.createRtcSession(venueId);
             if (s == null) {
+                volcStarting = false;
                 uiAddMessage(new DialogueMessage(DialogueMessage.Type.AI_REPLY,
                         "⚠️ 连接失败（检查后端/网络），可稍后重进本页重试", System.currentTimeMillis()));
                 return;
             }
+            // 若已被离页 stop（volcStarting 被清），说明本次已作废，别再进房
+            if (!volcStarting) {
+                new Thread(() -> apiClient.stopRtcSession(s.roomId, s.taskId)).start();
+                return;
+            }
             rtcSession = s;
+            volcStarting = false;
             if (s.mocked) {
                 uiAddMessage(new DialogueMessage(DialogueMessage.Type.AI_REPLY,
                         "⚠️ 后端未配火山凭证（mock），AI 不会进房", System.currentTimeMillis()));
@@ -645,6 +674,9 @@ public class DialogueFragment extends Fragment {
 
     /** 离页/销毁时停会话（退房 + 关后端智能体，避免持续计费）。 */
     private void stopVolcChat() {
+        volcStarting = false;  // 标记进行中的 start 作废（其 session 建好后会自行 stop）
+        volcBubbleIndex = -1;  // 重置字幕气泡状态，避免跨会话串气泡
+        volcBubbleText.setLength(0);
         if (rtcManager != null) { rtcManager.stop(); rtcManager = null; }
         final GuideApiClient.RtcSessionInfo s = rtcSession;
         rtcSession = null;
@@ -665,10 +697,34 @@ public class DialogueFragment extends Fragment {
         @Override public void onUserLeave(String uid) {}
         @Override
         public void onSubtitle(boolean fromSelf, String text, boolean definite) {
-            if (!definite || text == null || text.isEmpty()) return;  // 只上最终结果，避免刷屏
-            uiAddMessage(new DialogueMessage(
-                    fromSelf ? DialogueMessage.Type.VOICE : DialogueMessage.Type.AI_REPLY,
-                    (fromSelf ? "🗣️ 你说：" : "") + text, System.currentTimeMillis()));
+            if (text == null || text.isEmpty()) return;
+            if (!definite) return;  // 只合并最终分句（definite），忽略中间态避免重复追加
+            // 同一说话人的分段字幕合并进同一气泡；切换说话人（你↔AI）才开新气泡。
+            // 在主线程串行处理气泡状态，避免竞态。
+            requireActivitySafe(() -> {
+                boolean sameSpeaker = (volcBubbleIndex >= 0) && (volcBubbleFromSelf == fromSelf);
+                if (!sameSpeaker) {
+                    // 开新气泡
+                    volcBubbleFromSelf = fromSelf;
+                    volcBubbleText.setLength(0);
+                    volcBubbleText.append(text);
+                    DialogueMessage msg = new DialogueMessage(
+                            fromSelf ? DialogueMessage.Type.VOICE : DialogueMessage.Type.AI_REPLY,
+                            (fromSelf ? "🗣️ 你说：" : "") + text, System.currentTimeMillis());
+                    messages.add(msg);
+                    volcBubbleIndex = messages.size() - 1;
+                    messageAdapter.notifyItemInserted(volcBubbleIndex);
+                    recyclerMessages.smoothScrollToPosition(volcBubbleIndex);
+                } else {
+                    // 追加到当前气泡
+                    volcBubbleText.append(text);
+                    if (volcBubbleIndex >= 0 && volcBubbleIndex < messages.size()) {
+                        messages.get(volcBubbleIndex).setText(
+                                (fromSelf ? "🗣️ 你说：" : "") + volcBubbleText);
+                        messageAdapter.notifyItemChanged(volcBubbleIndex);
+                    }
+                }
+            });
         }
         @Override
         public void onError(int code, String desc) {
@@ -711,6 +767,22 @@ public class DialogueFragment extends Fragment {
             @Override
             public void onNothingSelected(android.widget.AdapterView<?> parent) {}
         });
+    }
+
+    @Override
+    public void onResume() {
+        super.onResume();
+        // 火山模式：进入/回到对话页即开始会话（onPause 会停，故切回自动恢复）
+        if (USE_VOLC_RTC && rtcManager == null && rtcSession == null && !volcStarting) {
+            startVolcChat();
+        }
+    }
+
+    @Override
+    public void onPause() {
+        super.onPause();
+        // 火山模式：离开对话页/切后台即停会话——防不说话也持续计费（关键省钱点）
+        if (USE_VOLC_RTC) stopVolcChat();
     }
 
     @Override

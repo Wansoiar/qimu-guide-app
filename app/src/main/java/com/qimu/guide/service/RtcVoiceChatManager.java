@@ -165,6 +165,7 @@ public class RtcVoiceChatManager {
 
         @Override
         public void onSubtitleMessageReceived(SubtitleMessage[] subtitles) {
+            // startSubtitle 字幕翻译服务的回调；AIGC 场景字幕不走这里（走 onRoomBinaryMessageReceived）
             if (listener == null || subtitles == null) return;
             for (SubtitleMessage m : subtitles) {
                 if (m == null || m.text == null || m.text.isEmpty()) continue;
@@ -172,5 +173,40 @@ public class RtcVoiceChatManager {
                 listener.onSubtitle(fromSelf, m.text, m.definite);
             }
         }
+
+        // AIGC 字幕/状态走房间二进制消息（magic 'subv' + JSON）。解析 subv 提取字幕。
+        @Override
+        public void onRoomBinaryMessageReceived(String uid, java.nio.ByteBuffer message) {
+            parseAigcBinary(uid, message);
+        }
     };
+
+    /** 解析 AIGC 二进制消息：magic 前缀（subv=字幕）+ JSON。提取字幕文本 → onSubtitle。 */
+    private void parseAigcBinary(String uid, java.nio.ByteBuffer message) {
+        if (listener == null || message == null) return;
+        try {
+            byte[] bytes = new byte[message.remaining()];
+            message.get(bytes);
+            String raw = new String(bytes, java.nio.charset.StandardCharsets.UTF_8);
+            int magicEnd = raw.indexOf('{');  // 跳过 magic 头，定位 JSON 起始
+            if (magicEnd < 0) return;
+            String magic = raw.substring(0, Math.min(4, Math.max(0, magicEnd)));
+            if (!magic.contains("subv")) return;  // 只处理字幕；conv(状态)等忽略
+            org.json.JSONObject root = new org.json.JSONObject(raw.substring(magicEnd));
+            org.json.JSONArray data = root.optJSONArray("data");
+            if (data == null) return;
+            for (int i = 0; i < data.length(); i++) {
+                org.json.JSONObject item = data.optJSONObject(i);
+                if (item == null) continue;
+                String text = item.optString("text", "");
+                if (text.isEmpty()) continue;
+                String speaker = item.optString("userId", item.optString("user_id", ""));
+                boolean definite = item.optBoolean("definite", item.optBoolean("paragraph", false));
+                boolean fromSelf = selfUid != null && selfUid.equals(speaker);
+                listener.onSubtitle(fromSelf, text, definite);
+            }
+        } catch (Exception e) {
+            Log.d(TAG, "parseAigcBinary 忽略: " + e.getMessage());
+        }
+    }
 }
