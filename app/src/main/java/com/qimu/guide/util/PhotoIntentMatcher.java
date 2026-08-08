@@ -9,7 +9,7 @@ package com.qimu.guide.util;
  */
 public final class PhotoIntentMatcher {
 
-    private static final String[] TRIGGERS = new String[] {
+    private static final String[] STRONG_TRIGGERS = new String[] {
             "帮我看看眼前",
             "帮我看看我眼前",
             "帮我看看我面前",
@@ -17,14 +17,6 @@ public final class PhotoIntentMatcher {
             "眼前有什么",
             "我面前有什么",
             "面前有什么",
-            "看看眼前",
-            "看看我眼前",
-            "看看我面前",
-            "帮我看看这个",
-            "看看这个",
-            "这是什么",
-            "这是啥",
-            "这是个啥",
             "眼前是什么",
             "我眼前是什么",
             "面前是什么",
@@ -34,12 +26,43 @@ public final class PhotoIntentMatcher {
             "帮我识别一下"
     };
 
+    private static final String[] WEAK_TRIGGERS = new String[] {
+            "看看眼前",
+            "看看我眼前",
+            "看看我面前",
+            "帮我看看这个",
+            "看看这个",
+            "这是什么",
+            "这是啥",
+            "这是个啥"
+    };
+
     private PhotoIntentMatcher() {}
 
     public static boolean shouldTriggerPhoto(String text) {
         String normalized = normalize(text);
         if (normalized.isEmpty()) return false;
-        for (String trigger : TRIGGERS) {
+        for (String trigger : STRONG_TRIGGERS) {
+            if (normalized.contains(trigger)) return true;
+        }
+        for (String trigger : WEAK_TRIGGERS) {
+            if (normalized.contains(trigger)) return true;
+        }
+        return false;
+    }
+
+    /**
+     * RTC 字幕里的说话人识别偶尔会抖，用户强意图短句允许放宽；
+     * 但像“这是什么”这类弱触发词仍要求明确来自用户，避免 AI 自己说到时误拍照。
+     */
+    public static boolean shouldTriggerPhotoFromSubtitle(String text, boolean fromSelf) {
+        String normalized = normalize(text);
+        if (normalized.isEmpty()) return false;
+        for (String trigger : STRONG_TRIGGERS) {
+            if (normalized.contains(trigger)) return true;
+        }
+        if (!fromSelf) return false;
+        for (String trigger : WEAK_TRIGGERS) {
             if (normalized.contains(trigger)) return true;
         }
         return false;

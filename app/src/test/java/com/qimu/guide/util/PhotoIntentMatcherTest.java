@@ -23,6 +23,19 @@ public class PhotoIntentMatcherTest {
     }
 
     @Test
+    public void shouldAllowStrongSubtitleTriggersEvenWithoutSpeakerTag() {
+        assertTrue(PhotoIntentMatcher.shouldTriggerPhotoFromSubtitle("帮我看看眼前是什么", false));
+        assertTrue(PhotoIntentMatcher.shouldTriggerPhotoFromSubtitle("我眼前有什么", false));
+    }
+
+    @Test
+    public void shouldRequireSpeakerTagForWeakSubtitleTriggers() {
+        assertFalse(PhotoIntentMatcher.shouldTriggerPhotoFromSubtitle("这是什么", false));
+        assertTrue(PhotoIntentMatcher.shouldTriggerPhotoFromSubtitle("这是什么", true));
+        assertFalse(PhotoIntentMatcher.shouldTriggerPhotoFromSubtitle("看看这个", false));
+    }
+
+    @Test
     public void shouldBeRobustToPunctuationAndWhitespace() {
         assertTrue(PhotoIntentMatcher.shouldTriggerPhoto("帮我 看看，眼前是什么？"));
         assertTrue(PhotoIntentMatcher.shouldTriggerPhoto("  看看这个  "));

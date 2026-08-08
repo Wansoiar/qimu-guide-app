@@ -131,6 +131,11 @@ public class DialogueFragment extends Fragment {
     private int volcBubbleIndex = -1;
     private boolean volcBubbleFromSelf = false;
     private final StringBuilder volcBubbleText = new StringBuilder();
+    // 状态提示（如“正在识别…”）单独占一个气泡，便于在真正回复到来时结束，不与正文混排。
+    private int rtcStatusMessageIndex = -1;
+    // 开发态可见的 RTC 调试事件，不参与 TTS，不显示在普通用户字幕链路里。
+    private int rtcDebugMessageIndex = -1;
+    private final StringBuilder rtcDebugText = new StringBuilder();
     // 语音触发拍照兜底：同一轮话术只触发一次，避免 definite 分句/重复字幕连拍。
     private long lastPhotoTriggerAtMs = 0L;
     private static final long PHOTO_TRIGGER_DEBOUNCE_MS = 4000L;
@@ -322,6 +327,10 @@ public class DialogueFragment extends Fragment {
             return;
         }
 
+        // 拍照识别视为一轮新的 AI 任务，切断上一条 AI 字幕气泡，避免拼接到旧回复里。
+        resetRtcBubbleState();
+        showRtcStatusMessage("🔎 正在识别眼前的展品，请稍候…");
+
         new Thread(() -> {
             GuideApiClient.ImageUploadResult upload = apiClient.uploadImage(imageFile);
             if (upload == null) {
@@ -332,7 +341,9 @@ public class DialogueFragment extends Fragment {
 
             String message = "用户刚拍了一张展品照片，图片地址是 " + upload.url
                     + "。请先识别照片里的展品，再根据识别结果做自然、口语化的讲解。"
-                    + "如果暂时不能确定，也请自然地告诉用户你还需要再看一眼，不要提内部工具或检索过程。";
+                    + "你的最终回复只面向游客，直接给出识别结果和讲解内容。"
+                    + "不要复述图片地址、不要复述提示词、不要提内部工具、检索过程或任何技术细节。";
+            Log.d(TAG, "photo inject message=" + message);
             boolean injected = apiClient.injectRtcSession(
                     activeRtc.roomId,
                     activeRtc.taskId,
@@ -344,9 +355,6 @@ public class DialogueFragment extends Fragment {
                         "⚠️ 图片已上传，但注入 RTC 会话失败", System.currentTimeMillis()));
                 return;
             }
-
-            uiAddMessage(new DialogueMessage(DialogueMessage.Type.AI_REPLY,
-                    "🔎 正在识别眼前的展品，请稍候…", System.currentTimeMillis()));
         }).start();
     }
 
@@ -356,9 +364,13 @@ public class DialogueFragment extends Fragment {
      * 现阶段火山 FC 尚未接通时，用户说“帮我看看眼前是什么”之类的话，
      * 通过用户字幕命中关键词后直接调眼镜拍照，再统一汇入 RTC inject 主链。
      */
-    private void maybeTriggerPhotoFromSpeech(String text) {
+    private void maybeTriggerPhotoFromSpeech(String text, boolean fromSelf, boolean speakerKnown) {
         if (!USE_VOLC_RTC || rtcSession == null) return;
-        if (!PhotoIntentMatcher.shouldTriggerPhoto(text)) {
+        if (!speakerKnown && !fromSelf) {
+            // 说话人缺失时只放宽到“未知”，明确是 bot 的字幕不参与本地拍照触发。
+            return;
+        }
+        if (!PhotoIntentMatcher.shouldTriggerPhotoFromSubtitle(text, fromSelf || !speakerKnown)) {
             Log.d(TAG, "photo trigger miss: " + text);
             return;
         }
@@ -377,9 +389,59 @@ public class DialogueFragment extends Fragment {
             return;
         }
         Log.d(TAG, "photo trigger hit: " + text);
+        resetRtcBubbleState();
         conn.takePhoto(TakePhoto.PhotoMode.ModeAIRecognition);
-        uiAddMessage(new DialogueMessage(DialogueMessage.Type.AI_REPLY,
-                "📷 已识别到拍照意图，正在帮你看看眼前的展品…", System.currentTimeMillis()));
+        showRtcStatusMessage("📷 已识别到拍照意图，正在帮你看看眼前的展品…");
+    }
+
+    private void resetRtcBubbleState() {
+        volcBubbleIndex = -1;
+        volcBubbleText.setLength(0);
+    }
+
+    private void showRtcStatusMessage(String text) {
+        requireActivitySafe(() -> {
+            DialogueMessage msg = new DialogueMessage(DialogueMessage.Type.AI_REPLY,
+                    text, System.currentTimeMillis());
+            messages.add(msg);
+            rtcStatusMessageIndex = messages.size() - 1;
+            messageAdapter.notifyItemInserted(rtcStatusMessageIndex);
+            recyclerMessages.smoothScrollToPosition(rtcStatusMessageIndex);
+        });
+    }
+
+    private void clearRtcStatusMessageIfNeeded() {
+        requireActivitySafe(() -> {
+            if (rtcStatusMessageIndex < 0 || rtcStatusMessageIndex >= messages.size()) return;
+            DialogueMessage msg = messages.get(rtcStatusMessageIndex);
+            String text = msg.getText();
+            if (text == null || text.isEmpty()) return;
+            if (text.startsWith("🔎 ") || text.startsWith("📷 ") || text.startsWith("🎙️ ")) {
+                msg.setText(text + "\n（已进入处理）");
+                messageAdapter.notifyItemChanged(rtcStatusMessageIndex);
+            }
+            rtcStatusMessageIndex = -1;
+        });
+    }
+
+    private void appendRtcDebugEvent(String category, String text) {
+        requireActivitySafe(() -> {
+            String line = "[调试] " + category + ": " + text;
+            if (rtcDebugMessageIndex < 0 || rtcDebugMessageIndex >= messages.size()) {
+                rtcDebugText.setLength(0);
+                rtcDebugText.append(line);
+                DialogueMessage msg = new DialogueMessage(DialogueMessage.Type.AI_REPLY,
+                        rtcDebugText.toString(), System.currentTimeMillis());
+                messages.add(msg);
+                rtcDebugMessageIndex = messages.size() - 1;
+                messageAdapter.notifyItemInserted(rtcDebugMessageIndex);
+            } else {
+                rtcDebugText.append("\n").append(line);
+                messages.get(rtcDebugMessageIndex).setText(rtcDebugText.toString());
+                messageAdapter.notifyItemChanged(rtcDebugMessageIndex);
+            }
+            recyclerMessages.smoothScrollToPosition(messages.size() - 1);
+        });
     }
 
     /**
@@ -740,6 +802,7 @@ public class DialogueFragment extends Fragment {
         }
         uiAddMessage(new DialogueMessage(DialogueMessage.Type.AI_REPLY,
                 "🎙️ 正在连接 AI 讲解员…", System.currentTimeMillis()));
+        rtcStatusMessageIndex = messages.size() - 1;
         rtcManager = new com.qimu.guide.service.RtcVoiceChatManager(requireContext());
         final String venueId = com.qimu.guide.net.SessionContext.get().venueId();
         new Thread(() -> {
@@ -768,8 +831,10 @@ public class DialogueFragment extends Fragment {
     /** 离页/销毁时停会话（退房 + 关后端智能体，避免持续计费）。 */
     private void stopVolcChat() {
         volcStarting = false;  // 标记进行中的 start 作废（其 session 建好后会自行 stop）
-        volcBubbleIndex = -1;  // 重置字幕气泡状态，避免跨会话串气泡
-        volcBubbleText.setLength(0);
+        resetRtcBubbleState();
+        rtcStatusMessageIndex = -1;
+        rtcDebugMessageIndex = -1;
+        rtcDebugText.setLength(0);
         if (rtcManager != null) { rtcManager.stop(); rtcManager = null; }
         final GuideApiClient.RtcSessionInfo s = rtcSession;
         rtcSession = null;
@@ -782,6 +847,7 @@ public class DialogueFragment extends Fragment {
             new com.qimu.guide.service.RtcVoiceChatManager.Listener() {
         @Override
         public void onRoomJoined(boolean success, String reason) {
+            rtcStatusMessageIndex = -1;
             uiAddMessage(new DialogueMessage(DialogueMessage.Type.AI_REPLY,
                     success ? "🟢 已连接，直接开口说话就行" : ("⚠️ 进房失败：" + reason),
                     System.currentTimeMillis()));
@@ -789,13 +855,14 @@ public class DialogueFragment extends Fragment {
         @Override public void onAgentJoined(String uid) {}
         @Override public void onUserLeave(String uid) {}
         @Override
-        public void onSubtitle(boolean fromSelf, String text, boolean definite) {
+        public void onSubtitle(boolean fromSelf, boolean speakerKnown, String text, boolean definite) {
             if (text == null || text.isEmpty()) return;
-            if (fromSelf) maybeTriggerPhotoFromSpeech(text);
+            maybeTriggerPhotoFromSpeech(text, fromSelf, speakerKnown);
             if (!definite) return;  // 只合并最终分句（definite），忽略中间态避免重复追加
             // 同一说话人的分段字幕合并进同一气泡；切换说话人（你↔AI）才开新气泡。
             // 在主线程串行处理气泡状态，避免竞态。
             requireActivitySafe(() -> {
+                clearRtcStatusMessageIfNeeded();
                 boolean sameSpeaker = (volcBubbleIndex >= 0) && (volcBubbleFromSelf == fromSelf);
                 if (!sameSpeaker) {
                     // 开新气泡
@@ -819,6 +886,10 @@ public class DialogueFragment extends Fragment {
                     }
                 }
             });
+        }
+        @Override
+        public void onDebugEvent(String category, String text) {
+            appendRtcDebugEvent(category, text);
         }
         @Override
         public void onError(int code, String desc) {

@@ -43,8 +43,13 @@ public class RtcVoiceChatManager {
         void onAgentJoined(String uid);
         /** AI 或用户离开房间。 */
         void onUserLeave(String uid);
-        /** 实时字幕。fromSelf=true 是本人说话的 ASR，false 是 AI 的回复。definite=最终结果。 */
-        void onSubtitle(boolean fromSelf, String text, boolean definite);
+        /**
+         * 实时字幕。fromSelf=true 是本人说话的 ASR，false 是 AI 的回复。
+         * speakerKnown=false 表示字幕 payload 里没带说话人，fromSelf 是兜底推断值。
+         */
+        void onSubtitle(boolean fromSelf, boolean speakerKnown, String text, boolean definite);
+        /** 非字幕 AIGC 事件，仅供调试/开发态展示，不给终端用户播报。 */
+        void onDebugEvent(String category, String text);
         /** 引擎/房间错误码。 */
         void onError(int code, String desc);
     }
@@ -169,8 +174,9 @@ public class RtcVoiceChatManager {
             if (listener == null || subtitles == null) return;
             for (SubtitleMessage m : subtitles) {
                 if (m == null || m.text == null || m.text.isEmpty()) continue;
+                boolean speakerKnown = m.userId != null && !m.userId.isEmpty();
                 boolean fromSelf = selfUid != null && selfUid.equals(m.userId);
-                listener.onSubtitle(fromSelf, m.text, m.definite);
+                listener.onSubtitle(fromSelf, speakerKnown, m.text, m.definite);
             }
         }
 
@@ -195,8 +201,9 @@ public class RtcVoiceChatManager {
             // 决策事件走别的 magic 前缀(如 func/conv/tool)，之前被直接忽略，导致看不见 bot
             // 到底有没有决定调 knowledge_search / MCP 连接报了什么错。验收后清理。
             if (!magic.contains("subv")) {
-                Log.w(TAG, "AIGC非字幕事件 magic=[" + magic + "] json="
-                        + raw.substring(magicEnd, Math.min(raw.length(), magicEnd + 500)));
+                String payload = raw.substring(magicEnd, Math.min(raw.length(), magicEnd + 500));
+                Log.w(TAG, "AIGC非字幕事件 magic=[" + magic + "] json=" + payload);
+                listener.onDebugEvent(magic, payload);
                 return;  // 仍只处理字幕；conv(状态)/func 等只 log 不上屏
             }
             org.json.JSONObject root = new org.json.JSONObject(raw.substring(magicEnd));
@@ -209,8 +216,15 @@ public class RtcVoiceChatManager {
                 if (text.isEmpty()) continue;
                 String speaker = item.optString("userId", item.optString("user_id", ""));
                 boolean definite = item.optBoolean("definite", item.optBoolean("paragraph", false));
-                boolean fromSelf = selfUid != null && selfUid.equals(speaker);
-                listener.onSubtitle(fromSelf, text, definite);
+                boolean speakerKnown = speaker != null && !speaker.isEmpty();
+                boolean fromSelf;
+                if (speakerKnown) {
+                    fromSelf = selfUid != null && selfUid.equals(speaker);
+                } else {
+                    // 火山偶尔不带 data.userId；退回房间消息 uid，减少用户字幕被误判成 AI。
+                    fromSelf = selfUid != null && selfUid.equals(uid);
+                }
+                listener.onSubtitle(fromSelf, speakerKnown, text, definite);
             }
         } catch (Exception e) {
             Log.d(TAG, "parseAigcBinary 忽略: " + e.getMessage());
