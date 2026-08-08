@@ -10,6 +10,7 @@ public class PhotoIntentMatcherTest {
     @Test
     public void shouldTriggerForDirectPhotoPhrases() {
         assertTrue(PhotoIntentMatcher.shouldTriggerPhoto("帮我看看眼前是什么"));
+        assertTrue(PhotoIntentMatcher.shouldTriggerPhoto("我眼前有什么？"));
         assertTrue(PhotoIntentMatcher.shouldTriggerPhoto("这是什么？"));
         assertTrue(PhotoIntentMatcher.shouldTriggerPhoto("识别一下这个"));
     }
