@@ -330,8 +330,9 @@ public class DialogueFragment extends Fragment {
                 return;
             }
 
-            String message = "用户拍了一张照片，image_url=" + upload.url
-                    + "。请先调用 knowledge_search(image_url) 识别这张照片里的展品，再用口语化方式讲解。";
+            String message = "用户刚拍了一张展品照片，图片地址是 " + upload.url
+                    + "。请先识别照片里的展品，再根据识别结果做自然、口语化的讲解。"
+                    + "如果暂时不能确定，也请自然地告诉用户你还需要再看一眼，不要提内部工具或检索过程。";
             boolean injected = apiClient.injectRtcSession(
                     activeRtc.roomId,
                     activeRtc.taskId,
@@ -345,7 +346,7 @@ public class DialogueFragment extends Fragment {
             }
 
             uiAddMessage(new DialogueMessage(DialogueMessage.Type.AI_REPLY,
-                    "📨 已把照片交给 AI 讲解员识别，请稍候…", System.currentTimeMillis()));
+                    "🔎 正在识别眼前的展品，请稍候…", System.currentTimeMillis()));
         }).start();
     }
 
