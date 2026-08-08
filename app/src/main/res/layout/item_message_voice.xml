@@ -15,6 +15,16 @@
         android:maxWidth="280dp">
 
         <TextView
+            android:id="@+id/btn_copy"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="end"
+            android:text="复制"
+            android:textSize="11sp"
+            android:textColor="@color/text_hint"
+            android:paddingBottom="4dp" />
+
+        <TextView
             android:id="@+id/tv_text"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"

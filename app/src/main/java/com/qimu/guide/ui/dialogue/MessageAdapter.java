@@ -1,11 +1,15 @@
 package com.qimu.guide.ui.dialogue;
 
+import android.content.ClipData;
+import android.content.ClipboardManager;
+import android.content.Context;
 import android.text.format.DateFormat;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.ImageView;
 import android.widget.TextView;
+import android.widget.Toast;
 
 import androidx.annotation.NonNull;
 import androidx.recyclerview.widget.RecyclerView;
@@ -67,11 +71,26 @@ public class MessageAdapter extends RecyclerView.Adapter<RecyclerView.ViewHolder
             VoiceViewHolder h = (VoiceViewHolder) holder;
             h.tvText.setText(msg.getText());
             h.tvTime.setText(time);
+            bindCopy(h.btnCopy, msg.getText());
         } else if (holder instanceof AiViewHolder) {
             AiViewHolder h = (AiViewHolder) holder;
             h.tvText.setText(msg.getText());
             h.tvTime.setText(time);
+            bindCopy(h.btnCopy, msg.getText());
         }
+    }
+
+    private void bindCopy(TextView btnCopy, String text) {
+        String safeText = text == null ? "" : text;
+        btnCopy.setVisibility(safeText.isEmpty() ? View.GONE : View.VISIBLE);
+        btnCopy.setOnClickListener(v -> {
+            Context context = v.getContext();
+            ClipboardManager clipboard = (ClipboardManager) context.getSystemService(Context.CLIPBOARD_SERVICE);
+            if (clipboard != null) {
+                clipboard.setPrimaryClip(ClipData.newPlainText("dialogue_message", safeText));
+                Toast.makeText(context, "已复制", Toast.LENGTH_SHORT).show();
+            }
+        });
     }
 
     @Override
@@ -88,20 +107,22 @@ public class MessageAdapter extends RecyclerView.Adapter<RecyclerView.ViewHolder
     }
 
     static class VoiceViewHolder extends RecyclerView.ViewHolder {
-        TextView tvText, tvTime;
+        TextView tvText, tvTime, btnCopy;
         VoiceViewHolder(View v) {
             super(v);
             tvText = v.findViewById(R.id.tv_text);
             tvTime = v.findViewById(R.id.tv_time);
+            btnCopy = v.findViewById(R.id.btn_copy);
         }
     }
 
     static class AiViewHolder extends RecyclerView.ViewHolder {
-        TextView tvText, tvTime;
+        TextView tvText, tvTime, btnCopy;
         AiViewHolder(View v) {
             super(v);
             tvText = v.findViewById(R.id.tv_text);
             tvTime = v.findViewById(R.id.tv_time);
+            btnCopy = v.findViewById(R.id.btn_copy);
         }
     }
 }
