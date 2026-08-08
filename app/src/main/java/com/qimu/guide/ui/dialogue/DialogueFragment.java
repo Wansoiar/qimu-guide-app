@@ -127,6 +127,8 @@ public class DialogueFragment extends Fragment {
     private GuideApiClient.RtcSessionInfo rtcSession;
     // 防重入：Fragment 重建/导航重复触发时，避免建出多个并存的火山会话（多计费+体验乱）
     private volatile boolean volcStarting = false;
+    // start/stop 竞态令牌：只允许最新的一次 start 真正落地，旧请求返回后要自废。
+    private volatile long rtcStartToken = 0L;
     // 火山字幕气泡合并：同一说话人的分段字幕累积进同一气泡，切换说话人才开新气泡
     private int volcBubbleIndex = -1;
     private boolean volcBubbleFromSelf = false;
@@ -795,6 +797,7 @@ public class DialogueFragment extends Fragment {
         if (volcStarting || rtcManager != null || rtcSession != null) {
             stopVolcChat();
         }
+        final long startToken = ++rtcStartToken;
         volcStarting = true;
         if (ContextCompat.checkSelfPermission(requireContext(), Manifest.permission.RECORD_AUDIO)
                 != PackageManager.PERMISSION_GRANTED) {
@@ -809,13 +812,15 @@ public class DialogueFragment extends Fragment {
         new Thread(() -> {
             GuideApiClient.RtcSessionInfo s = apiClient.createRtcSession(venueId);
             if (s == null) {
-                volcStarting = false;
+                if (startToken == rtcStartToken) {
+                    volcStarting = false;
+                }
                 uiAddMessage(new DialogueMessage(DialogueMessage.Type.AI_REPLY,
                         "⚠️ 连接失败（检查后端/网络），可稍后重进本页重试", System.currentTimeMillis()));
                 return;
             }
             // 若已被离页 stop（volcStarting 被清），说明本次已作废，别再进房
-            if (!volcStarting) {
+            if (!volcStarting || startToken != rtcStartToken) {
                 new Thread(() -> apiClient.stopRtcSession(s.roomId, s.taskId)).start();
                 return;
             }
@@ -825,12 +830,19 @@ public class DialogueFragment extends Fragment {
                 uiAddMessage(new DialogueMessage(DialogueMessage.Type.AI_REPLY,
                         "⚠️ 后端未配火山凭证（mock），AI 不会进房", System.currentTimeMillis()));
             }
-            requireActivitySafe(() -> rtcManager.start(s, volcListener));
+            requireActivitySafe(() -> {
+                if (startToken != rtcStartToken || rtcManager == null) {
+                    new Thread(() -> apiClient.stopRtcSession(s.roomId, s.taskId)).start();
+                    return;
+                }
+                rtcManager.start(s, volcListener);
+            });
         }).start();
     }
 
     /** 离页/销毁时停会话（退房 + 关后端智能体，避免持续计费）。 */
     private void stopVolcChat() {
+        rtcStartToken++;  // 令所有旧的异步 start 结果失效
         volcStarting = false;  // 标记进行中的 start 作废（其 session 建好后会自行 stop）
         resetRtcBubbleState();
         rtcStatusMessageIndex = -1;
