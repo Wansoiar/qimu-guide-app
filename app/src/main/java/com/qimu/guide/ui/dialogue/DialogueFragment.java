@@ -133,9 +133,6 @@ public class DialogueFragment extends Fragment {
     private final StringBuilder volcBubbleText = new StringBuilder();
     // 状态提示（如“正在识别…”）单独占一个气泡，便于在真正回复到来时结束，不与正文混排。
     private int rtcStatusMessageIndex = -1;
-    // 开发态可见的 RTC 调试事件，不参与 TTS，不显示在普通用户字幕链路里。
-    private int rtcDebugMessageIndex = -1;
-    private final StringBuilder rtcDebugText = new StringBuilder();
     // 语音触发拍照兜底：同一轮话术只触发一次，避免 definite 分句/重复字幕连拍。
     private long lastPhotoTriggerAtMs = 0L;
     private static final long PHOTO_TRIGGER_DEBOUNCE_MS = 4000L;
@@ -421,26 +418,6 @@ public class DialogueFragment extends Fragment {
                 messageAdapter.notifyItemChanged(rtcStatusMessageIndex);
             }
             rtcStatusMessageIndex = -1;
-        });
-    }
-
-    private void appendRtcDebugEvent(String category, String text) {
-        requireActivitySafe(() -> {
-            String line = "[调试] " + category + ": " + text;
-            if (rtcDebugMessageIndex < 0 || rtcDebugMessageIndex >= messages.size()) {
-                rtcDebugText.setLength(0);
-                rtcDebugText.append(line);
-                DialogueMessage msg = new DialogueMessage(DialogueMessage.Type.AI_REPLY,
-                        rtcDebugText.toString(), System.currentTimeMillis());
-                messages.add(msg);
-                rtcDebugMessageIndex = messages.size() - 1;
-                messageAdapter.notifyItemInserted(rtcDebugMessageIndex);
-            } else {
-                rtcDebugText.append("\n").append(line);
-                messages.get(rtcDebugMessageIndex).setText(rtcDebugText.toString());
-                messageAdapter.notifyItemChanged(rtcDebugMessageIndex);
-            }
-            recyclerMessages.smoothScrollToPosition(messages.size() - 1);
         });
     }
 
@@ -833,8 +810,6 @@ public class DialogueFragment extends Fragment {
         volcStarting = false;  // 标记进行中的 start 作废（其 session 建好后会自行 stop）
         resetRtcBubbleState();
         rtcStatusMessageIndex = -1;
-        rtcDebugMessageIndex = -1;
-        rtcDebugText.setLength(0);
         if (rtcManager != null) { rtcManager.stop(); rtcManager = null; }
         final GuideApiClient.RtcSessionInfo s = rtcSession;
         rtcSession = null;
@@ -889,7 +864,7 @@ public class DialogueFragment extends Fragment {
         }
         @Override
         public void onDebugEvent(String category, String text) {
-            appendRtcDebugEvent(category, text);
+            Log.d(TAG, "rtc debug event [" + category + "] " + text);
         }
         @Override
         public void onError(int code, String desc) {
