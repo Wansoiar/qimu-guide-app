@@ -55,6 +55,17 @@ public class GuideApiClient {
         void onError(String message);
     }
 
+    /** 图片上传结果：同时保留 file_id 和公网 url，供 RTC inject 链路使用。 */
+    public static final class ImageUploadResult {
+        public final String fileId;
+        public final String url;
+
+        ImageUploadResult(String fileId, String url) {
+            this.fileId = fileId;
+            this.url = url;
+        }
+    }
+
     /**
      * 上传整段音频（WAV），返回 audio_id。阻塞调用，请在后台线程执行。
      *
@@ -97,7 +108,7 @@ public class GuideApiClient {
      *
      * @return image_id，失败返回 null
      */
-    public String uploadImage(File imageFile) {
+    public ImageUploadResult uploadImage(File imageFile) {
         try {
             RequestBody fileBody = RequestBody.create(imageFile, MediaType.parse("image/jpeg"));
             MultipartBody body = new MultipartBody.Builder()
@@ -116,9 +127,12 @@ public class GuideApiClient {
                     Log.e(TAG, "uploadImage 后端错误: " + json.optString("message"));
                     return null;
                 }
-                String imageId = json.getJSONObject("data").optString("file_id", "");
-                Log.d(TAG, "uploadImage ok: " + imageId);
-                return imageId.isEmpty() ? null : imageId;
+                JSONObject data = json.getJSONObject("data");
+                String imageId = data.optString("file_id", "");
+                String imageUrl = data.optString("url", "");
+                Log.d(TAG, "uploadImage ok: " + imageId + " url=" + imageUrl);
+                if (imageId.isEmpty() || imageUrl.isEmpty()) return null;
+                return new ImageUploadResult(imageId, imageUrl);
             }
         } catch (Exception e) {
             Log.e(TAG, "uploadImage 异常: " + e.getMessage(), e);
@@ -414,6 +428,40 @@ public class GuideApiClient {
             }
         } catch (Exception e) {
             Log.e(TAG, "stopRtcSession 异常: " + e.getMessage(), e);
+        }
+    }
+
+    /**
+     * 把一段文本注入当前 RTC 对话（ExternalTextToLLM）。阻塞调用，请在后台线程执行。
+     *
+     * 用于拍照识物统一到火山：上传图片拿到公网 image_url 后，注入给同一个 RTC 会话。
+     * 成功返回 true，失败返回 false。
+     */
+    public boolean injectRtcSession(String roomId, String taskId, String message, int interruptMode) {
+        try {
+            JSONObject reqBody = new JSONObject();
+            reqBody.put("room_id", roomId);
+            reqBody.put("task_id", taskId);
+            reqBody.put("message", message);
+            reqBody.put("interrupt_mode", interruptMode);
+            Request req = new Request.Builder()
+                    .url(ApiConfig.rtcSessionInject())
+                    .header("X-Client-Type", "android")
+                    .post(RequestBody.create(reqBody.toString(), JSON))
+                    .build();
+            try (Response resp = client.newCall(req).execute()) {
+                String s = resp.body() != null ? resp.body().string() : "";
+                JSONObject json = new JSONObject(s);
+                if (json.optInt("code", -1) != 0) {
+                    Log.e(TAG, "injectRtcSession 后端错误: " + json.optString("message"));
+                    return false;
+                }
+                return json.optJSONObject("data") != null
+                        && json.getJSONObject("data").optBoolean("injected", false);
+            }
+        } catch (Exception e) {
+            Log.e(TAG, "injectRtcSession 异常: " + e.getMessage(), e);
+            return false;
         }
     }
 }

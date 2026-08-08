@@ -26,6 +26,7 @@ import com.qimu.guide.service.AIDialogueManager;
 import com.qimu.guide.service.AudioChunkPlayer;
 import com.qimu.guide.service.BleService;
 import com.qimu.guide.service.MicRecorder;
+import com.qimu.guide.util.PhotoIntentMatcher;
 
 import java.io.ByteArrayOutputStream;
 import java.io.File;
@@ -130,6 +131,9 @@ public class DialogueFragment extends Fragment {
     private int volcBubbleIndex = -1;
     private boolean volcBubbleFromSelf = false;
     private final StringBuilder volcBubbleText = new StringBuilder();
+    // 语音触发拍照兜底：同一轮话术只触发一次，避免 definite 分句/重复字幕连拍。
+    private long lastPhotoTriggerAtMs = 0L;
+    private static final long PHOTO_TRIGGER_DEBOUNCE_MS = 4000L;
 
     // 流式会话句柄（按住说话/眼镜说话期间持有；松手/判停后由 done/error 自然失效）
     private volatile GuideApiClient.StreamSession streamSession;
@@ -197,7 +201,12 @@ public class DialogueFragment extends Fragment {
                     "📷 眼镜拍照", System.currentTimeMillis());
             msg.setImageFile(imageFile);
             uiAddMessage(msg);
-            // 图片识物链路：拍到的图 → 上传拿 image_id → query(photo) → 讲解词 + TTS。
+            // RTC 活跃时统一走火山：上传拿公网 image_url → inject 到同一会话，避免双 TTS / 上下文割裂。
+            if (USE_VOLC_RTC && rtcSession != null) {
+                injectPhotoToRtc(imageFile);
+                return;
+            }
+            // 无 RTC 时退回旧链路：拍到的图 → 上传拿 image_id → query(photo) → 讲解词 + TTS。
             sendPhotoToBackend(imageFile);
         }
 
@@ -281,8 +290,8 @@ public class DialogueFragment extends Fragment {
      */
     private void sendPhotoToBackend(File imageFile) {
         new Thread(() -> {
-            String imageId = apiClient.uploadImage(imageFile);
-            if (imageId == null) {
+            GuideApiClient.ImageUploadResult upload = apiClient.uploadImage(imageFile);
+            if (upload == null) {
                 uiAddMessage(new DialogueMessage(DialogueMessage.Type.AI_REPLY,
                         "⚠️ 图片上传失败，检查后端与 adb reverse", System.currentTimeMillis()));
                 return;
@@ -297,8 +306,72 @@ public class DialogueFragment extends Fragment {
             // 用 VOICE(纯文字)而非 PHOTO——真图气泡已由 onDialogueImageChange 显示，
             // 这里再用 PHOTO 会多出一个无图气泡（RecyclerView 复用致残留/显示上一张图）。
             setupTurnBubbles("📷 我拍了张照片，请讲解", DialogueMessage.Type.VOICE);
-            apiClient.queryPhoto(imageId, newRenderCallback(/*fillUserBubbleWithAsr=*/false));
+            apiClient.queryPhoto(upload.fileId, newRenderCallback(/*fillUserBubbleWithAsr=*/false));
         }).start();
+    }
+
+    /**
+     * RTC 主链路下的拍照识物：上传图片拿公网 URL，再 inject 到当前火山会话。
+     *
+     * 这样图片问答与后续追问共用一个 RTC 上下文，且只有火山一条 TTS 输出。
+     */
+    private void injectPhotoToRtc(File imageFile) {
+        final GuideApiClient.RtcSessionInfo activeRtc = rtcSession;
+        if (activeRtc == null) {
+            sendPhotoToBackend(imageFile);
+            return;
+        }
+
+        new Thread(() -> {
+            GuideApiClient.ImageUploadResult upload = apiClient.uploadImage(imageFile);
+            if (upload == null) {
+                uiAddMessage(new DialogueMessage(DialogueMessage.Type.AI_REPLY,
+                        "⚠️ 图片上传失败，检查后端与网络", System.currentTimeMillis()));
+                return;
+            }
+
+            String message = "用户拍了一张照片，image_url=" + upload.url
+                    + "。请先调用 knowledge_search(image_url) 识别这张照片里的展品，再用口语化方式讲解。";
+            boolean injected = apiClient.injectRtcSession(
+                    activeRtc.roomId,
+                    activeRtc.taskId,
+                    message,
+                    1
+            );
+            if (!injected) {
+                uiAddMessage(new DialogueMessage(DialogueMessage.Type.AI_REPLY,
+                        "⚠️ 图片已上传，但注入 RTC 会话失败", System.currentTimeMillis()));
+                return;
+            }
+
+            uiAddMessage(new DialogueMessage(DialogueMessage.Type.AI_REPLY,
+                    "📨 已把照片交给 AI 讲解员识别，请稍候…", System.currentTimeMillis()));
+        }).start();
+    }
+
+    /**
+     * 本地关键词兜底触发拍照。
+     *
+     * 现阶段火山 FC 尚未接通时，用户说“帮我看看眼前是什么”之类的话，
+     * 通过用户字幕命中关键词后直接调眼镜拍照，再统一汇入 RTC inject 主链。
+     */
+    private void maybeTriggerPhotoFromSpeech(String text) {
+        if (!USE_VOLC_RTC || rtcSession == null) return;
+        if (!PhotoIntentMatcher.shouldTriggerPhoto(text)) return;
+
+        long now = System.currentTimeMillis();
+        if (now - lastPhotoTriggerAtMs < PHOTO_TRIGGER_DEBOUNCE_MS) return;
+        lastPhotoTriggerAtMs = now;
+
+        CRPBleConnection conn = BleService.getInstance().getConnection();
+        if (conn == null) {
+            uiAddMessage(new DialogueMessage(DialogueMessage.Type.AI_REPLY,
+                    "⚠️ 已识别到拍照意图，但当前未连接眼镜", System.currentTimeMillis()));
+            return;
+        }
+        conn.takePhoto(TakePhoto.PhotoMode.ModeAIRecognition);
+        uiAddMessage(new DialogueMessage(DialogueMessage.Type.AI_REPLY,
+                "📷 已识别到拍照意图，正在帮你看看眼前的展品…", System.currentTimeMillis()));
     }
 
     /**
@@ -711,6 +784,7 @@ public class DialogueFragment extends Fragment {
         public void onSubtitle(boolean fromSelf, String text, boolean definite) {
             if (text == null || text.isEmpty()) return;
             if (!definite) return;  // 只合并最终分句（definite），忽略中间态避免重复追加
+            if (fromSelf) maybeTriggerPhotoFromSpeech(text);
             // 同一说话人的分段字幕合并进同一气泡；切换说话人（你↔AI）才开新气泡。
             // 在主线程串行处理气泡状态，避免竞态。
             requireActivitySafe(() -> {

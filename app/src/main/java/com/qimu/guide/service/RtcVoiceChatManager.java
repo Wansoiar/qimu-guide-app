@@ -191,7 +191,14 @@ public class RtcVoiceChatManager {
             int magicEnd = raw.indexOf('{');  // 跳过 magic 头，定位 JSON 起始
             if (magicEnd < 0) return;
             String magic = raw.substring(0, Math.min(4, Math.max(0, magicEnd)));
-            if (!magic.contains("subv")) return;  // 只处理字幕；conv(状态)等忽略
+            // [临时排障] 把所有非字幕(subv)的 AIGC 事件都打出来——火山的 function call / MCP
+            // 决策事件走别的 magic 前缀(如 func/conv/tool)，之前被直接忽略，导致看不见 bot
+            // 到底有没有决定调 knowledge_search / MCP 连接报了什么错。验收后清理。
+            if (!magic.contains("subv")) {
+                Log.w(TAG, "AIGC非字幕事件 magic=[" + magic + "] json="
+                        + raw.substring(magicEnd, Math.min(raw.length(), magicEnd + 500)));
+                return;  // 仍只处理字幕；conv(状态)/func 等只 log 不上屏
+            }
             org.json.JSONObject root = new org.json.JSONObject(raw.substring(magicEnd));
             org.json.JSONArray data = root.optJSONArray("data");
             if (data == null) return;

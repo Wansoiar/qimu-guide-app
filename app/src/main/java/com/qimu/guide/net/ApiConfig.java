@@ -56,4 +56,5 @@ public final class ApiConfig {
     // ── 火山 RTC 会话编排 ──────────────────────────────
     public static String rtcSession() { return baseUrl() + "/v1/rtc/session"; }
     public static String rtcSessionStop() { return baseUrl() + "/v1/rtc/session/stop"; }
+    public static String rtcSessionInject() { return baseUrl() + "/v1/rtc/session/inject"; }
 }
