@@ -138,6 +138,8 @@ public class DialogueFragment extends Fragment {
     // 语音触发拍照兜底：同一轮话术只触发一次，避免 definite 分句/重复字幕连拍。
     private long lastPhotoTriggerAtMs = 0L;
     private static final long PHOTO_TRIGGER_DEBOUNCE_MS = 4000L;
+    // 关键词触发拍照后，先压住旧的 RTC 抢答音频/字幕，等正式识图注入完成再恢复。
+    private volatile boolean suppressRtcAiUntilPhotoInject = false;
 
     // 流式会话句柄（按住说话/眼镜说话期间持有；松手/判停后由 done/error 自然失效）
     private volatile GuideApiClient.StreamSession streamSession;
@@ -322,6 +324,7 @@ public class DialogueFragment extends Fragment {
     private void injectPhotoToRtc(File imageFile) {
         final GuideApiClient.RtcSessionInfo activeRtc = rtcSession;
         if (activeRtc == null) {
+            finishRtcPhotoSuppression();
             sendPhotoToBackend(imageFile);
             return;
         }
@@ -333,6 +336,7 @@ public class DialogueFragment extends Fragment {
         new Thread(() -> {
             GuideApiClient.ImageUploadResult upload = apiClient.uploadImage(imageFile);
             if (upload == null) {
+                finishRtcPhotoSuppression();
                 uiAddMessage(new DialogueMessage(DialogueMessage.Type.AI_REPLY,
                         "⚠️ 图片上传失败，检查后端与网络", System.currentTimeMillis()));
                 return;
@@ -341,6 +345,7 @@ public class DialogueFragment extends Fragment {
             String venueId = com.qimu.guide.net.SessionContext.get().venueId();
             GuideApiClient.RtcImageDescribeResult described = apiClient.describeRtcImage(venueId, upload.url);
             if (described == null) {
+                finishRtcPhotoSuppression();
                 uiAddMessage(new DialogueMessage(DialogueMessage.Type.AI_REPLY,
                         "⚠️ 图片已上传，但识图预处理失败", System.currentTimeMillis()));
                 return;
@@ -365,6 +370,7 @@ public class DialogueFragment extends Fragment {
                     message,
                     3
             );
+            finishRtcPhotoSuppression();
             if (!injected) {
                 uiAddMessage(new DialogueMessage(DialogueMessage.Type.AI_REPLY,
                         "⚠️ 图片已上传，但注入 RTC 会话失败", System.currentTimeMillis()));
@@ -404,17 +410,23 @@ public class DialogueFragment extends Fragment {
             return;
         }
         Log.d(TAG, "photo trigger hit: " + text);
+        suppressRtcAiUntilPhotoInject = true;
+        setRtcRemoteAudioEnabled(false);
         resetRtcBubbleState();
-        new Thread(() -> {
-            final GuideApiClient.RtcSessionInfo activeRtc = rtcSession;
-            if (activeRtc == null) return;
-            String holdMessage = "用户正在请求你查看眼前的展品，系统马上会提供拍摄结果。"
-                    + "请先不要根据刚才那句语音直接猜测答案，也不要立刻展开讲解。"
-                    + "等收到后续图片识别结果后，再基于识别结果给出正式回复。";
-            apiClient.injectRtcSession(activeRtc.roomId, activeRtc.taskId, holdMessage, 3);
-        }).start();
         conn.takePhoto(TakePhoto.PhotoMode.ModeAIRecognition);
         showRtcStatusMessage("📷 已识别到拍照意图，正在帮你看看眼前的展品…");
+    }
+
+    private void setRtcRemoteAudioEnabled(boolean enabled) {
+        com.qimu.guide.service.RtcVoiceChatManager manager = rtcManager;
+        if (manager != null) {
+            manager.setRemoteAudioEnabled(enabled);
+        }
+    }
+
+    private void finishRtcPhotoSuppression() {
+        suppressRtcAiUntilPhotoInject = false;
+        setRtcRemoteAudioEnabled(true);
     }
 
     private void resetRtcBubbleState() {
@@ -844,6 +856,7 @@ public class DialogueFragment extends Fragment {
     private void stopVolcChat() {
         rtcStartToken++;  // 令所有旧的异步 start 结果失效
         volcStarting = false;  // 标记进行中的 start 作废（其 session 建好后会自行 stop）
+        suppressRtcAiUntilPhotoInject = false;
         resetRtcBubbleState();
         rtcStatusMessageIndex = -1;
         if (rtcManager != null) { rtcManager.stop(); rtcManager = null; }
@@ -869,11 +882,12 @@ public class DialogueFragment extends Fragment {
         public void onSubtitle(boolean fromSelf, boolean speakerKnown, String text, boolean definite) {
             if (text == null || text.isEmpty()) return;
             maybeTriggerPhotoFromSpeech(text, fromSelf, speakerKnown);
+            if (!fromSelf && suppressRtcAiUntilPhotoInject) return;
+            if (!fromSelf) clearRtcStatusMessageIfNeeded();
             if (!definite) return;  // 只合并最终分句（definite），忽略中间态避免重复追加
             // 同一说话人的分段字幕合并进同一气泡；切换说话人（你↔AI）才开新气泡。
             // 在主线程串行处理气泡状态，避免竞态。
             requireActivitySafe(() -> {
-                clearRtcStatusMessageIfNeeded();
                 boolean sameSpeaker = (volcBubbleIndex >= 0) && (volcBubbleFromSelf == fromSelf);
                 if (!sameSpeaker) {
                     // 开新气泡
@@ -904,6 +918,7 @@ public class DialogueFragment extends Fragment {
         }
         @Override
         public void onError(int code, String desc) {
+            finishRtcPhotoSuppression();
             uiAddMessage(new DialogueMessage(DialogueMessage.Type.AI_REPLY,
                     "⚠️ RTC 错误 " + code, System.currentTimeMillis()));
         }

@@ -135,6 +135,15 @@ public class RtcVoiceChatManager {
         if (engine != null) engine.muteAudioCapture(muted);
     }
 
+    /** 临时关闭/恢复远端音频订阅；拍照识物窗口期用来压住抢答语音。 */
+    public void setRemoteAudioEnabled(boolean enabled) {
+        try {
+            if (room != null) room.subscribeAllStreamsAudio(enabled);
+        } catch (Exception e) {
+            Log.e(TAG, "setRemoteAudioEnabled 异常: " + e.getMessage(), e);
+        }
+    }
+
     private final IRTCEngineEventHandler engineHandler = new IRTCEngineEventHandler() {
         @Override
         public void onError(int err) {
