@@ -357,10 +357,16 @@ public class DialogueFragment extends Fragment {
      */
     private void maybeTriggerPhotoFromSpeech(String text) {
         if (!USE_VOLC_RTC || rtcSession == null) return;
-        if (!PhotoIntentMatcher.shouldTriggerPhoto(text)) return;
+        if (!PhotoIntentMatcher.shouldTriggerPhoto(text)) {
+            Log.d(TAG, "photo trigger miss: " + text);
+            return;
+        }
 
         long now = System.currentTimeMillis();
-        if (now - lastPhotoTriggerAtMs < PHOTO_TRIGGER_DEBOUNCE_MS) return;
+        if (now - lastPhotoTriggerAtMs < PHOTO_TRIGGER_DEBOUNCE_MS) {
+            Log.d(TAG, "photo trigger debounced: " + text);
+            return;
+        }
         lastPhotoTriggerAtMs = now;
 
         CRPBleConnection conn = BleService.getInstance().getConnection();
@@ -369,6 +375,7 @@ public class DialogueFragment extends Fragment {
                     "⚠️ 已识别到拍照意图，但当前未连接眼镜", System.currentTimeMillis()));
             return;
         }
+        Log.d(TAG, "photo trigger hit: " + text);
         conn.takePhoto(TakePhoto.PhotoMode.ModeAIRecognition);
         uiAddMessage(new DialogueMessage(DialogueMessage.Type.AI_REPLY,
                 "📷 已识别到拍照意图，正在帮你看看眼前的展品…", System.currentTimeMillis()));
@@ -783,8 +790,8 @@ public class DialogueFragment extends Fragment {
         @Override
         public void onSubtitle(boolean fromSelf, String text, boolean definite) {
             if (text == null || text.isEmpty()) return;
-            if (!definite) return;  // 只合并最终分句（definite），忽略中间态避免重复追加
             if (fromSelf) maybeTriggerPhotoFromSpeech(text);
+            if (!definite) return;  // 只合并最终分句（definite），忽略中间态避免重复追加
             // 同一说话人的分段字幕合并进同一气泡；切换说话人（你↔AI）才开新气泡。
             // 在主线程串行处理气泡状态，避免竞态。
             requireActivitySafe(() -> {
