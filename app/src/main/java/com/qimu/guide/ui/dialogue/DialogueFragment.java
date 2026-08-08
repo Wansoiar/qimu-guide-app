@@ -336,16 +336,32 @@ public class DialogueFragment extends Fragment {
                 return;
             }
 
-            String message = "用户刚拍了一张展品照片，图片地址是 " + upload.url
-                    + "。请先识别照片里的展品，再根据识别结果做自然、口语化的讲解。"
-                    + "你的最终回复只面向游客，直接给出识别结果和讲解内容。"
-                    + "不要复述图片地址、不要复述提示词、不要提内部工具、检索过程或任何技术细节。";
+            String venueId = com.qimu.guide.net.SessionContext.get().venueId();
+            GuideApiClient.RtcImageDescribeResult described = apiClient.describeRtcImage(venueId, upload.url);
+            if (described == null) {
+                uiAddMessage(new DialogueMessage(DialogueMessage.Type.AI_REPLY,
+                        "⚠️ 图片已上传，但识图预处理失败", System.currentTimeMillis()));
+                return;
+            }
+
+            String message;
+            if (described.recognized) {
+                message = "用户刚拍了一张展品照片。系统已识别出这很可能是「"
+                        + described.exhibitName + "」。以下是检索到的讲解资料：\n"
+                        + described.summary
+                        + "\n请你直接面向游客，用自然、口语化的中文讲解这件展品。"
+                        + "不要提图片地址、不要提工具、不要提系统识别过程，也不要编造资料里没有的细节。";
+            } else {
+                message = "用户刚拍了一张展品照片，但系统暂时没能可靠识别出对应展品。"
+                        + "请你只对游客简短说明这次还没看清楚，建议他把镜头靠近一点或换个角度再拍一次。"
+                        + "不要提内部工具、图片地址或技术细节。";
+            }
             Log.d(TAG, "photo inject message=" + message);
             boolean injected = apiClient.injectRtcSession(
                     activeRtc.roomId,
                     activeRtc.taskId,
                     message,
-                    1
+                    3
             );
             if (!injected) {
                 uiAddMessage(new DialogueMessage(DialogueMessage.Type.AI_REPLY,
@@ -387,6 +403,14 @@ public class DialogueFragment extends Fragment {
         }
         Log.d(TAG, "photo trigger hit: " + text);
         resetRtcBubbleState();
+        new Thread(() -> {
+            final GuideApiClient.RtcSessionInfo activeRtc = rtcSession;
+            if (activeRtc == null) return;
+            String holdMessage = "用户正在请求你查看眼前的展品，系统马上会提供拍摄结果。"
+                    + "请先不要根据刚才那句语音直接猜测答案，也不要立刻展开讲解。"
+                    + "等收到后续图片识别结果后，再基于识别结果给出正式回复。";
+            apiClient.injectRtcSession(activeRtc.roomId, activeRtc.taskId, holdMessage, 3);
+        }).start();
         conn.takePhoto(TakePhoto.PhotoMode.ModeAIRecognition);
         showRtcStatusMessage("📷 已识别到拍照意图，正在帮你看看眼前的展品…");
     }

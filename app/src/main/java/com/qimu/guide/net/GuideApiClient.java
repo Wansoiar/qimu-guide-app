@@ -66,6 +66,18 @@ public class GuideApiClient {
         }
     }
 
+    public static final class RtcImageDescribeResult {
+        public final boolean recognized;
+        public final String exhibitName;
+        public final String summary;
+
+        RtcImageDescribeResult(boolean recognized, String exhibitName, String summary) {
+            this.recognized = recognized;
+            this.exhibitName = exhibitName;
+            this.summary = summary;
+        }
+    }
+
     /**
      * 上传整段音频（WAV），返回 audio_id。阻塞调用，请在后台线程执行。
      *
@@ -462,6 +474,41 @@ public class GuideApiClient {
         } catch (Exception e) {
             Log.e(TAG, "injectRtcSession 异常: " + e.getMessage(), e);
             return false;
+        }
+    }
+
+    /**
+     * 先由后端做图片检索，返回识图结果与讲解素材，减少 RTC 模型自由发挥。
+     */
+    public RtcImageDescribeResult describeRtcImage(String venueId, String imageUrl) {
+        try {
+            JSONObject reqBody = new JSONObject();
+            reqBody.put("venue_id", venueId);
+            reqBody.put("image_url", imageUrl);
+            reqBody.put("top_k", 3);
+            Request req = new Request.Builder()
+                    .url(ApiConfig.rtcSessionDescribeImage())
+                    .header("X-Client-Type", "android")
+                    .post(RequestBody.create(reqBody.toString(), JSON))
+                    .build();
+            try (Response resp = client.newCall(req).execute()) {
+                String s = resp.body() != null ? resp.body().string() : "";
+                JSONObject json = new JSONObject(s);
+                if (json.optInt("code", -1) != 0) {
+                    Log.e(TAG, "describeRtcImage 后端错误: " + json.optString("message"));
+                    return null;
+                }
+                JSONObject data = json.optJSONObject("data");
+                if (data == null) return null;
+                return new RtcImageDescribeResult(
+                        data.optBoolean("recognized", false),
+                        data.optString("exhibit_name", ""),
+                        data.optString("summary", "")
+                );
+            }
+        } catch (Exception e) {
+            Log.e(TAG, "describeRtcImage 异常: " + e.getMessage(), e);
+            return null;
         }
     }
 }

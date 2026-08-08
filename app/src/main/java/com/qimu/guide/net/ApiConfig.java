@@ -57,4 +57,5 @@ public final class ApiConfig {
     public static String rtcSession() { return baseUrl() + "/v1/rtc/session"; }
     public static String rtcSessionStop() { return baseUrl() + "/v1/rtc/session/stop"; }
     public static String rtcSessionInject() { return baseUrl() + "/v1/rtc/session/inject"; }
+    public static String rtcSessionDescribeImage() { return baseUrl() + "/v1/rtc/session/describe-image"; }
 }
