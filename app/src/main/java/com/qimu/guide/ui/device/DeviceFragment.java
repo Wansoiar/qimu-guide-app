@@ -366,7 +366,8 @@ public class DeviceFragment extends Fragment {
         final OperatorConfigStore.Venue venue = operatorConfigStore.defaultVenue();
 
         if (BuildConfig.DEBUG && MOCK_ORDER_NO.equals(orderNo)) {
-            postSessionCreated(requestGeneration, "mock-" + UUID.randomUUID(), orderNo,
+            // 本地 Demo 仍使用标准 UUID，避免它流入要求 UUID 格式的线上接口时触发 422。
+            postSessionCreated(requestGeneration, UUID.randomUUID().toString(), orderNo,
                     finalDeviceId, venue, false, true,
                     getString(R.string.mock_session_notice));
             return;

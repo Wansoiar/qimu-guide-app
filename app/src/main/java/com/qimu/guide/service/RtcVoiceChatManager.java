@@ -23,6 +23,9 @@ import com.ss.bytertc.engine.type.RoomStateChangeReason;
 import com.ss.bytertc.engine.type.SubtitleMessage;
 import com.ss.bytertc.engine.utils.AudioFrame;
 
+import java.util.Iterator;
+import java.util.LinkedHashSet;
+import java.util.Set;
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
@@ -70,6 +73,10 @@ public class RtcVoiceChatManager {
     private int nextBinarySubtitleSequence = 1_000_000;
     private int selfBinarySubtitleSequence = -1;
     private int agentBinarySubtitleSequence = -1;
+    // VoiceChat 可能在后续 subv 包里再次携带已经结束的字幕项。完整 JSON 相同就属于
+    // 同一个服务端事件，必须幂等；否则 definite 后序号已重置，会被 UI 当成新消息。
+    private static final int MAX_FINAL_SUBTITLE_FINGERPRINTS = 256;
+    private final Set<String> finalBinarySubtitleFingerprints = new LinkedHashSet<>();
 
     public RtcVoiceChatManager(@NonNull Context context) {
         appContext = context.getApplicationContext();
@@ -391,6 +398,9 @@ public class RtcVoiceChatManager {
                         : selfUid != null && selfUid.equals(speaker);
                 boolean definite = item.optBoolean(
                         "definite", item.optBoolean("paragraph", false));
+                if (definite && !rememberFinalBinarySubtitle(speaker, uid, item)) {
+                    continue;
+                }
                 int sequence = resolveBinarySubtitleSequence(fromSelf, item, definite);
                 current.onSubtitle(fromSelf, text, definite, sequence);
             }
@@ -411,9 +421,25 @@ public class RtcVoiceChatManager {
         return active;
     }
 
+    private synchronized boolean rememberFinalBinarySubtitle(
+            String speaker, String senderUid, org.json.JSONObject item) {
+        String owner = speaker == null || speaker.isEmpty() ? senderUid : speaker;
+        String fingerprint = owner + '\u0000' + item.toString();
+        if (!finalBinarySubtitleFingerprints.add(fingerprint)) return false;
+        if (finalBinarySubtitleFingerprints.size() > MAX_FINAL_SUBTITLE_FINGERPRINTS) {
+            Iterator<String> iterator = finalBinarySubtitleFingerprints.iterator();
+            if (iterator.hasNext()) {
+                iterator.next();
+                iterator.remove();
+            }
+        }
+        return true;
+    }
+
     private synchronized void resetBinarySubtitleSequences() {
         nextBinarySubtitleSequence = 1_000_000;
         selfBinarySubtitleSequence = -1;
         agentBinarySubtitleSequence = -1;
+        finalBinarySubtitleFingerprints.clear();
     }
 }

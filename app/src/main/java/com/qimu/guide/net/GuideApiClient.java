@@ -204,16 +204,12 @@ public class GuideApiClient {
     }
 
     /** 创建 RTC 会话；当前后端会同时启动 VoiceChat Agent。阻塞调用。 */
-    public RtcSessionInfo createRtcSession(@Nullable String venueId,
-                                           @Nullable String tourSessionId) {
+    public RtcSessionInfo createRtcSession(@Nullable String venueId) {
         Call call = null;
         try {
             JSONObject body = new JSONObject();
             if (venueId != null && !venueId.trim().isEmpty()) {
                 body.put("venue_id", venueId.trim());
-            }
-            if (tourSessionId != null && !tourSessionId.trim().isEmpty()) {
-                body.put("session_id", tourSessionId.trim());
             }
             Request request = new Request.Builder()
                     .url(ApiConfig.rtcSession())
@@ -226,13 +222,14 @@ public class GuideApiClient {
                 String responseBody = response.body() != null ? response.body().string() : "";
                 JSONObject json = new JSONObject(responseBody);
                 if (!response.isSuccessful() || json.optInt("code", -1) != 0) {
-                    Log.e(TAG, "createRtcSession 后端错误: " + json.optString("message"));
+                    Log.e(TAG, "createRtcSession 后端错误 HTTP " + response.code()
+                            + ": " + responseBody);
                     return null;
                 }
                 JSONObject data = json.getJSONObject("data");
                 JSONObject settings = data.optJSONObject("settings");
                 return new RtcSessionInfo(
-                        data.optString("session_id", tourSessionId == null ? "" : tourSessionId),
+                        data.optString("session_id", ""),
                         data.optString("app_id", ""),
                         data.optString("room_id", ""),
                         data.optString("uid", ""),
@@ -251,26 +248,13 @@ public class GuideApiClient {
         }
     }
 
-    /** 兼容独立 RTC 测试页。 */
-    public RtcSessionInfo createRtcSession(@Nullable String venueId) {
-        return createRtcSession(venueId, null);
-    }
-
     /** 停止后端 VoiceChat Agent，避免结束游览后继续占用。阻塞调用。 */
     public boolean stopRtcSession(String roomId, String taskId) {
-        return stopRtcSession(roomId, taskId, null);
-    }
-
-    public boolean stopRtcSession(String roomId, String taskId,
-                                  @Nullable String tourSessionId) {
         Call call = null;
         try {
             JSONObject body = new JSONObject();
             body.put("room_id", roomId);
             body.put("task_id", taskId);
-            if (tourSessionId != null && !tourSessionId.trim().isEmpty()) {
-                body.put("session_id", tourSessionId.trim());
-            }
             Request request = new Request.Builder()
                     .url(ApiConfig.rtcSessionStop())
                     .header("X-Client-Type", "android")

@@ -18,6 +18,7 @@ import org.json.JSONObject;
 
 import java.io.File;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -42,6 +43,7 @@ public final class RealtimeGuideManager {
     private static final long RTC_READY_TIMEOUT_MS = 20_000L;
     private static final long VISION_COMMAND_TTL_MS = 30_000L;
     private static final long MEDIA_AUDIO_RELEASE_GRACE_MS = 1_000L;
+    private static final long SUBTITLE_CROSS_CHANNEL_DEDUP_MS = 1_500L;
 
     public enum State {
         IDLE,
@@ -94,6 +96,16 @@ public final class RealtimeGuideManager {
         }
     }
 
+    private static final class RecentSubtitle {
+        final String transcriptKey;
+        long seenElapsedMs;
+
+        RecentSubtitle(String transcriptKey, long seenElapsedMs) {
+            this.transcriptKey = transcriptKey;
+            this.seenElapsedMs = seenElapsedMs;
+        }
+    }
+
     public static RealtimeGuideManager get() {
         return INSTANCE;
     }
@@ -113,6 +125,7 @@ public final class RealtimeGuideManager {
     private final Set<Listener> listeners = new CopyOnWriteArraySet<>();
     private final Object transcriptLock = new Object();
     private final Map<String, TranscriptEntry> transcript = new LinkedHashMap<>();
+    private final Map<String, RecentSubtitle> recentSubtitlesByContent = new HashMap<>();
     private final Set<String> handledCommandIds = new HashSet<>();
     private final GuideApiClient apiClient = new GuideApiClient();
     private final GlassesPcmAudioSource glassesAudioSource = new GlassesPcmAudioSource();
@@ -327,6 +340,7 @@ public final class RealtimeGuideManager {
             transcriptTourSessionId = session.sessionId;
             synchronized (transcriptLock) {
                 transcript.clear();
+                recentSubtitlesByContent.clear();
             }
             handledCommandIds.clear();
         }
@@ -334,8 +348,10 @@ public final class RealtimeGuideManager {
         updateState(State.RTC_CONNECTING, "AI 导览员正在上线…");
 
         ioExecutor.execute(() -> {
-            GuideApiClient.RtcSessionInfo created = apiClient.createRtcSession(
-                    session.venueId, session.sessionId);
+            // 对齐 feat/volc-main-dialogue 已跑通的 RTC 编排契约：这里只传场馆。
+            // Tour Session 属于 App 游览生命周期，不作为 RTC 接口的 session_id。
+            GuideApiClient.RtcSessionInfo created =
+                    apiClient.createRtcSession(session.venueId);
             mainHandler.post(() -> onRtcSessionCreated(requestGeneration, session, created));
         });
     }
@@ -348,7 +364,7 @@ public final class RealtimeGuideManager {
                 || !requestedTour.sessionId.equals(tourSessionId)
                 || TourReturnCoordinator.get().isInProgress()
                 || TourSessionManager.get().current() != requestedTour) {
-            if (created != null) stopServerSessionAsync(created, requestedTour.sessionId);
+            if (created != null) stopServerSessionAsync(created);
             return;
         }
         if (created == null) {
@@ -564,7 +580,6 @@ public final class RealtimeGuideManager {
         if (currentRtc != null) currentRtc.stop();
 
         GuideApiClient.RtcSessionInfo currentSession = rtcSession;
-        String currentTourId = tourSessionId;
         rtcSession = null;
         tourSession = null;
         tourSessionId = null;
@@ -576,10 +591,11 @@ public final class RealtimeGuideManager {
             transcriptTourSessionId = null;
             synchronized (transcriptLock) {
                 transcript.clear();
+                recentSubtitlesByContent.clear();
             }
             handledCommandIds.clear();
         }
-        if (currentSession != null) stopServerSessionAsync(currentSession, currentTourId);
+        if (currentSession != null) stopServerSessionAsync(currentSession);
         updateState(State.IDLE, "RTC 已关闭");
     }
 
@@ -697,12 +713,10 @@ public final class RealtimeGuideManager {
         if (callback != null) mainHandler.post(() -> callback.onComplete(success, message));
     }
 
-    private void stopServerSessionAsync(GuideApiClient.RtcSessionInfo session,
-                                        @Nullable String relatedTourSessionId) {
+    private void stopServerSessionAsync(GuideApiClient.RtcSessionInfo session) {
         stopExecutor.execute(() -> {
             for (int attempt = 1; attempt <= 3; attempt++) {
-                if (apiClient.stopRtcSession(
-                        session.roomId, session.taskId, relatedTourSessionId)) {
+                if (apiClient.stopRtcSession(session.roomId, session.taskId)) {
                     return;
                 }
                 if (attempt < 3) {
@@ -740,7 +754,7 @@ public final class RealtimeGuideManager {
         rtcRoomJoined = false;
         agentOnline = false;
         if (failedSession != null) {
-            stopServerSessionAsync(failedSession, tourSessionId);
+            stopServerSessionAsync(failedSession);
         }
     }
 
@@ -809,18 +823,41 @@ public final class RealtimeGuideManager {
         }, RTC_READY_TIMEOUT_MS);
     }
 
-    private boolean recordTranscript(boolean fromSelf, String text,
-                                     boolean definite, long sequence) {
+    @Nullable
+    private TranscriptEntry recordTranscript(boolean fromSelf, String text,
+                                             boolean definite, long sequence) {
         String key = (fromSelf ? "self:" : "agent:") + sequence;
+        String contentKey = (fromSelf ? "self:\u0000" : "agent:\u0000") + text;
+        long now = SystemClock.elapsedRealtime();
         synchronized (transcriptLock) {
+            // AIGC 字幕可能同时从 SDK subtitle callback 与 subv 二进制消息到达，
+            // 两条链路的 sequence 不同。短时间内同说话人、同文本应归并到第一条，
+            // 但窗口外仍允许用户真实地重复说同一句话。
+            RecentSubtitle recent = recentSubtitlesByContent.get(contentKey);
+            if (recent != null
+                    && now - recent.seenElapsedMs <= SUBTITLE_CROSS_CHANNEL_DEDUP_MS) {
+                TranscriptEntry canonical = transcript.get(recent.transcriptKey);
+                recent.seenElapsedMs = now;
+                if (canonical != null) {
+                    if (canonical.definite) return null;
+                    if (!definite) return null;
+                    TranscriptEntry finalized = new TranscriptEntry(
+                            canonical.fromSelf, canonical.text, true, canonical.sequence);
+                    transcript.put(recent.transcriptKey, finalized);
+                    return finalized;
+                }
+            }
+
             TranscriptEntry previous = transcript.get(key);
             if (previous != null) {
                 // final 后忽略 SDK 的重复包或迟到 interim，避免重复气泡与文本回退。
-                if (previous.definite) return false;
-                if (previous.text.equals(text) && previous.definite == definite) return false;
+                if (previous.definite) return null;
+                if (previous.text.equals(text) && previous.definite == definite) return null;
             }
-            transcript.put(key, new TranscriptEntry(fromSelf, text, definite, sequence));
-            return true;
+            TranscriptEntry recorded = new TranscriptEntry(fromSelf, text, definite, sequence);
+            transcript.put(key, recorded);
+            recentSubtitlesByContent.put(contentKey, new RecentSubtitle(key, now));
+            return recorded;
         }
     }
 
@@ -971,9 +1008,12 @@ public final class RealtimeGuideManager {
                 long stableSequence = ((long) rtcGeneration << 32)
                         | (sequence & 0xffffffffL);
                 postIfCurrent(() -> {
-                    if (!recordTranscript(fromSelf, normalized, definite, stableSequence)) return;
+                    TranscriptEntry recorded = recordTranscript(
+                            fromSelf, normalized, definite, stableSequence);
+                    if (recorded == null) return;
                     for (Listener listener : listeners) {
-                        listener.onSubtitle(fromSelf, normalized, definite, stableSequence);
+                        listener.onSubtitle(recorded.fromSelf, recorded.text,
+                                recorded.definite, recorded.sequence);
                     }
                 });
             }
