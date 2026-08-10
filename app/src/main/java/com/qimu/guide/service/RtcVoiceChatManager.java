@@ -65,6 +65,11 @@ public class RtcVoiceChatManager {
     private int pendingPcmSize;
     private String selfUid;
     private ScheduledExecutorService framePump;
+    // AIGC 的 subv 二进制字幕在部分服务版本里不带 sequence。为同一说话人的
+    // interim/final 维护稳定序号，使 UI 能覆盖更新而不是重复追加气泡。
+    private int nextBinarySubtitleSequence = 1_000_000;
+    private int selfBinarySubtitleSequence = -1;
+    private int agentBinarySubtitleSequence = -1;
 
     public RtcVoiceChatManager(@NonNull Context context) {
         appContext = context.getApplicationContext();
@@ -76,6 +81,7 @@ public class RtcVoiceChatManager {
         stop();
         this.listener = listener;
         selfUid = session.uid;
+        resetBinarySubtitleSequences();
 
         if (session.appId == null || session.appId.isEmpty()) {
             listener.onError(-100, "appId 为空（后端返回异常）");
@@ -194,6 +200,7 @@ public class RtcVoiceChatManager {
             }
         }
         selfUid = null;
+        resetBinarySubtitleSequences();
     }
 
     private void startFramePump() {
@@ -255,6 +262,20 @@ public class RtcVoiceChatManager {
 
     private final IRTCRoomEventHandler roomHandler = new IRTCRoomEventHandler() {
         @Override
+        public void onRoomStateChanged(String roomId, String uid,
+                                       int state, String extraInfo) {
+            // 兼容仍通过旧回调报告进房结果的 ByteRTC SDK/服务组合。
+            Listener current = listener;
+            if (current == null) return;
+            if (state == 0) {
+                current.onRoomJoined(true, null);
+            } else {
+                current.onRoomInterrupted(false,
+                        "state=" + state + " " + extraInfo);
+            }
+        }
+
+        @Override
         public void onRoomStateChangedWithReason(String roomId, String uid,
                                                  RoomState state,
                                                  RoomStateChangeReason reason) {
@@ -302,6 +323,11 @@ public class RtcVoiceChatManager {
         }
 
         @Override
+        public void onRoomBinaryMessageReceived(String uid, java.nio.ByteBuffer message) {
+            parseAigcBinary(uid, message);
+        }
+
+        @Override
         public void onUserMessageReceived(String uid, String message) {
             dispatchCommand(uid, message);
         }
@@ -327,4 +353,67 @@ public class RtcVoiceChatManager {
             current.onCommand(uid, message);
         }
     };
+
+    /**
+     * 火山 VoiceChat 的 AIGC 字幕通过「subv + JSON」房间二进制消息下发，
+     * 并不会稳定进入 onSubtitleMessageReceived。这里将它归一成同一字幕回调，
+     * 非字幕消息仍交给控制命令解析，不把调试 payload 暴露到用户气泡。
+     */
+    private void parseAigcBinary(String uid, java.nio.ByteBuffer message) {
+        Listener current = listener;
+        if (current == null || message == null) return;
+        try {
+            byte[] bytes = new byte[message.remaining()];
+            message.get(bytes);
+            String raw = new String(bytes, java.nio.charset.StandardCharsets.UTF_8);
+            int jsonStart = raw.indexOf('{');
+            if (jsonStart < 0) return;
+            String magic = raw.substring(0, Math.min(4, jsonStart));
+            String payload = raw.substring(jsonStart);
+            if (!magic.contains("subv")) {
+                Log.d(TAG, "AIGC event magic=" + magic);
+                current.onCommand(uid, payload);
+                return;
+            }
+
+            org.json.JSONObject root = new org.json.JSONObject(payload);
+            org.json.JSONArray data = root.optJSONArray("data");
+            if (data == null) return;
+            for (int i = 0; i < data.length(); i++) {
+                org.json.JSONObject item = data.optJSONObject(i);
+                if (item == null) continue;
+                String text = item.optString("text", "").trim();
+                if (text.isEmpty()) continue;
+                String speaker = item.optString(
+                        "userId", item.optString("user_id", ""));
+                boolean fromSelf = speaker.isEmpty()
+                        ? selfUid != null && selfUid.equals(uid)
+                        : selfUid != null && selfUid.equals(speaker);
+                boolean definite = item.optBoolean(
+                        "definite", item.optBoolean("paragraph", false));
+                int sequence = resolveBinarySubtitleSequence(fromSelf, item, definite);
+                current.onSubtitle(fromSelf, text, definite, sequence);
+            }
+        } catch (Exception error) {
+            Log.d(TAG, "忽略无法解析的 AIGC 二进制消息", error);
+        }
+    }
+
+    private synchronized int resolveBinarySubtitleSequence(
+            boolean fromSelf, org.json.JSONObject item, boolean definite) {
+        int explicit = item.optInt("sequence", item.optInt("seq", -1));
+        if (explicit >= 0) return explicit;
+
+        int active = fromSelf ? selfBinarySubtitleSequence : agentBinarySubtitleSequence;
+        if (active < 0) active = nextBinarySubtitleSequence++;
+        if (fromSelf) selfBinarySubtitleSequence = definite ? -1 : active;
+        else agentBinarySubtitleSequence = definite ? -1 : active;
+        return active;
+    }
+
+    private synchronized void resetBinarySubtitleSequences() {
+        nextBinarySubtitleSequence = 1_000_000;
+        selfBinarySubtitleSequence = -1;
+        agentBinarySubtitleSequence = -1;
+    }
 }

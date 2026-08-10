@@ -51,7 +51,7 @@ public final class TourSessionApiClient {
             payload.put("venue_id", venueId);
             payload.put("device_id", deviceId);
             Request request = new Request.Builder()
-                    .url(ApiConfig.SESSIONS)
+                    .url(ApiConfig.sessions())
                     .header("X-Client-Type", "android")
                     .post(RequestBody.create(payload.toString(), JSON))
                     .build();
@@ -104,7 +104,7 @@ public final class TourSessionApiClient {
 
     private void closeSessionAttempt(String sessionId, int attempt, CloseCallback callback) {
         Request request = new Request.Builder()
-                .url(ApiConfig.SESSIONS + "/" + sessionId + "/close")
+                .url(ApiConfig.sessions() + "/" + sessionId + "/close")
                 .header("X-Client-Type", "android")
                 .post(RequestBody.create("{}", JSON))
                 .build();

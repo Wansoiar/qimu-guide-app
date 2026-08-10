@@ -99,7 +99,7 @@ public class GuideApiClient {
                     .addFormDataPart("file", wavFile.getName(), fileBody)
                     .build();
             Request request = new Request.Builder()
-                    .url(ApiConfig.UPLOAD_AUDIO)
+                    .url(ApiConfig.uploadAudio())
                     .header("X-Client-Type", "android")
                     .post(body)
                     .build();
@@ -134,7 +134,7 @@ public class GuideApiClient {
                     .addFormDataPart("file", imageFile.getName(), fileBody)
                     .build();
             Request request = new Request.Builder()
-                    .url(ApiConfig.UPLOAD_IMAGE)
+                    .url(ApiConfig.uploadImage())
                     .header("X-Client-Type", "android")
                     .post(body)
                     .build();
@@ -176,7 +176,7 @@ public class GuideApiClient {
             body.put("language", "zh");
 
             Request request = new Request.Builder()
-                    .url(ApiConfig.QUERY)
+                    .url(ApiConfig.query())
                     .header("X-Client-Type", "android")
                     .header("Accept", "text/event-stream")
                     .post(RequestBody.create(body.toString(), JSON))
@@ -216,7 +216,7 @@ public class GuideApiClient {
                 body.put("session_id", tourSessionId.trim());
             }
             Request request = new Request.Builder()
-                    .url(ApiConfig.RTC_SESSION)
+                    .url(ApiConfig.rtcSession())
                     .header("X-Client-Type", "android")
                     .post(RequestBody.create(body.toString(), JSON))
                     .build();
@@ -272,7 +272,7 @@ public class GuideApiClient {
                 body.put("session_id", tourSessionId.trim());
             }
             Request request = new Request.Builder()
-                    .url(ApiConfig.RTC_SESSION_STOP)
+                    .url(ApiConfig.rtcSessionStop())
                     .header("X-Client-Type", "android")
                     .post(RequestBody.create(body.toString(), JSON))
                     .build();
@@ -342,7 +342,7 @@ public class GuideApiClient {
             body.put("message", message);
             body.put("interrupt_mode", 1);
             Request request = new Request.Builder()
-                    .url(ApiConfig.RTC_SESSION_INJECT)
+                    .url(ApiConfig.rtcSessionInject())
                     .header("X-Client-Type", "android")
                     .post(RequestBody.create(body.toString(), JSON))
                     .build();
