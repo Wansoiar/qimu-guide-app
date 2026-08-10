@@ -192,78 +192,97 @@
                     android:textStyle="bold" />
 
                 <TextView
+                    android:id="@+id/tv_operator_venue_id"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:layout_marginTop="6dp"
-                    android:text="@string/operator_config_effect"
+                    android:fontFamily="monospace"
                     android:textColor="@color/qimu_text_secondary"
                     android:textSize="12sp" />
             </LinearLayout>
 
-            <com.google.android.material.textfield.TextInputLayout
-                android:id="@+id/input_operator_venue_name"
-                style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox"
+            <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:layout_marginTop="18dp"
-                android:hint="@string/operator_venue_name"
-                app:boxStrokeColor="@color/qimu_outline_gold"
-                app:hintTextColor="@color/qimu_gold_dark">
+                android:background="@drawable/bg_card_default"
+                android:orientation="vertical"
+                android:padding="16dp">
 
-                <com.google.android.material.textfield.TextInputEditText
-                    android:id="@+id/edit_operator_venue_name"
+                <TextView
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:inputType="textCapWords"
-                    android:maxLines="1"
-                    android:singleLine="true" />
-            </com.google.android.material.textfield.TextInputLayout>
+                    android:text="@string/operator_device_id"
+                    android:textColor="@color/qimu_text_tertiary"
+                    android:textSize="12sp" />
 
-            <com.google.android.material.textfield.TextInputLayout
-                android:id="@+id/input_operator_venue_id"
-                style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="10dp"
-                android:hint="@string/operator_venue_id"
-                app:boxStrokeColor="@color/qimu_outline_gold"
-                app:hintTextColor="@color/qimu_gold_dark">
-
-                <com.google.android.material.textfield.TextInputEditText
-                    android:id="@+id/edit_operator_venue_id"
+                <TextView
+                    android:id="@+id/tv_operator_device_id"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
+                    android:layout_marginTop="3dp"
                     android:fontFamily="monospace"
-                    android:inputType="textNoSuggestions"
-                    android:maxLines="1"
-                    android:singleLine="true"
+                    android:textColor="@color/qimu_text_primary"
+                    android:textSize="12sp" />
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="14dp"
+                    android:text="@string/operator_phone_serial"
+                    android:textColor="@color/qimu_text_tertiary"
+                    android:textSize="12sp" />
+
+                <TextView
+                    android:id="@+id/tv_operator_phone_serial"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="3dp"
+                    android:fontFamily="monospace"
+                    android:textColor="@color/qimu_text_primary"
+                    android:textSize="12sp" />
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="14dp"
+                    android:text="@string/operator_glasses_id"
+                    android:textColor="@color/qimu_text_tertiary"
+                    android:textSize="12sp" />
+
+                <TextView
+                    android:id="@+id/tv_operator_glasses_id"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="3dp"
+                    android:fontFamily="monospace"
+                    android:textColor="@color/qimu_text_primary"
+                    android:textSize="12sp" />
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="14dp"
+                    android:text="@string/operator_config_version"
+                    android:textColor="@color/qimu_text_tertiary"
+                    android:textSize="12sp" />
+
+                <TextView
+                    android:id="@+id/tv_operator_config_version"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="3dp"
+                    android:textColor="@color/qimu_text_primary"
                     android:textSize="13sp" />
-            </com.google.android.material.textfield.TextInputLayout>
-
-            <TextView
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="8dp"
-                android:lineSpacingExtra="2dp"
-                android:text="@string/operator_venue_hint"
-                android:textColor="@color/qimu_text_tertiary"
-                android:textSize="12sp" />
+            </LinearLayout>
 
             <com.google.android.material.button.MaterialButton
-                android:id="@+id/btn_save_operator_config"
-                style="@style/Widget.Qimu.Button.Primary"
-                android:layout_width="match_parent"
-                android:layout_height="52dp"
-                android:layout_marginTop="18dp"
-                android:text="@string/operator_config_save" />
-
-            <com.google.android.material.button.MaterialButton
-                android:id="@+id/btn_restore_operator_config"
-                style="@style/Widget.Qimu.Button.Outline"
+                android:id="@+id/btn_reset_provisioning"
+                style="@style/Widget.Qimu.Button.DangerOutline"
                 android:layout_width="match_parent"
                 android:layout_height="48dp"
-                android:layout_marginTop="8dp"
-                android:text="@string/operator_config_restore" />
+                android:layout_marginTop="18dp"
+                android:text="@string/operator_reset_action" />
 
             <LinearLayout
                 android:id="@+id/layout_mock_order"
