@@ -30,10 +30,8 @@ import com.qimu.guide.service.RealtimeGuideManager;
 
 import java.io.File;
 import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
-import java.util.Map;
 import java.util.Set;
 
 /**
@@ -62,8 +60,12 @@ public class DialogueFragment extends Fragment {
     private View rtcCardStatusDot;
     private View rtcControlStatusDot;
 
-    private final Map<String, Integer> subtitleIndexes = new HashMap<>();
-    private final Set<String> finalizedSubtitleKeys = new HashSet<>();
+    // 对齐 feat/volc-main-dialogue：中间态不上屏；同一说话人的连续 final 分句
+    // 合并进同一个气泡，只有说话人切换时才新建气泡。
+    private final Set<String> renderedFinalSubtitleKeys = new HashSet<>();
+    private int volcBubbleIndex = -1;
+    private boolean volcBubbleFromSelf;
+    private final StringBuilder volcBubbleText = new StringBuilder();
 
     private int visionGeneration;
     private boolean visionBusy;
@@ -257,23 +259,28 @@ public class DialogueFragment extends Fragment {
     private void upsertSubtitle(boolean fromSelf, String text,
                                 boolean definite, long sequence) {
         if (!viewActive || text == null || text.trim().isEmpty()) return;
+        if (!definite) return;
+
         String normalized = text.trim();
         DialogueMessage.Type type = fromSelf
                 ? DialogueMessage.Type.VOICE : DialogueMessage.Type.AI_REPLY;
         String key = (fromSelf ? "self:" : "agent:") + sequence;
-        if (finalizedSubtitleKeys.contains(key)) return;
-        Integer existingIndex = subtitleIndexes.get(key);
-        int index = existingIndex == null ? -1 : existingIndex;
+        if (!renderedFinalSubtitleKeys.add(key)) return;
 
-        if (index < 0 || index >= messages.size() || messages.get(index).getType() != type) {
-            index = appendMessageDirect(new DialogueMessage(
-                    type, normalized, System.currentTimeMillis()));
-            if (index >= 0) subtitleIndexes.put(key, index);
+        boolean sameSpeaker = volcBubbleIndex >= 0
+                && volcBubbleIndex < messages.size()
+                && volcBubbleFromSelf == fromSelf
+                && messages.get(volcBubbleIndex).getType() == type;
+        if (!sameSpeaker) {
+            volcBubbleFromSelf = fromSelf;
+            volcBubbleText.setLength(0);
+            volcBubbleText.append(normalized);
+            volcBubbleIndex = appendMessageDirect(new DialogueMessage(
+                    type, volcBubbleText.toString(), System.currentTimeMillis()));
         } else {
-            updateMessageDirect(index, normalized);
+            volcBubbleText.append(normalized);
+            updateMessageDirect(volcBubbleIndex, volcBubbleText.toString());
         }
-
-        if (definite) finalizedSubtitleKeys.add(key);
     }
 
     /** App 主动拍照：抢占眼镜硬件任务，图片返回后注入当前 RTC Agent。 */
