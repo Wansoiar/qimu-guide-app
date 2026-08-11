@@ -8,18 +8,8 @@ import java.util.ArrayDeque;
 import java.util.Queue;
 
 /**
- * 流式 TTS 串播器：把后端逐句下发的 audio_chunk（mp3 签名 URL）按到达顺序一句接一句播放。
- *
- * 声音出口由系统音频路由决定：眼镜作为蓝牙 A2DP 设备连着时从眼镜出声，
- * 否则从手机扬声器出声——一套代码覆盖两种场景（端无关）。
- *
- * 用法：
- *   每轮对话开始 reset()；
- *   每收到一个 audio_chunk 调 enqueue(url)（可乱序到达前先 reset 保证从头开始）；
- *   Fragment 销毁时 release()。
- *
- * 说明：后端 audio_chunk 的 sequence 是有序下发的（SSE 顺序保证），
- * 这里按入队顺序播放即可，无需额外按 sequence 重排。
+ * 按 SSE 到达顺序串播后端 TTS 语音。系统会把媒体音频路由到已连接的
+ * Bluetooth A2DP 设备；没有音频蓝牙连接时则从手机播放。
  */
 public class AudioChunkPlayer {
 
@@ -28,81 +18,112 @@ public class AudioChunkPlayer {
     private final Queue<String> queue = new ArrayDeque<>();
     private MediaPlayer player;
     private boolean playing = false;
-    // 轮次令牌：reset() 递增，丢弃上一轮回调，避免跨轮串音
     private int epoch = 0;
+    private boolean released;
 
-    /** 新一轮对话开始：清空队列、停掉正在播的、丢弃旧回调。 */
     public synchronized void reset() {
+        if (released) return;
         epoch++;
         queue.clear();
         playing = false;
         stopPlayer();
     }
 
-    /** 入队一句 TTS 音频 URL，若当前空闲则立即开始播放。 */
     public synchronized void enqueue(String url) {
-        if (url == null || url.isEmpty()) return;
+        if (released || url == null || url.isEmpty()) return;
         queue.offer(url);
-        if (!playing) {
-            playNext(epoch);
-        }
+        if (!playing) playNext(epoch);
     }
 
-    private synchronized void playNext(int myEpoch) {
-        if (myEpoch != epoch) return;          // 已被 reset，作废
+    private synchronized void playNext(int currentEpoch) {
+        if (released || currentEpoch != epoch) return;
         String url = queue.poll();
         if (url == null) {
             playing = false;
             return;
         }
+
         playing = true;
+        MediaPlayer mediaPlayer = null;
         try {
-            MediaPlayer mp = new MediaPlayer();
-            mp.setAudioAttributes(new AudioAttributes.Builder()
+            mediaPlayer = new MediaPlayer();
+            mediaPlayer.setAudioAttributes(new AudioAttributes.Builder()
                     .setUsage(AudioAttributes.USAGE_MEDIA)
                     .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
                     .build());
-            mp.setDataSource(url);
-            mp.setOnPreparedListener(p -> {
-                Log.d(TAG, "prepared, start play: " + url);
-                p.start();
-            });
-            mp.setOnCompletionListener(p -> {
-                p.release();
+            mediaPlayer.setDataSource(url);
+            mediaPlayer.setOnPreparedListener(prepared -> {
                 synchronized (AudioChunkPlayer.this) {
-                    if (player == p) player = null;
-                    playNext(myEpoch);         // 播下一句
+                    if (released || currentEpoch != epoch || player != prepared) {
+                        releaseSafely(prepared);
+                        return;
+                    }
+                    try {
+                        prepared.start();
+                    } catch (Exception e) {
+                        Log.e(TAG, "启动 TTS 播放失败", e);
+                        player = null;
+                        releaseSafely(prepared);
+                        playNext(currentEpoch);
+                    }
                 }
             });
-            mp.setOnErrorListener((p, what, extra) -> {
-                Log.e(TAG, "播放出错 what=" + what + " extra=" + extra + " url=" + url);
-                p.release();
+            mediaPlayer.setOnCompletionListener(completed -> {
                 synchronized (AudioChunkPlayer.this) {
-                    if (player == p) player = null;
-                    playNext(myEpoch);         // 跳过这句继续
+                    if (player != completed || released || currentEpoch != epoch) {
+                        releaseSafely(completed);
+                        return;
+                    }
+                    player = null;
+                    releaseSafely(completed);
+                    playNext(currentEpoch);
+                }
+            });
+            mediaPlayer.setOnErrorListener((failed, what, extra) -> {
+                Log.e(TAG, "播放失败 what=" + what + " extra=" + extra + " url=" + url);
+                synchronized (AudioChunkPlayer.this) {
+                    if (player != failed || released || currentEpoch != epoch) {
+                        releaseSafely(failed);
+                        return true;
+                    }
+                    player = null;
+                    releaseSafely(failed);
+                    playNext(currentEpoch);
                 }
                 return true;
             });
-            player = mp;
-            mp.prepareAsync();
+            player = mediaPlayer;
+            mediaPlayer.prepareAsync();
         } catch (Exception e) {
-            Log.e(TAG, "playNext 异常: " + e.getMessage(), e);
-            playing = false;
-            playNext(myEpoch);
+            Log.e(TAG, "播放 TTS 异常", e);
+            if (player == mediaPlayer) player = null;
+            releaseSafely(mediaPlayer);
+            playNext(currentEpoch);
         }
     }
 
     private void stopPlayer() {
-        if (player != null) {
-            try {
-                if (player.isPlaying()) player.stop();
-            } catch (Exception ignored) {}
-            try { player.release(); } catch (Exception ignored) {}
-            player = null;
+        MediaPlayer current = player;
+        player = null;
+        if (current == null) return;
+        try {
+            if (current.isPlaying()) current.stop();
+        } catch (Exception ignored) {
+        }
+        releaseSafely(current);
+    }
+
+    private static void releaseSafely(MediaPlayer mediaPlayer) {
+        if (mediaPlayer == null) return;
+        try {
+            mediaPlayer.release();
+        } catch (Exception ignored) {
         }
     }
 
     public synchronized void release() {
+        if (released) return;
+        released = true;
         epoch++;
         queue.clear();
         playing = false;

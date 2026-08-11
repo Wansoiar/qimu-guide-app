@@ -60,6 +60,9 @@ public class MessageAdapter extends RecyclerView.Adapter<RecyclerView.ViewHolder
             h.tvTime.setText(time);
             if (msg.getImageFile() != null && msg.getImageFile().exists()) {
                 h.ivPhoto.setImageURI(android.net.Uri.fromFile(msg.getImageFile()));
+            } else {
+                // RecyclerView reuses ImageViews; clear a previous row's image.
+                h.ivPhoto.setImageDrawable(null);
             }
         } else if (holder instanceof VoiceViewHolder) {
             VoiceViewHolder h = (VoiceViewHolder) holder;

@@ -13,12 +13,12 @@
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
     <!-- 网络权限 -->
     <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.CHANGE_NETWORK_STATE" />
     <!-- Wi-Fi 权限 -->
     <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
     <uses-permission android:name="android.permission.CHANGE_WIFI_STATE" />
-    <uses-permission android:name="android.permission.WRITE_SETTINGS" />
     <uses-permission
         android:name="android.permission.NEARBY_WIFI_DEVICES"
         android:usesPermissionFlags="neverForLocation" />
@@ -38,7 +38,7 @@
 
     <application
         android:name=".QimuApplication"
-        android:allowBackup="true"
+        android:allowBackup="false"
         android:icon="@mipmap/ic_launcher"
         android:label="@string/app_name"
         android:networkSecurityConfig="@xml/network_security_config"
@@ -47,8 +47,26 @@
         android:theme="@style/AppTheme">
 
         <activity
+            android:name=".ui.gallery.PhotoPreviewActivity"
+            android:exported="false" />
+
+        <activity
+            android:name=".ui.gallery.LocalPhotosActivity"
+            android:exported="false" />
+        <activity
+            android:name=".ui.share.ShareBundleActivity"
+            android:exported="false"
+            android:screenOrientation="portrait" />
+
+        <activity
             android:name=".MainActivity"
+            android:exported="false"
+            android:windowSoftInputMode="adjustResize" />
+
+        <activity
+            android:name=".provisioning.ProvisioningActivity"
             android:exported="true"
+            android:screenOrientation="portrait"
             android:windowSoftInputMode="adjustResize">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
@@ -56,16 +74,11 @@
             </intent-filter>
         </activity>
 
-        <!-- 火山 RTC 语音对话测试页（feat/volc-rtc 阶段3）。独立 LAUNCHER 入口便于验证，验证后可移除 -->
+        <!-- 仅保留为内部诊断页；主流程统一由 MainActivity 管理唯一 RTC 引擎。 -->
         <activity
             android:name=".ui.rtc.RtcTestActivity"
-            android:exported="true"
-            android:label="RTC语音测试">
-            <intent-filter>
-                <action android:name="android.intent.action.MAIN" />
-                <category android:name="android.intent.category.LAUNCHER" />
-            </intent-filter>
-        </activity>
+            android:exported="false"
+            android:label="RTC语音测试" />
     </application>
 
 </manifest>

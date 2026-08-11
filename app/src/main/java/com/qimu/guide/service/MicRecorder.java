@@ -9,12 +9,10 @@ import android.util.Log;
 import java.io.ByteArrayOutputStream;
 
 /**
- * 手机麦克风录音（无眼镜时的音频来源）。
+ * 手机麦克风录音。
  *
- * 输出与眼镜端一致：16kHz / 单声道 / 16bit PCM，
- * 因此下游封 WAV + 走后端的逻辑完全复用，后端无差别（端无关）。
- *
- * 用法：start() 开始（后台线程持续读），stop() 停止并返回整段 PCM。
+ * 输出与眼镜音频一致：16 kHz、单声道、16 bit PCM。手机长按和眼镜左键
+ * 因而可以共用同一套 WAV 封装及后端问答链路。
  */
 public class MicRecorder {
 
@@ -26,46 +24,37 @@ public class MicRecorder {
     private Thread readThread;
     private final ByteArrayOutputStream buffer = new ByteArrayOutputStream();
 
-    /** 流式模式：每读到一块 PCM 就回调（用于上行 WS 边采边推）。为 null 则走整段模式。 */
-    public interface PcmListener {
-        void onPcm(byte[] pcm, int length);
-    }
-
-    private volatile PcmListener pcmListener;
-
     public boolean isRecording() {
         return recording;
     }
 
-    /** 设置流式 PCM 监听器（在 start() 前调用）。设了则 read 循环每块回调 + 仍攒 buffer 兜底。 */
-    public void setPcmListener(PcmListener listener) {
-        this.pcmListener = listener;
-    }
-
-    /** 开始录音。需已获得 RECORD_AUDIO 权限（调用方负责）。 */
+    /** 开始录音。调用方必须先获得 RECORD_AUDIO 权限。 */
     @SuppressLint("MissingPermission")
     public boolean start() {
         if (recording) return true;
-        int minBuf = AudioRecord.getMinBufferSize(
+
+        int minBufferSize = AudioRecord.getMinBufferSize(
                 SAMPLE_RATE,
                 AudioFormat.CHANNEL_IN_MONO,
                 AudioFormat.ENCODING_PCM_16BIT);
-        if (minBuf <= 0) {
-            Log.e(TAG, "getMinBufferSize 失败: " + minBuf);
+        if (minBufferSize <= 0) {
+            Log.e(TAG, "getMinBufferSize 失败: " + minBufferSize);
             return false;
         }
-        int bufSize = minBuf * 2;
+
+        int bufferSize = minBufferSize * 2;
         try {
             audioRecord = new AudioRecord(
                     MediaRecorder.AudioSource.MIC,
                     SAMPLE_RATE,
                     AudioFormat.CHANNEL_IN_MONO,
                     AudioFormat.ENCODING_PCM_16BIT,
-                    bufSize);
+                    bufferSize);
         } catch (Exception e) {
-            Log.e(TAG, "AudioRecord 创建失败: " + e.getMessage(), e);
+            Log.e(TAG, "AudioRecord 创建失败", e);
             return false;
         }
+
         if (audioRecord.getState() != AudioRecord.STATE_INITIALIZED) {
             Log.e(TAG, "AudioRecord 未初始化");
             audioRecord.release();
@@ -75,25 +64,31 @@ public class MicRecorder {
 
         buffer.reset();
         recording = true;
-        audioRecord.startRecording();
+        try {
+            audioRecord.startRecording();
+        } catch (Exception e) {
+            Log.e(TAG, "AudioRecord 启动失败", e);
+            recording = false;
+            audioRecord.release();
+            audioRecord = null;
+            return false;
+        }
+
         readThread = new Thread(() -> {
-            byte[] chunk = new byte[bufSize];
+            byte[] chunk = new byte[bufferSize];
             while (recording) {
-                int n = audioRecord.read(chunk, 0, chunk.length);
-                if (n > 0) {
-                    // 流式模式：每块立即回调推出去（上行 WS）
-                    PcmListener l = pcmListener;
-                    if (l != null) {
-                        byte[] copy = new byte[n];
-                        System.arraycopy(chunk, 0, copy, 0, n);
-                        try {
-                            l.onPcm(copy, n);
-                        } catch (Exception e) {
-                            Log.w(TAG, "pcmListener 回调异常: " + e.getMessage());
-                        }
-                    }
+                AudioRecord recorder = audioRecord;
+                if (recorder == null) break;
+                int count;
+                try {
+                    count = recorder.read(chunk, 0, chunk.length);
+                } catch (Exception e) {
+                    if (recording) Log.e(TAG, "读取麦克风失败", e);
+                    break;
+                }
+                if (count > 0) {
                     synchronized (buffer) {
-                        buffer.write(chunk, 0, n);
+                        buffer.write(chunk, 0, count);
                     }
                 }
             }
@@ -103,32 +98,54 @@ public class MicRecorder {
         return true;
     }
 
-    /** 停止录音，返回整段 PCM 字节（16k/mono/16bit）。 */
+    /** 停止录音，返回整段 16 kHz/mono/16 bit PCM。 */
     public byte[] stop() {
         if (!recording) return new byte[0];
+
         recording = false;
-        try {
-            if (readThread != null) readThread.join(500);
-        } catch (InterruptedException ignored) {}
-        if (audioRecord != null) {
+        AudioRecord recorder = audioRecord;
+        if (recorder != null) {
             try {
-                audioRecord.stop();
-            } catch (Exception ignored) {}
-            audioRecord.release();
-            audioRecord = null;
+                recorder.stop();
+            } catch (Exception ignored) {
+            }
         }
+
+        Thread thread = readThread;
+        if (thread != null) {
+            try {
+                thread.join(500);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+        }
+        readThread = null;
+
+        if (recorder != null) {
+            recorder.release();
+            if (audioRecord == recorder) audioRecord = null;
+        }
+
         synchronized (buffer) {
             byte[] pcm = buffer.toByteArray();
-            Log.d(TAG, "录音结束, " + pcm.length + " bytes (~" + (pcm.length / (SAMPLE_RATE * 2)) + "s)");
+            Log.d(TAG, "录音结束, " + pcm.length + " bytes (~"
+                    + (pcm.length / (SAMPLE_RATE * 2f)) + "s)");
             return pcm;
         }
     }
 
     public void release() {
-        recording = false;
-        if (audioRecord != null) {
-            try { audioRecord.release(); } catch (Exception ignored) {}
-            audioRecord = null;
+        if (recording) {
+            stop();
+            return;
+        }
+        AudioRecord recorder = audioRecord;
+        audioRecord = null;
+        if (recorder != null) {
+            try {
+                recorder.release();
+            } catch (Exception ignored) {
+            }
         }
     }
 }

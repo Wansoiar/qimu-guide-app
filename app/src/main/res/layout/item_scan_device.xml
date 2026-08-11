@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:layout_marginTop="4dp"
+    android:layout_marginBottom="4dp"
+    android:background="@drawable/bg_card_default"
+    android:gravity="center_vertical"
+    android:minHeight="68dp"
+    android:orientation="horizontal"
+    android:padding="12dp">
+
+    <FrameLayout android:layout_width="42dp" android:layout_height="42dp" android:background="@drawable/bg_icon_tile" android:padding="9dp">
+        <ImageView android:layout_width="match_parent" android:layout_height="match_parent" android:contentDescription="@string/device_connect_title" android:src="@drawable/ic_glasses_24" app:tint="@color/qimu_text_secondary" />
+    </FrameLayout>
+
+    <LinearLayout android:layout_width="0dp" android:layout_height="wrap_content" android:layout_marginStart="11dp" android:layout_weight="1" android:orientation="vertical">
+        <TextView android:id="@+id/tv_scan_name" android:layout_width="match_parent" android:layout_height="wrap_content" android:ellipsize="end" android:maxLines="1" android:textColor="@color/qimu_text_primary" android:textSize="15sp" android:textStyle="bold" />
+        <TextView android:id="@+id/tv_scan_address" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="2dp" android:ellipsize="end" android:maxLines="1" android:textColor="@color/qimu_text_tertiary" android:textSize="11sp" />
+    </LinearLayout>
+
+    <TextView android:id="@+id/tv_scan_rssi" android:layout_width="wrap_content" android:layout_height="30dp" android:background="@drawable/bg_status_neutral" android:gravity="center" android:paddingStart="9dp" android:paddingEnd="9dp" android:textColor="@color/qimu_text_secondary" android:textSize="11sp" />
+    <ImageView android:layout_width="20dp" android:layout_height="20dp" android:layout_marginStart="5dp" android:contentDescription="@string/device_connect_title" android:src="@drawable/ic_chevron_right_20" app:tint="@color/qimu_text_tertiary" />
+</LinearLayout>

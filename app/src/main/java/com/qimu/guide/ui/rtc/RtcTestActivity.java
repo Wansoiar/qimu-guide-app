@@ -150,7 +150,7 @@ public class RtcTestActivity extends AppCompatActivity {
         }
 
         @Override
-        public void onSubtitle(boolean fromSelf, String text, boolean definite) {
+        public void onSubtitle(boolean fromSelf, String text, boolean definite, int sequence) {
             // 仅在最终结果时落一行，避免中间态刷屏（先跑通体验，后续可做覆盖式刷新）
             if (!definite) return;
             runOnUiThread(() -> appendSubtitle((fromSelf ? "你：" : "AI：") + text));

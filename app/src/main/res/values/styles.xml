@@ -1,7 +1,109 @@
+<?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <style name="AppTheme" parent="Theme.AppCompat.Light.NoActionBar">
-        <item name="colorPrimary">@color/colorPrimary</item>
-        <item name="colorPrimaryDark">@color/colorPrimaryDark</item>
-        <item name="colorAccent">@color/colorAccent</item>
+    <style name="AppTheme.Base" parent="Theme.MaterialComponents.Light.NoActionBar">
+        <item name="colorPrimary">@color/qimu_brown</item>
+        <item name="colorPrimaryVariant">@color/qimu_brown_dark</item>
+        <item name="colorSecondary">@color/qimu_gold</item>
+        <item name="colorSecondaryVariant">@color/qimu_gold_dark</item>
+        <item name="android:colorAccent">@color/qimu_gold</item>
+        <item name="android:fontFamily">sans</item>
+        <item name="android:windowBackground">@drawable/bg_screen_warm</item>
+        <item name="android:statusBarColor">@color/qimu_app_bar</item>
+        <item name="android:navigationBarColor">@color/qimu_nav_background</item>
+        <item name="android:windowActionModeOverlay">true</item>
+        <item name="android:windowNoTitle">true</item>
+    </style>
+
+    <style name="AppTheme" parent="AppTheme.Base" />
+
+    <style name="TextAppearance.Qimu.Brand" parent="TextAppearance.MaterialComponents.Headline6">
+        <item name="android:fontFamily">serif</item>
+        <item name="fontFamily">serif</item>
+        <item name="android:textColor">@color/qimu_text_primary</item>
+        <item name="android:textSize">18sp</item>
+        <item name="android:textStyle">bold</item>
+    </style>
+
+    <style name="TextAppearance.Qimu.PageTitle" parent="TextAppearance.MaterialComponents.Headline5">
+        <item name="android:fontFamily">serif</item>
+        <item name="fontFamily">serif</item>
+        <item name="android:textColor">@color/qimu_text_primary</item>
+        <item name="android:textSize">26sp</item>
+        <item name="android:textStyle">bold</item>
+    </style>
+
+    <style name="TextAppearance.Qimu.SectionTitle" parent="TextAppearance.MaterialComponents.Subtitle1">
+        <item name="android:textColor">@color/qimu_text_primary</item>
+        <item name="android:textSize">16sp</item>
+        <item name="android:textStyle">bold</item>
+    </style>
+
+    <style name="TextAppearance.Qimu.Body" parent="TextAppearance.MaterialComponents.Body1">
+        <item name="android:textColor">@color/qimu_text_secondary</item>
+        <item name="android:textSize">14sp</item>
+    </style>
+
+    <style name="TextAppearance.Qimu.Caption" parent="TextAppearance.MaterialComponents.Caption">
+        <item name="android:textColor">@color/qimu_text_tertiary</item>
+        <item name="android:textSize">12sp</item>
+    </style>
+
+    <style name="TextAppearance.Qimu.Nav.Active" parent="TextAppearance.MaterialComponents.Caption">
+        <item name="android:includeFontPadding">false</item>
+        <item name="android:textSize">12sp</item>
+        <item name="android:textStyle">bold</item>
+    </style>
+
+    <style name="TextAppearance.Qimu.Nav.Inactive" parent="TextAppearance.MaterialComponents.Caption">
+        <item name="android:includeFontPadding">false</item>
+        <item name="android:textSize">12sp</item>
+        <item name="android:textStyle">normal</item>
+    </style>
+
+    <style name="Widget.Qimu.Button.Primary" parent="Widget.MaterialComponents.Button">
+        <item name="backgroundTint">@color/qimu_button_primary_tint</item>
+        <item name="android:textColor">@color/qimu_button_primary_text</item>
+        <item name="iconTint">@color/qimu_button_primary_text</item>
+        <item name="cornerRadius">14dp</item>
+        <item name="android:minHeight">52dp</item>
+        <item name="android:textAllCaps">false</item>
+        <item name="android:textSize">15sp</item>
+        <item name="android:textStyle">bold</item>
+        <item name="elevation">0dp</item>
+    </style>
+
+    <style name="Widget.Qimu.Button.Outline" parent="Widget.MaterialComponents.Button.OutlinedButton">
+        <item name="backgroundTint">@color/qimu_button_outline_background</item>
+        <item name="android:textColor">@color/qimu_button_outline_foreground</item>
+        <item name="iconTint">@color/qimu_button_outline_foreground</item>
+        <item name="strokeColor">@color/qimu_button_outline_stroke</item>
+        <item name="strokeWidth">1dp</item>
+        <item name="cornerRadius">14dp</item>
+        <item name="android:minHeight">48dp</item>
+        <item name="android:textAllCaps">false</item>
+        <item name="android:textSize">14sp</item>
+        <item name="elevation">0dp</item>
+    </style>
+
+    <style name="Widget.Qimu.Button.Soft" parent="Widget.MaterialComponents.Button">
+        <item name="backgroundTint">@color/qimu_icon_bg_gold</item>
+        <item name="android:textColor">@color/qimu_gold_dark</item>
+        <item name="iconTint">@color/qimu_gold_dark</item>
+        <item name="cornerRadius">14dp</item>
+        <item name="android:minHeight">48dp</item>
+        <item name="android:textAllCaps">false</item>
+        <item name="android:textSize">14sp</item>
+        <item name="elevation">0dp</item>
+    </style>
+
+    <style name="Widget.Qimu.Button.DangerOutline" parent="Widget.MaterialComponents.Button.OutlinedButton">
+        <item name="backgroundTint">@color/qimu_button_outline_background</item>
+        <item name="android:textColor">@color/qimu_button_danger_foreground</item>
+        <item name="strokeColor">@color/qimu_button_danger_stroke</item>
+        <item name="strokeWidth">1dp</item>
+        <item name="cornerRadius">14dp</item>
+        <item name="android:minHeight">48dp</item>
+        <item name="android:textAllCaps">false</item>
+        <item name="elevation">0dp</item>
     </style>
 </resources>
