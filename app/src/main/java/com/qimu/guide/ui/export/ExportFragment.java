@@ -47,6 +47,7 @@ import com.qimu.guide.ui.gallery.GallerySelectionStore;
 import com.qimu.guide.ui.gallery.LocalPhoto;
 import com.qimu.guide.ui.gallery.LocalPhotoRepository;
 import com.qimu.guide.ui.gallery.LocalPhotosActivity;
+import com.qimu.guide.ui.share.ShareBundleActivity;
 
 import java.io.BufferedInputStream;
 import java.io.BufferedOutputStream;
@@ -65,8 +66,8 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
 /**
- * Export hub for the current tour. Photo transfer is wired to the glasses SDK;
- * QR sharing stays visibly unavailable until the upload service is configured.
+ * Export hub for the current tour. Photo transfer uses the glasses SDK and selected local
+ * photos can be uploaded into a server share bundle for QR/H5 access.
  */
 public class ExportFragment extends Fragment {
 
@@ -191,6 +192,21 @@ public class ExportFragment extends Fragment {
                 }
             });
 
+    private final ActivityResultLauncher<Intent> shareUploadLauncher =
+            registerForActivityResult(new ActivityResultContracts.StartActivityForResult(), result -> {
+                if (!isAdded() || result.getResultCode() != Activity.RESULT_OK
+                        || result.getData() == null) return;
+                int photoCount = result.getData().getIntExtra(
+                        ShareBundleActivity.EXTRA_PHOTO_COUNT, 0);
+                String vlogStatus = result.getData().getStringExtra(
+                        ShareBundleActivity.EXTRA_VLOG_STATUS);
+                String suffix = vlogStatus == null || vlogStatus.isEmpty()
+                        ? "未生成 Vlog" : "Vlog " + vlogStatus;
+                tvQrStatus.setText("分享码已生成 · " + photoCount + " 张 · " + suffix);
+                Toast.makeText(requireContext(), "分享二维码已生成",
+                        Toast.LENGTH_SHORT).show();
+            });
+
     private final ActivityResultLauncher<Intent> shareSelectionLauncher =
             registerForActivityResult(new ActivityResultContracts.StartActivityForResult(), result -> {
                 if (!isAdded() || result.getResultCode() != Activity.RESULT_OK
@@ -205,8 +221,8 @@ public class ExportFragment extends Fragment {
                         selectedCount,
                         getString(vlogEnabled
                                 ? R.string.vlog_enabled : R.string.vlog_disabled)));
-                Toast.makeText(requireContext(),
-                        R.string.export_share_selection_ready, Toast.LENGTH_LONG).show();
+                shareUploadLauncher.launch(ShareBundleActivity.createIntent(
+                        requireContext(), selectedCount, vlogEnabled));
             });
 
     private final BleService.BleListener bleListener = new BleService.BleListener() {

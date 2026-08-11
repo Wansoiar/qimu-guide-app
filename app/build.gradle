@@ -1,5 +1,15 @@
 apply plugin: 'com.android.application'
 
+def qimuApiBaseUrl = project.findProperty('QIMU_API_BASE_URL')
+        ?: System.getenv('QIMU_API_BASE_URL')
+        ?: 'http://115.190.147.152:8787'
+def qimuShareAppToken = project.findProperty('QIMU_SHARE_APP_TOKEN')
+        ?: System.getenv('QIMU_SHARE_APP_TOKEN')
+        ?: ''
+def asBuildConfigString = { value ->
+    '"' + value.toString().replace('\\', '\\\\').replace('"', '\\"') + '"'
+}
+
 android {
     compileSdk 35
 
@@ -11,6 +21,8 @@ android {
         versionName "1.1.1"
         testInstrumentationRunner 'androidx.test.runner.AndroidJUnitRunner'
         multiDexEnabled = true
+        buildConfigField 'String', 'API_BASE_URL', asBuildConfigString(qimuApiBaseUrl)
+        buildConfigField 'String', 'SHARE_APP_TOKEN', asBuildConfigString(qimuShareAppToken)
     }
 
     buildTypes {
@@ -25,8 +37,9 @@ android {
 
     namespace 'com.qimu.guide'
 
-    viewBinding {
-        enabled = true
+    buildFeatures {
+        viewBinding = true
+        buildConfig = true
     }
 
     compileOptions {
@@ -48,6 +61,7 @@ dependencies {
     implementation 'com.google.code.gson:gson:2.8.9'
     implementation 'com.google.protobuf:protobuf-java:4.29.3'
     implementation 'com.squareup.okhttp3:okhttp:4.12.0'
+    implementation 'com.google.zxing:core:3.5.3'
     implementation 'com.artillery.pay:paycertification:leadingSmart_1.0.55'
     implementation 'org.nanohttpd:nanohttpd:2.3.1'
 

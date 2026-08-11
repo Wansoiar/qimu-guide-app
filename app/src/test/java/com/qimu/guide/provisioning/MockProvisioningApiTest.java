@@ -1,11 +1,24 @@
 package com.qimu.guide.provisioning;
 
+import com.qimu.guide.config.OperatorConfigStore;
+
 import org.junit.Test;
+
+import java.util.List;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNotEquals;
 
 public class MockProvisioningApiTest {
+
+    @Test
+    public void mockVenues_startsWithRealRagDemoVenue() {
+        List<ProvisioningApi.Venue> venues = MockProvisioningApi.mockVenues();
+
+        assertEquals(OperatorConfigStore.DEFAULT_VENUE_ID, venues.get(0).id);
+        assertEquals(OperatorConfigStore.DEFAULT_VENUE_NAME, venues.get(0).name);
+        assertEquals("demo-spec005", venues.get(0).code);
+    }
 
     @Test
     public void normalizeMac_trimsAndUppercases() {

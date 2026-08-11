@@ -53,6 +53,10 @@
         <activity
             android:name=".ui.gallery.LocalPhotosActivity"
             android:exported="false" />
+        <activity
+            android:name=".ui.share.ShareBundleActivity"
+            android:exported="false"
+            android:screenOrientation="portrait" />
 
         <activity
             android:name=".MainActivity"

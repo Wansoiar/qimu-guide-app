@@ -3,6 +3,8 @@ package com.qimu.guide.provisioning;
 import android.os.Handler;
 import android.os.Looper;
 
+import com.qimu.guide.config.OperatorConfigStore;
+
 import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
 import java.util.List;
@@ -60,13 +62,18 @@ public final class MockProvisioningApi implements ProvisioningApi {
                 callback.onFailure("运营登录已失效，请重新登录");
                 return;
             }
-            callback.onSuccess(Arrays.asList(
-                    new Venue("61f1f93d-fe42-49d0-b392-bcbf9cd1c13d",
-                            "NAMOC", "中国美术馆", "北京市东城区五四大街 1 号"),
-                    new Venue("8c8c4b78-8888-4f68-9c88-888888888888",
-                            "QIMU-DEMO", "齐目演示馆", "Mock 场馆，仅用于 APP 联调")
-            ));
+            callback.onSuccess(mockVenues());
         });
+    }
+
+    static List<Venue> mockVenues() {
+        return Arrays.asList(
+                new Venue(OperatorConfigStore.DEFAULT_VENUE_ID,
+                        "demo-spec005", OperatorConfigStore.DEFAULT_VENUE_NAME,
+                        "真 RAG 数据：佛像、方鼎、莲花尊"),
+                new Venue("61f1f93d-fe42-49d0-b392-bcbf9cd1c13d",
+                        "NAMOC", "中国美术馆", "北京市东城区五四大街 1 号")
+        );
     }
 
     @Override

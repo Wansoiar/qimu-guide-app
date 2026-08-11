@@ -173,7 +173,7 @@
     <string name="export_view_photos">查看本机照片</string>
     <string name="export_share_selection_hint">生成时选择照片，并决定是否同时生成 Vlog</string>
     <string name="export_share_selection_summary">已选 %1$d 张 · Vlog %2$s</string>
-    <string name="export_share_selection_ready">分享内容已确认，上传与二维码服务待接入</string>
+    <string name="export_share_selection_ready">分享内容已确认，请输入手机号并上传</string>
     <string name="export_share_select_first">选择分享照片</string>
     <string name="gallery_view_title">本机照片</string>
     <string name="gallery_select_title">挑选要分享的照片</string>
@@ -198,6 +198,20 @@
     <string name="end_tour_message">将关闭当前会话、重置眼镜，并清空本机保存的导览照片。</string>
     <string name="end_tour_confirm">结束游览</string>
     <string name="cancel">取消</string>
+
+    <string name="share_back">返回分享设置</string>
+    <string name="share_title">生成导览分享码</string>
+    <string name="share_phone_explanation">游客扫码后需要输入手机号后 4 位验证。手机号只用于本次分享，不会保存在这台设备上。</string>
+    <string name="share_phone_hint">游客手机号</string>
+    <string name="share_selection_summary">已选 %1$d 张照片 · Vlog %2$s</string>
+    <string name="share_start">上传并生成二维码</string>
+    <string name="share_creating">正在创建分享…</string>
+    <string name="share_qr_ready">分享码已生成</string>
+    <string name="share_qr_content_description">本次导览 H5 分享二维码</string>
+    <string name="share_qr_summary">请用游客手机扫码 · 验证手机号后 4 位 %1$s\n有效期 7 天 · %2$d 张照片\n%3$s</string>
+    <string name="share_copy_link">复制链接</string>
+    <string name="share_open_h5">打开 H5</string>
+    <string name="share_done">已扫码，返回导出页</string>
 
     <string name="tab_device">设备</string>
     <string name="tab_dialogue">对话</string>

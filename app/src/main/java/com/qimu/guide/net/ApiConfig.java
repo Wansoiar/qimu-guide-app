@@ -1,15 +1,20 @@
 package com.qimu.guide.net;
 
+import com.qimu.guide.BuildConfig;
+
 /** AI 导览线上后端端点。所有构建类型统一直连线上服务。 */
 public final class ApiConfig {
-
-    private static final String BASE_URL = "http://115.190.147.152:8787";
 
     private ApiConfig() {
     }
 
     public static String baseUrl() {
-        return BASE_URL;
+        String configured = BuildConfig.API_BASE_URL == null
+                ? "" : BuildConfig.API_BASE_URL.trim();
+        while (configured.endsWith("/")) {
+            configured = configured.substring(0, configured.length() - 1);
+        }
+        return configured;
     }
 
     public static String sessions() {
@@ -38,6 +43,10 @@ public final class ApiConfig {
 
     public static String rtcSessionInject() {
         return baseUrl() + "/v1/rtc/session/inject";
+    }
+
+    public static String shareBundles() {
+        return baseUrl() + "/v1/share-bundles";
     }
 
 }

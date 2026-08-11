@@ -14,8 +14,9 @@ import java.util.concurrent.CopyOnWriteArraySet;
  */
 public final class OperatorConfigStore {
 
-    public static final String DEFAULT_VENUE_ID = "61f1f93d-fe42-49d0-b392-bcbf9cd1c13d";
-    public static final String DEFAULT_VENUE_NAME = "中国美术馆";
+    /** Real RAG demo venue shared with feat/volc-main-dialogue. */
+    public static final String DEFAULT_VENUE_ID = "a3bf2489-0b25-416d-9c7f-635fff041a5d";
+    public static final String DEFAULT_VENUE_NAME = "演示博物馆";
 
     private static final String PREFS = "operator_config";
     private static final String KEY_VENUE_ID = "default_venue_id";
