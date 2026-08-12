@@ -40,7 +40,50 @@
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginTop="24dp"
+            android:layout_marginTop="20dp"
+            android:background="@drawable/bg_card_soft"
+            android:gravity="center_vertical"
+            android:orientation="horizontal"
+            android:paddingTop="10dp"
+            android:paddingBottom="10dp">
+
+            <TextView
+                android:id="@+id/tv_step_connect"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:gravity="center"
+                android:text="@string/provisioning_step_connect"
+                android:textColor="@color/qimu_gold_dark"
+                android:textSize="13sp"
+                android:textStyle="bold" />
+
+            <TextView
+                android:id="@+id/tv_step_serial"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:gravity="center"
+                android:text="@string/provisioning_step_phone_serial"
+                android:textColor="@color/qimu_text_tertiary"
+                android:textSize="13sp" />
+
+            <TextView
+                android:id="@+id/tv_step_venue"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:gravity="center"
+                android:text="@string/provisioning_step_venue"
+                android:textColor="@color/qimu_text_tertiary"
+                android:textSize="13sp" />
+        </LinearLayout>
+
+        <LinearLayout
+            android:id="@+id/section_provisioning_connect"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="16dp"
             android:background="@drawable/bg_card_default"
             android:orientation="vertical"
             android:padding="18dp">
@@ -94,70 +137,6 @@
         </LinearLayout>
 
         <LinearLayout
-            android:id="@+id/section_provisioning_auth"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="16dp"
-            android:background="@drawable/bg_card_default"
-            android:orientation="vertical"
-            android:padding="18dp"
-            android:visibility="gone">
-
-            <TextView
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="@string/provisioning_step_auth"
-                android:textAppearance="@style/TextAppearance.Qimu.SectionTitle" />
-
-            <TextView
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="5dp"
-                android:text="@string/provisioning_mock_credentials"
-                android:textColor="@color/qimu_warning"
-                android:textSize="12sp" />
-
-            <com.google.android.material.textfield.TextInputLayout
-                style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="14dp"
-                android:hint="@string/provisioning_username">
-
-                <com.google.android.material.textfield.TextInputEditText
-                    android:id="@+id/edit_provisioning_username"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:inputType="textNoSuggestions"
-                    android:singleLine="true" />
-            </com.google.android.material.textfield.TextInputLayout>
-
-            <com.google.android.material.textfield.TextInputLayout
-                style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="8dp"
-                android:hint="@string/provisioning_password"
-                app:endIconMode="password_toggle">
-
-                <com.google.android.material.textfield.TextInputEditText
-                    android:id="@+id/edit_provisioning_password"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:inputType="textPassword"
-                    android:singleLine="true" />
-            </com.google.android.material.textfield.TextInputLayout>
-
-            <com.google.android.material.button.MaterialButton
-                android:id="@+id/btn_provisioning_login"
-                style="@style/Widget.Qimu.Button.Outline"
-                android:layout_width="match_parent"
-                android:layout_height="48dp"
-                android:layout_marginTop="12dp"
-                android:text="@string/provisioning_verify_operator" />
-        </LinearLayout>
-
-        <LinearLayout
             android:id="@+id/section_provisioning_serial"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
@@ -207,14 +186,6 @@
                 android:text="@string/provisioning_phone_serial_unverified"
                 android:textColor="@color/qimu_text_tertiary"
                 android:textSize="12sp" />
-
-            <com.google.android.material.button.MaterialButton
-                android:id="@+id/btn_provisioning_verify_phone_serial"
-                style="@style/Widget.Qimu.Button.Outline"
-                android:layout_width="match_parent"
-                android:layout_height="48dp"
-                android:layout_marginTop="12dp"
-                android:text="@string/provisioning_verify_phone_serial" />
         </LinearLayout>
 
         <LinearLayout
@@ -241,29 +212,42 @@
                 android:orientation="vertical" />
 
             <TextView
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="12dp"
-                android:text="@string/provisioning_install_id_label"
-                android:textColor="@color/qimu_text_tertiary"
-                android:textSize="12sp" />
-
-            <TextView
-                android:id="@+id/tv_provisioning_install_id"
+                android:id="@+id/tv_provisioning_venues_status"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:fontFamily="monospace"
-                android:textColor="@color/qimu_text_secondary"
-                android:textSize="12sp" />
+                android:layout_marginTop="10dp"
+                android:text="@string/provisioning_venues_loading"
+                android:textColor="@color/qimu_text_tertiary"
+                android:textSize="12sp"
+                android:visibility="gone" />
+        </LinearLayout>
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="24dp"
+            android:orientation="horizontal">
 
             <com.google.android.material.button.MaterialButton
-                android:id="@+id/btn_provisioning_initialize"
-                style="@style/Widget.Qimu.Button.Primary"
-                android:layout_width="match_parent"
+                android:id="@+id/btn_provisioning_prev"
+                style="@style/Widget.Qimu.Button.Outline"
+                android:layout_width="0dp"
                 android:layout_height="52dp"
-                android:layout_marginTop="18dp"
-                android:enabled="false"
-                android:text="@string/provisioning_initialize" />
+                android:layout_weight="1"
+                android:text="@string/provisioning_step_prev" />
+
+            <Space
+                android:layout_width="12dp"
+                android:layout_height="1dp" />
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/btn_provisioning_next"
+                style="@style/Widget.Qimu.Button.Primary"
+                android:layout_width="0dp"
+                android:layout_height="52dp"
+                android:layout_weight="1"
+                android:text="@string/provisioning_step_next"
+                android:visibility="gone" />
         </LinearLayout>
     </LinearLayout>
 </ScrollView>

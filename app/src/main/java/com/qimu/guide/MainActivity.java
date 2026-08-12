@@ -2,6 +2,8 @@ package com.qimu.guide;
 
 import android.content.Intent;
 import android.os.Bundle;
+import android.os.Handler;
+import android.view.MotionEvent;
 import android.view.View;
 import android.widget.Button;
 import android.widget.TextView;
@@ -19,7 +21,9 @@ import com.google.android.material.textfield.TextInputEditText;
 import com.moyoung.glasses.conn.listener.CRPBleConnectionStateListener;
 import com.qimu.guide.config.OperatorConfigStore;
 import com.qimu.guide.net.TourSessionManager;
+import com.qimu.guide.provisioning.LoginActivity;
 import com.qimu.guide.provisioning.MockProvisioningApi;
+import com.qimu.guide.provisioning.OperatorSessionStore;
 import com.qimu.guide.provisioning.ProvisioningActivity;
 import com.qimu.guide.provisioning.ProvisioningApi;
 import com.qimu.guide.provisioning.ProvisioningApiProvider;
@@ -35,6 +39,7 @@ public class MainActivity extends AppCompatActivity implements TourSessionManage
     private static final String TAG_DEVICE = "tab_device";
     private static final String TAG_DIALOGUE = "tab_dialogue";
     private static final String TAG_EXPORT = "tab_export";
+    private static final long OPERATOR_ENTRY_HOLD_MS = 3_000L;
 
     private BottomNavigationView bottomNav;
     private BleService bleService;
@@ -42,18 +47,19 @@ public class MainActivity extends AppCompatActivity implements TourSessionManage
     private RealtimeGuideManager realtimeGuideManager;
     private OperatorConfigStore operatorConfigStore;
     private ProvisioningStore provisioningStore;
+    private OperatorSessionStore operatorSessionStore;
     private ProvisioningApi provisioningApi;
-    private ProvisioningApi.AuthSession operatorSession;
     private DrawerLayout drawerLayout;
     private TextView tvOperatorCurrentVenue;
     private TextView tvOperatorVenueId;
     private TextView tvOperatorDeviceId;
     private TextView tvOperatorPhoneSerial;
     private TextView tvOperatorGlassesId;
-    private TextView tvOperatorConfigVersion;
     private TextView tvHeaderStatus;
     private View headerStatusDot;
     private boolean debugPreviewUnlocked;
+    private final Handler operatorEntryHandler = new Handler();
+    private final Runnable operatorEntryRunnable = this::openOperatorResetFlow;
 
     private final BleService.BleListener bleListener = new BleService.BleListener() {
         @Override
@@ -77,7 +83,7 @@ public class MainActivity extends AppCompatActivity implements TourSessionManage
         super.onCreate(savedInstanceState);
         provisioningStore = ProvisioningStore.get(this);
         if (!provisioningStore.isInitialized()) {
-            launchProvisioning();
+            launchLogin();
             return;
         }
         setContentView(R.layout.activity_main);
@@ -88,6 +94,7 @@ public class MainActivity extends AppCompatActivity implements TourSessionManage
         tourSessionManager.addListener(this);
         realtimeGuideManager = RealtimeGuideManager.get();
         operatorConfigStore = OperatorConfigStore.get(this);
+        operatorSessionStore = OperatorSessionStore.get(this);
         provisioningApi = ProvisioningApiProvider.get();
 
         bottomNav = findViewById(R.id.bottom_navigation);
@@ -95,6 +102,7 @@ public class MainActivity extends AppCompatActivity implements TourSessionManage
         tvHeaderStatus = findViewById(R.id.tv_header_status);
         headerStatusDot = findViewById(R.id.header_status_dot);
         bindOperatorConfigDrawer();
+        bindHeaderOperatorEntry();
 
         if (BuildConfig.DEBUG) {
             findViewById(R.id.top_app_bar).setOnLongClickListener(view -> {
@@ -144,14 +152,11 @@ public class MainActivity extends AppCompatActivity implements TourSessionManage
         tvOperatorDeviceId = findViewById(R.id.tv_operator_device_id);
         tvOperatorPhoneSerial = findViewById(R.id.tv_operator_phone_serial);
         tvOperatorGlassesId = findViewById(R.id.tv_operator_glasses_id);
-        tvOperatorConfigVersion = findViewById(R.id.tv_operator_config_version);
 
         findViewById(R.id.btn_operator_config).setOnClickListener(view ->
-                showOperatorLoginDialog());
+                showOperatorLoginDialog(this::showOperatorDrawerAfterLogin));
         findViewById(R.id.btn_close_operator_config).setOnClickListener(view ->
                 drawerLayout.closeDrawer(GravityCompat.START));
-        findViewById(R.id.btn_reset_provisioning).setOnClickListener(view ->
-                confirmResetProvisioning());
         findViewById(R.id.layout_mock_order).setVisibility(
                 BuildConfig.DEBUG ? View.VISIBLE : View.GONE);
         populateOperatorConfig();
@@ -168,17 +173,51 @@ public class MainActivity extends AppCompatActivity implements TourSessionManage
         tvOperatorDeviceId.setText(snapshot.deviceId);
         tvOperatorPhoneSerial.setText(snapshot.phoneSerial);
         tvOperatorGlassesId.setText(snapshot.glassesId);
-        tvOperatorConfigVersion.setText("v" + snapshot.configVersion);
     }
 
-    private void showOperatorLoginDialog() {
+    /** 长按顶部标题 3 秒进入运营入口：token 有效直接重置确认，否则先登录。 */
+    private void bindHeaderOperatorEntry() {
+        View title = findViewById(R.id.tv_header_title);
+        title.setOnTouchListener((view, event) -> {
+            switch (event.getActionMasked()) {
+                case MotionEvent.ACTION_DOWN:
+                    operatorEntryHandler.removeCallbacks(operatorEntryRunnable);
+                    operatorEntryHandler.postDelayed(operatorEntryRunnable, OPERATOR_ENTRY_HOLD_MS);
+                    break;
+                case MotionEvent.ACTION_UP:
+                case MotionEvent.ACTION_CANCEL:
+                    operatorEntryHandler.removeCallbacks(operatorEntryRunnable);
+                    break;
+                default:
+                    break;
+            }
+            return false;
+        });
+    }
+
+    private void openOperatorResetFlow() {
+        if (validOperatorToken().isEmpty()) {
+            showOperatorLoginDialog(this::confirmResetProvisioning);
+        } else {
+            confirmResetProvisioning();
+        }
+    }
+
+    private void showOperatorDrawerAfterLogin() {
+        populateOperatorConfig();
+        drawerLayout.openDrawer(GravityCompat.START);
+    }
+
+    private void showOperatorLoginDialog(Runnable onLoggedIn) {
         View content = getLayoutInflater().inflate(R.layout.dialog_operator_login, null, false);
         if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
             content.setImportantForAutofill(View.IMPORTANT_FOR_AUTOFILL_NO_EXCLUDE_DESCENDANTS);
         }
         TextInputEditText username = content.findViewById(R.id.edit_operator_username);
         TextInputEditText password = content.findViewById(R.id.edit_operator_password);
-        username.setText(MockProvisioningApi.MOCK_USERNAME);
+        if (ProvisioningApiProvider.isMock()) {
+            username.setText(MockProvisioningApi.MOCK_USERNAME);
+        }
 
         AlertDialog dialog = new AlertDialog.Builder(this)
                 .setTitle(R.string.operator_login_title)
@@ -201,10 +240,12 @@ public class MainActivity extends AppCompatActivity implements TourSessionManage
                 provisioningApi.login(usernameValue, passwordValue,
                         new ProvisioningApi.Callback<ProvisioningApi.AuthSession>() {
                             @Override public void onSuccess(ProvisioningApi.AuthSession session) {
-                                operatorSession = session;
+                                operatorSessionStore.save(
+                                        session.operatorToken,
+                                        session.expiresAtEpochMs,
+                                        session.displayName);
                                 dialog.dismiss();
-                                populateOperatorConfig();
-                                drawerLayout.openDrawer(GravityCompat.START);
+                                if (onLoggedIn != null) onLoggedIn.run();
                             }
 
                             @Override public void onFailure(String message) {
@@ -224,15 +265,14 @@ public class MainActivity extends AppCompatActivity implements TourSessionManage
             Toast.makeText(this, R.string.operator_reset_active_tour, Toast.LENGTH_LONG).show();
             return;
         }
-        if (operatorSession == null
-                || operatorSession.expiresAtEpochMs <= System.currentTimeMillis()) {
-            drawerLayout.closeDrawer(GravityCompat.START);
-            showOperatorLoginDialog();
+        String token = validOperatorToken();
+        if (token.isEmpty()) {
+            showOperatorLoginDialog(this::confirmResetProvisioning);
             return;
         }
         ProvisioningApi.ProvisioningSnapshot snapshot = provisioningStore.snapshot();
         if (snapshot == null) {
-            launchProvisioning();
+            launchLogin();
             return;
         }
         AlertDialog dialog = new AlertDialog.Builder(this)
@@ -248,7 +288,7 @@ public class MainActivity extends AppCompatActivity implements TourSessionManage
             action.setOnClickListener(view -> {
                 action.setEnabled(false);
                 action.setText(R.string.operator_resetting);
-                provisioningApi.reset(operatorSession.operatorToken, snapshot.deviceId,
+                provisioningApi.reset(token, snapshot.deviceId,
                         new ProvisioningApi.Callback<Void>() {
                             @Override public void onSuccess(Void unused) {
                                 if (!provisioningStore.clearProvisioning()) {
@@ -273,12 +313,24 @@ public class MainActivity extends AppCompatActivity implements TourSessionManage
         dialog.show();
     }
 
+    private String validOperatorToken() {
+        if (operatorSessionStore == null || operatorSessionStore.isExpired()) return "";
+        return operatorSessionStore.token();
+    }
+
     private String textOf(TextInputEditText input) {
         return input.getText() == null ? "" : input.getText().toString().trim();
     }
 
     private void launchProvisioning() {
         Intent intent = new Intent(this, ProvisioningActivity.class)
+                .addFlags(Intent.FLAG_ACTIVITY_CLEAR_TASK | Intent.FLAG_ACTIVITY_NEW_TASK);
+        startActivity(intent);
+        finish();
+    }
+
+    private void launchLogin() {
+        Intent intent = new Intent(this, LoginActivity.class)
                 .addFlags(Intent.FLAG_ACTIVITY_CLEAR_TASK | Intent.FLAG_ACTIVITY_NEW_TASK);
         startActivity(intent);
         finish();
@@ -367,6 +419,7 @@ public class MainActivity extends AppCompatActivity implements TourSessionManage
     @Override
     protected void onDestroy() {
         super.onDestroy();
+        operatorEntryHandler.removeCallbacks(operatorEntryRunnable);
         if (bleService != null) bleService.removeListener(bleListener);
         if (tourSessionManager != null) tourSessionManager.removeListener(this);
     }

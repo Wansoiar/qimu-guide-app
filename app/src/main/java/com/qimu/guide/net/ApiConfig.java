@@ -49,4 +49,20 @@ public final class ApiConfig {
         return baseUrl() + "/v1/share-bundles";
     }
 
+    public static String adminLogin() {
+        return baseUrl() + "/v1/admin/auth/login";
+    }
+
+    public static String adminVenues() {
+        return baseUrl() + "/v1/admin/venues";
+    }
+
+    public static String deviceReport() {
+        return baseUrl() + "/v1/admin/devices/report";
+    }
+
+    public static String deviceReset(String deviceId) {
+        return baseUrl() + "/v1/admin/devices/" + deviceId + "/reset";
+    }
+
 }

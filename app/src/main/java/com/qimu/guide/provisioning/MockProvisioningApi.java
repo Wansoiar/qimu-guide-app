@@ -11,7 +11,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.UUID;
 
-/** Local development implementation used until the provisioning endpoints exist. */
+/** 无后端联调用的本地实现，字段与真实接口契约对齐（含 phone_sn → device_id 复用语义）。 */
 public final class MockProvisioningApi implements ProvisioningApi {
 
     public static final String MOCK_USERNAME = "operator";
@@ -31,27 +31,6 @@ public final class MockProvisioningApi implements ProvisioningApi {
                     "mock_operator_" + UUID.randomUUID(),
                     "Mock 运营人员",
                     System.currentTimeMillis() + 15 * 60 * 1000L));
-        });
-    }
-
-    @Override
-    public void resolvePhoneSerial(String operatorToken, String phoneSerial,
-                                   Callback<PhoneIdentity> callback) {
-        deliver(() -> {
-            if (!isValidToken(operatorToken)) {
-                callback.onFailure("运营登录已失效，请重新登录");
-                return;
-            }
-            if (!isValidPhoneSerial(phoneSerial)) {
-                callback.onFailure("手机 SN 格式不正确");
-                return;
-            }
-            String normalizedSerial = normalizePhoneSerial(phoneSerial);
-            callback.onSuccess(new PhoneIdentity(
-                    normalizedSerial,
-                    stableDeviceIdFromSerial(normalizedSerial),
-                    false,
-                    null));
         });
     }
 
@@ -77,7 +56,7 @@ public final class MockProvisioningApi implements ProvisioningApi {
     }
 
     @Override
-    public void initialize(String operatorToken, InitializeRequest request,
+    public void initialize(String operatorToken, DeviceReportRequest request,
                            Callback<ProvisioningSnapshot> callback) {
         deliver(() -> {
             if (!isValidToken(operatorToken)) {
@@ -85,7 +64,6 @@ public final class MockProvisioningApi implements ProvisioningApi {
                 return;
             }
             if (request == null || request.venue == null
-                    || request.installId == null || request.installId.trim().isEmpty()
                     || !isValidPhoneSerial(request.phoneSerial)
                     || request.glassesId == null || request.glassesId.trim().isEmpty()) {
                 callback.onFailure("初始化信息不完整");
@@ -95,14 +73,11 @@ public final class MockProvisioningApi implements ProvisioningApi {
             String phoneSerial = normalizePhoneSerial(request.phoneSerial);
             String serverDeviceId = stableDeviceIdFromSerial(phoneSerial);
             callback.onSuccess(new ProvisioningSnapshot(
-                    request.installId,
                     serverDeviceId,
-                    "mock_device_" + UUID.randomUUID(),
                     phoneSerial,
                     normalizedMac,
                     request.glassesName,
                     request.venue,
-                    1L,
                     System.currentTimeMillis()));
         });
     }
