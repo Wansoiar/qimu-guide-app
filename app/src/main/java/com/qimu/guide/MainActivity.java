@@ -2,27 +2,27 @@ package com.qimu.guide;
 
 import android.content.Intent;
 import android.os.Bundle;
+import android.os.Handler;
+import android.os.SystemClock;
+import android.view.Gravity;
+import android.view.MotionEvent;
 import android.view.View;
-import android.widget.Button;
+import android.view.ViewConfiguration;
+import android.view.ViewGroup;
+import android.widget.FrameLayout;
 import android.widget.TextView;
 import android.widget.Toast;
 
-import androidx.appcompat.app.AlertDialog;
 import androidx.appcompat.app.AppCompatActivity;
-import androidx.core.view.GravityCompat;
-import androidx.drawerlayout.widget.DrawerLayout;
 import androidx.fragment.app.Fragment;
 import androidx.fragment.app.FragmentTransaction;
 
 import com.google.android.material.bottomnavigation.BottomNavigationView;
-import com.google.android.material.textfield.TextInputEditText;
 import com.moyoung.glasses.conn.listener.CRPBleConnectionStateListener;
-import com.qimu.guide.config.OperatorConfigStore;
 import com.qimu.guide.net.TourSessionManager;
-import com.qimu.guide.provisioning.MockProvisioningApi;
-import com.qimu.guide.provisioning.ProvisioningActivity;
-import com.qimu.guide.provisioning.ProvisioningApi;
-import com.qimu.guide.provisioning.ProvisioningApiProvider;
+import com.qimu.guide.provisioning.LoginActivity;
+import com.qimu.guide.provisioning.OperatorConfigActivity;
+import com.qimu.guide.provisioning.OperatorSessionStore;
 import com.qimu.guide.provisioning.ProvisioningStore;
 import com.qimu.guide.service.BleService;
 import com.qimu.guide.service.RealtimeGuideManager;
@@ -35,25 +35,29 @@ public class MainActivity extends AppCompatActivity implements TourSessionManage
     private static final String TAG_DEVICE = "tab_device";
     private static final String TAG_DIALOGUE = "tab_dialogue";
     private static final String TAG_EXPORT = "tab_export";
+    private static final int TITLE_TAP_TARGET = 5;
+    private static final long TITLE_TAP_WINDOW_MS = 800L;
+    private static final long OPERATOR_ENTRY_HOLD_MS = 3_000L;
 
     private BottomNavigationView bottomNav;
     private BleService bleService;
     private TourSessionManager tourSessionManager;
     private RealtimeGuideManager realtimeGuideManager;
-    private OperatorConfigStore operatorConfigStore;
     private ProvisioningStore provisioningStore;
-    private ProvisioningApi provisioningApi;
-    private ProvisioningApi.AuthSession operatorSession;
-    private DrawerLayout drawerLayout;
-    private TextView tvOperatorCurrentVenue;
-    private TextView tvOperatorVenueId;
-    private TextView tvOperatorDeviceId;
-    private TextView tvOperatorPhoneSerial;
-    private TextView tvOperatorGlassesId;
-    private TextView tvOperatorConfigVersion;
+    private OperatorSessionStore operatorSessionStore;
     private TextView tvHeaderStatus;
     private View headerStatusDot;
     private boolean debugPreviewUnlocked;
+    private int titleTapCount;
+    private long lastTitleTapAt;
+    private boolean longPressFired;
+    private boolean debugBallDragging;
+    private float debugBallDownX;
+    private float debugBallDownY;
+    private int debugBallMarginLeft;
+    private int debugBallMarginTop;
+    private final Handler operatorEntryHandler = new Handler();
+    private final Runnable operatorEntryRunnable = this::openOperatorEntry;
 
     private final BleService.BleListener bleListener = new BleService.BleListener() {
         @Override
@@ -77,7 +81,7 @@ public class MainActivity extends AppCompatActivity implements TourSessionManage
         super.onCreate(savedInstanceState);
         provisioningStore = ProvisioningStore.get(this);
         if (!provisioningStore.isInitialized()) {
-            launchProvisioning();
+            launchLogin();
             return;
         }
         setContentView(R.layout.activity_main);
@@ -87,23 +91,13 @@ public class MainActivity extends AppCompatActivity implements TourSessionManage
         tourSessionManager = TourSessionManager.get();
         tourSessionManager.addListener(this);
         realtimeGuideManager = RealtimeGuideManager.get();
-        operatorConfigStore = OperatorConfigStore.get(this);
-        provisioningApi = ProvisioningApiProvider.get();
+        operatorSessionStore = OperatorSessionStore.get(this);
 
         bottomNav = findViewById(R.id.bottom_navigation);
-        drawerLayout = findViewById(R.id.drawer_layout);
         tvHeaderStatus = findViewById(R.id.tv_header_status);
         headerStatusDot = findViewById(R.id.header_status_dot);
-        bindOperatorConfigDrawer();
-
-        if (BuildConfig.DEBUG) {
-            findViewById(R.id.top_app_bar).setOnLongClickListener(view -> {
-                debugPreviewUnlocked = true;
-                invalidateTabs();
-                Toast.makeText(this, "调试页面预览已开启", Toast.LENGTH_SHORT).show();
-                return true;
-            });
-        }
+        bindTitleOperatorEntry();
+        attachDebugFloatingBall();
         bottomNav.setOnItemSelectedListener(item -> {
             int id = item.getItemId();
             boolean canOpenDialogue = tourSessionManager.isActive()
@@ -120,9 +114,6 @@ public class MainActivity extends AppCompatActivity implements TourSessionManage
                 switchFragment(TAG_DIALOGUE, new DialogueFragment());
                 return true;
             } else if (id == R.id.nav_export) {
-                // Keep the export tab reachable outside an active tour so staff can verify that
-                // the dedicated local album is empty after return. Transfer and end-tour actions
-                // remain gated inside ExportFragment by the active session.
                 switchFragment(TAG_EXPORT, new ExportFragment());
                 return true;
             }
@@ -138,156 +129,133 @@ public class MainActivity extends AppCompatActivity implements TourSessionManage
         if (activeSession != null) realtimeGuideManager.startForTour(activeSession);
     }
 
-    private void bindOperatorConfigDrawer() {
-        tvOperatorCurrentVenue = findViewById(R.id.tv_operator_current_venue);
-        tvOperatorVenueId = findViewById(R.id.tv_operator_venue_id);
-        tvOperatorDeviceId = findViewById(R.id.tv_operator_device_id);
-        tvOperatorPhoneSerial = findViewById(R.id.tv_operator_phone_serial);
-        tvOperatorGlassesId = findViewById(R.id.tv_operator_glasses_id);
-        tvOperatorConfigVersion = findViewById(R.id.tv_operator_config_version);
-
-        findViewById(R.id.btn_operator_config).setOnClickListener(view ->
-                showOperatorLoginDialog());
-        findViewById(R.id.btn_close_operator_config).setOnClickListener(view ->
-                drawerLayout.closeDrawer(GravityCompat.START));
-        findViewById(R.id.btn_reset_provisioning).setOnClickListener(view ->
-                confirmResetProvisioning());
-        findViewById(R.id.layout_mock_order).setVisibility(
-                BuildConfig.DEBUG ? View.VISIBLE : View.GONE);
-        populateOperatorConfig();
-    }
-
-    private void populateOperatorConfig() {
-        ProvisioningApi.ProvisioningSnapshot snapshot = provisioningStore.snapshot();
-        if (snapshot == null) {
-            launchProvisioning();
-            return;
-        }
-        tvOperatorCurrentVenue.setText(snapshot.venue.name);
-        tvOperatorVenueId.setText(snapshot.venue.id);
-        tvOperatorDeviceId.setText(snapshot.deviceId);
-        tvOperatorPhoneSerial.setText(snapshot.phoneSerial);
-        tvOperatorGlassesId.setText(snapshot.glassesId);
-        tvOperatorConfigVersion.setText("v" + snapshot.configVersion);
-    }
-
-    private void showOperatorLoginDialog() {
-        View content = getLayoutInflater().inflate(R.layout.dialog_operator_login, null, false);
-        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
-            content.setImportantForAutofill(View.IMPORTANT_FOR_AUTOFILL_NO_EXCLUDE_DESCENDANTS);
-        }
-        TextInputEditText username = content.findViewById(R.id.edit_operator_username);
-        TextInputEditText password = content.findViewById(R.id.edit_operator_password);
-        username.setText(MockProvisioningApi.MOCK_USERNAME);
-
-        AlertDialog dialog = new AlertDialog.Builder(this)
-                .setTitle(R.string.operator_login_title)
-                .setView(content)
-                .setNegativeButton(R.string.cancel, null)
-                .setPositiveButton(R.string.operator_login_action, null)
-                .create();
-        dialog.setOnShowListener(ignored -> {
-            Button action = dialog.getButton(AlertDialog.BUTTON_POSITIVE);
-            action.setOnClickListener(view -> {
-                String usernameValue = textOf(username);
-                String passwordValue = textOf(password);
-                if (usernameValue.isEmpty() || passwordValue.isEmpty()) {
-                    Toast.makeText(this, R.string.provisioning_credentials_required,
-                            Toast.LENGTH_SHORT).show();
-                    return;
-                }
-                action.setEnabled(false);
-                action.setText(R.string.provisioning_verifying);
-                provisioningApi.login(usernameValue, passwordValue,
-                        new ProvisioningApi.Callback<ProvisioningApi.AuthSession>() {
-                            @Override public void onSuccess(ProvisioningApi.AuthSession session) {
-                                operatorSession = session;
-                                dialog.dismiss();
-                                populateOperatorConfig();
-                                drawerLayout.openDrawer(GravityCompat.START);
-                            }
-
-                            @Override public void onFailure(String message) {
-                                action.setEnabled(true);
-                                action.setText(R.string.operator_login_action);
-                                Toast.makeText(MainActivity.this, message,
-                                        Toast.LENGTH_LONG).show();
-                            }
-                        });
-            });
+    /** 连点标题 5 次（800ms 窗口内）开调试预览；长按标题 3 秒进入运营配置。 */
+    private void bindTitleOperatorEntry() {
+        View title = findViewById(R.id.tv_header_title);
+        title.setOnClickListener(view -> {
+            if (longPressFired) {
+                longPressFired = false;
+                return;
+            }
+            long now = SystemClock.elapsedRealtime();
+            if (now - lastTitleTapAt > TITLE_TAP_WINDOW_MS) titleTapCount = 0;
+            lastTitleTapAt = now;
+            titleTapCount++;
+            if (titleTapCount >= TITLE_TAP_TARGET) {
+                titleTapCount = 0;
+                unlockDebugPreview();
+            }
         });
-        dialog.show();
-    }
-
-    private void confirmResetProvisioning() {
-        if (tourSessionManager.isActive()) {
-            Toast.makeText(this, R.string.operator_reset_active_tour, Toast.LENGTH_LONG).show();
-            return;
-        }
-        if (operatorSession == null
-                || operatorSession.expiresAtEpochMs <= System.currentTimeMillis()) {
-            drawerLayout.closeDrawer(GravityCompat.START);
-            showOperatorLoginDialog();
-            return;
-        }
-        ProvisioningApi.ProvisioningSnapshot snapshot = provisioningStore.snapshot();
-        if (snapshot == null) {
-            launchProvisioning();
-            return;
-        }
-        AlertDialog dialog = new AlertDialog.Builder(this)
-                .setTitle(R.string.operator_reset_title)
-                .setMessage(R.string.operator_reset_message)
-                .setNegativeButton(R.string.cancel, null)
-                .setPositiveButton(R.string.operator_reset_action, null)
-                .create();
-        dialog.setOnShowListener(ignored -> {
-            Button action = dialog.getButton(AlertDialog.BUTTON_POSITIVE);
-            action.setTextColor(androidx.core.content.ContextCompat.getColor(
-                    this, R.color.qimu_error));
-            action.setOnClickListener(view -> {
-                action.setEnabled(false);
-                action.setText(R.string.operator_resetting);
-                provisioningApi.reset(operatorSession.operatorToken, snapshot.deviceId,
-                        new ProvisioningApi.Callback<Void>() {
-                            @Override public void onSuccess(Void unused) {
-                                if (!provisioningStore.clearProvisioning()) {
-                                    onFailure(getString(R.string.operator_reset_failed));
-                                    return;
-                                }
-                                operatorConfigStore.restoreDefaults();
-                                bleService.disconnect();
-                                dialog.dismiss();
-                                launchProvisioning();
-                            }
-
-                            @Override public void onFailure(String message) {
-                                action.setEnabled(true);
-                                action.setText(R.string.operator_reset_action);
-                                Toast.makeText(MainActivity.this, message,
-                                        Toast.LENGTH_LONG).show();
-                            }
-                        });
-            });
+        title.setOnTouchListener((view, event) -> {
+            switch (event.getActionMasked()) {
+                case MotionEvent.ACTION_DOWN:
+                    longPressFired = false;
+                    operatorEntryHandler.removeCallbacks(operatorEntryRunnable);
+                    operatorEntryHandler.postDelayed(operatorEntryRunnable,
+                            OPERATOR_ENTRY_HOLD_MS);
+                    break;
+                case MotionEvent.ACTION_UP:
+                case MotionEvent.ACTION_CANCEL:
+                    operatorEntryHandler.removeCallbacks(operatorEntryRunnable);
+                    break;
+                default:
+                    break;
+            }
+            return false;
         });
-        dialog.show();
     }
 
-    private String textOf(TextInputEditText input) {
-        return input.getText() == null ? "" : input.getText().toString().trim();
+    /** 调试预览仅在 debug 包可用：连点标题 5 次后，对话/导出页免导览会话直接预览。 */
+    private void unlockDebugPreview() {
+        if (!BuildConfig.DEBUG) return;
+        debugPreviewUnlocked = true;
+        invalidateTabs();
+        Toast.makeText(this, "调试页面预览已开启", Toast.LENGTH_SHORT).show();
     }
 
-    private void launchProvisioning() {
-        Intent intent = new Intent(this, ProvisioningActivity.class)
+    /** 调试悬浮球（仅 debug 包）：可拖拽，点击清除运营登录状态。 */
+    private void attachDebugFloatingBall() {
+        if (!BuildConfig.DEBUG) return;
+        ViewGroup content = findViewById(android.R.id.content);
+        if (content == null) return;
+        int size = dp(48);
+        TextView ball = new TextView(this);
+        ball.setText("调");
+        ball.setTextColor(0xFFFFFFFF);
+        ball.setTextSize(16);
+        ball.setGravity(Gravity.CENTER);
+        ball.setBackgroundResource(R.drawable.bg_debug_float_ball);
+        ball.setContentDescription("调试悬浮球");
+        int touchSlop = ViewConfiguration.get(this).getScaledTouchSlop();
+        ball.setOnClickListener(view -> clearOperatorSession());
+        ball.setOnTouchListener((view, event) -> {
+            switch (event.getActionMasked()) {
+                case MotionEvent.ACTION_DOWN:
+                    debugBallDragging = false;
+                    debugBallDownX = event.getRawX();
+                    debugBallDownY = event.getRawY();
+                    FrameLayout.LayoutParams downParams =
+                            (FrameLayout.LayoutParams) view.getLayoutParams();
+                    debugBallMarginLeft = downParams.leftMargin;
+                    debugBallMarginTop = downParams.topMargin;
+                    return true;
+                case MotionEvent.ACTION_MOVE:
+                    if (Math.abs(event.getRawX() - debugBallDownX) > touchSlop
+                            || Math.abs(event.getRawY() - debugBallDownY) > touchSlop) {
+                        debugBallDragging = true;
+                    }
+                    if (debugBallDragging) {
+                        FrameLayout.LayoutParams params =
+                                (FrameLayout.LayoutParams) view.getLayoutParams();
+                        params.leftMargin = debugBallMarginLeft
+                                + (int) (event.getRawX() - debugBallDownX);
+                        params.topMargin = debugBallMarginTop
+                                + (int) (event.getRawY() - debugBallDownY);
+                        view.setLayoutParams(params);
+                    }
+                    return true;
+                case MotionEvent.ACTION_UP:
+                    if (!debugBallDragging) view.performClick();
+                    debugBallDragging = false;
+                    return true;
+                default:
+                    return true;
+            }
+        });
+        content.post(() -> {
+            if (ball.getParent() != null) return;
+            FrameLayout.LayoutParams params = new FrameLayout.LayoutParams(size, size);
+            params.leftMargin = Math.max(dp(8), content.getWidth() - size - dp(16));
+            params.topMargin = dp(76);
+            content.addView(ball, params);
+        });
+    }
+
+    /** 清除运营登录状态（OperatorSessionStore），下次进运营入口需重新登录。 */
+    private void clearOperatorSession() {
+        if (operatorSessionStore == null) operatorSessionStore = OperatorSessionStore.get(this);
+        operatorSessionStore.clear();
+        Toast.makeText(this, "已清除运营登录状态", Toast.LENGTH_SHORT).show();
+    }
+
+    /** 运营入口：token 有效直接进运营配置页，否则先进带关闭按钮的登录页。 */
+    private void openOperatorEntry() {
+        if (operatorSessionStore == null || operatorSessionStore.isExpired()) {
+            startActivity(new Intent(this, LoginActivity.class)
+                    .putExtra(LoginActivity.EXTRA_FROM_OPERATOR, true));
+        } else {
+            startActivity(new Intent(this, OperatorConfigActivity.class));
+        }
+    }
+
+    private void launchLogin() {
+        Intent intent = new Intent(this, LoginActivity.class)
                 .addFlags(Intent.FLAG_ACTIVITY_CLEAR_TASK | Intent.FLAG_ACTIVITY_NEW_TASK);
         startActivity(intent);
         finish();
     }
 
-    /**
-     * Keep each tab Fragment alive after its first creation. This preserves the
-     * conversation and export state when visitors move between tabs.
-     */
+    /** Keep each tab Fragment alive after its first creation. */
     private void switchFragment(String tag, Fragment newFragment) {
         Fragment target = getSupportFragmentManager().findFragmentByTag(tag);
         FragmentTransaction transaction = getSupportFragmentManager().beginTransaction()
@@ -320,6 +288,10 @@ public class MainActivity extends AppCompatActivity implements TourSessionManage
                     ? R.drawable.dot_status_connected
                     : R.drawable.dot_status_disconnected);
         });
+    }
+
+    private int dp(int value) {
+        return Math.round(value * getResources().getDisplayMetrics().density);
     }
 
     @Override
@@ -356,17 +328,9 @@ public class MainActivity extends AppCompatActivity implements TourSessionManage
     }
 
     @Override
-    public void onBackPressed() {
-        if (drawerLayout != null && drawerLayout.isDrawerOpen(GravityCompat.START)) {
-            drawerLayout.closeDrawer(GravityCompat.START);
-            return;
-        }
-        super.onBackPressed();
-    }
-
-    @Override
     protected void onDestroy() {
         super.onDestroy();
+        operatorEntryHandler.removeCallbacks(operatorEntryRunnable);
         if (bleService != null) bleService.removeListener(bleListener);
         if (tourSessionManager != null) tourSessionManager.removeListener(this);
     }

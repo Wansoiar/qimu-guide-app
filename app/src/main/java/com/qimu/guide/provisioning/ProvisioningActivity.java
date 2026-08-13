@@ -3,9 +3,9 @@ package com.qimu.guide.provisioning;
 import android.bluetooth.BluetoothDevice;
 import android.content.Intent;
 import android.content.pm.PackageManager;
+import android.graphics.Typeface;
 import android.os.Build;
 import android.os.Bundle;
-import android.provider.Settings;
 import android.text.Editable;
 import android.text.TextUtils;
 import android.text.TextWatcher;
@@ -29,21 +29,24 @@ import com.qimu.guide.config.OperatorConfigStore;
 import com.qimu.guide.service.BleService;
 import com.qimu.guide.util.PermissionUtils;
 
-import java.nio.charset.StandardCharsets;
-import java.security.MessageDigest;
-import java.security.NoSuchAlgorithmException;
 import java.util.LinkedHashMap;
 import java.util.List;
-import java.util.Locale;
 import java.util.Map;
-import java.util.UUID;
 
-/** Launcher gate shown until this APP installation has been provisioned. */
+/**
+ * 设备初始化向导：连接眼镜 → 录入手机 SN → 选择场馆 → 初始化并进入使用页。
+ * 运营 token 过期时提示并回到登录页。
+ */
 public final class ProvisioningActivity extends AppCompatActivity {
 
     private static final long SCAN_TIMEOUT_MS = 15_000L;
+    private static final int STEP_CONNECT = 1;
+    private static final int STEP_SERIAL = 2;
+    private static final int STEP_VENUE = 3;
+    private static final int MAX_SERIAL_LENGTH = 64;
 
     private ProvisioningStore provisioningStore;
+    private OperatorSessionStore operatorSessionStore;
     private ProvisioningApi provisioningApi;
     private OperatorConfigStore operatorConfigStore;
     private BleService bleService;
@@ -51,26 +54,27 @@ public final class ProvisioningActivity extends AppCompatActivity {
     private TextView tvConnectionStatus;
     private TextView tvConnectedGlasses;
     private TextView tvScanStatus;
-    private TextView tvInstallId;
+    private TextView tvPhoneSerialStatus;
+    private TextView tvVenuesStatus;
+    private TextView tvStepConnect;
+    private TextView tvStepSerial;
+    private TextView tvStepVenue;
     private LinearLayout scanResults;
-    private View authSection;
+    private View connectSection;
     private View serialSection;
     private View venueSection;
-    private TextInputEditText usernameInput;
-    private TextInputEditText passwordInput;
     private TextInputEditText phoneSerialInput;
-    private TextView tvPhoneSerialStatus;
     private MaterialButton scanButton;
-    private MaterialButton loginButton;
-    private MaterialButton verifyPhoneSerialButton;
-    private MaterialButton initializeButton;
+    private MaterialButton btnPrev;
+    private MaterialButton btnNext;
     private RadioGroup venueGroup;
 
     private final Map<Integer, ProvisioningApi.Venue> venuesByRadioId = new LinkedHashMap<>();
     private final Map<String, View> scanRowsByAddress = new LinkedHashMap<>();
-    private ProvisioningApi.AuthSession authSession;
-    private ProvisioningApi.PhoneIdentity phoneIdentity;
+    private int currentStep = STEP_CONNECT;
     private boolean scanning;
+    private boolean venuesLoaded;
+    private boolean initializing;
 
     private final BleService.BleListener bleListener = new BleService.BleListener() {
         @Override
@@ -98,6 +102,12 @@ public final class ProvisioningActivity extends AppCompatActivity {
             launchMain();
             return;
         }
+        operatorSessionStore = OperatorSessionStore.get(this);
+        if (operatorSessionStore.isExpired()) {
+            Toast.makeText(this, R.string.provisioning_login_again, Toast.LENGTH_LONG).show();
+            launchLogin();
+            return;
+        }
 
         setContentView(R.layout.activity_provisioning);
         provisioningApi = ProvisioningApiProvider.get();
@@ -105,7 +115,7 @@ public final class ProvisioningActivity extends AppCompatActivity {
         bleService = BleService.getInstance();
         bindViews();
         bindActions();
-        tvInstallId.setText(provisioningStore.installId());
+        renderStep();
         renderConnectionState(bleService.getConnectionState());
     }
 
@@ -113,24 +123,20 @@ public final class ProvisioningActivity extends AppCompatActivity {
         tvConnectionStatus = findViewById(R.id.tv_provisioning_connection_status);
         tvConnectedGlasses = findViewById(R.id.tv_provisioning_glasses);
         tvScanStatus = findViewById(R.id.tv_provisioning_scan_status);
-        tvInstallId = findViewById(R.id.tv_provisioning_install_id);
+        tvPhoneSerialStatus = findViewById(R.id.tv_provisioning_phone_serial_status);
+        tvVenuesStatus = findViewById(R.id.tv_provisioning_venues_status);
+        tvStepConnect = findViewById(R.id.tv_step_connect);
+        tvStepSerial = findViewById(R.id.tv_step_serial);
+        tvStepVenue = findViewById(R.id.tv_step_venue);
         scanResults = findViewById(R.id.layout_provisioning_scan_results);
-        authSection = findViewById(R.id.section_provisioning_auth);
+        connectSection = findViewById(R.id.section_provisioning_connect);
         serialSection = findViewById(R.id.section_provisioning_serial);
         venueSection = findViewById(R.id.section_provisioning_venue);
-        usernameInput = findViewById(R.id.edit_provisioning_username);
-        passwordInput = findViewById(R.id.edit_provisioning_password);
         phoneSerialInput = findViewById(R.id.edit_provisioning_phone_serial);
-        tvPhoneSerialStatus = findViewById(R.id.tv_provisioning_phone_serial_status);
         scanButton = findViewById(R.id.btn_provisioning_scan);
-        loginButton = findViewById(R.id.btn_provisioning_login);
-        verifyPhoneSerialButton = findViewById(R.id.btn_provisioning_verify_phone_serial);
-        initializeButton = findViewById(R.id.btn_provisioning_initialize);
+        btnPrev = findViewById(R.id.btn_provisioning_prev);
+        btnNext = findViewById(R.id.btn_provisioning_next);
         venueGroup = findViewById(R.id.group_provisioning_venues);
-        usernameInput.setText(MockProvisioningApi.MOCK_USERNAME);
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            authSection.setImportantForAutofill(View.IMPORTANT_FOR_AUTOFILL_NO_EXCLUDE_DESCENDANTS);
-        }
     }
 
     private void bindActions() {
@@ -138,21 +144,28 @@ public final class ProvisioningActivity extends AppCompatActivity {
             if (scanning) stopScan();
             else if (PermissionUtils.checkAndRequestPermissions(this)) startScan();
         });
-        loginButton.setOnClickListener(view -> loginOperator());
-        verifyPhoneSerialButton.setOnClickListener(view -> verifyPhoneSerial());
-        initializeButton.setOnClickListener(view -> initializeDevice());
-        venueGroup.setOnCheckedChangeListener((group, checkedId) -> updateInitializeEnabled());
+        btnPrev.setOnClickListener(view -> {
+            if (currentStep > STEP_CONNECT) goToStep(currentStep - 1);
+        });
+        btnNext.setOnClickListener(view -> onNext());
+        venueGroup.setOnCheckedChangeListener((group, checkedId) -> updateStepControls());
         phoneSerialInput.addTextChangedListener(new TextWatcher() {
+            private boolean editing;
+
             @Override public void beforeTextChanged(CharSequence s, int start, int count, int after) { }
-            @Override public void onTextChanged(CharSequence s, int start, int before, int count) {
-                if (phoneIdentity == null) return;
-                phoneIdentity = null;
-                venueSection.setVisibility(View.GONE);
-                tvPhoneSerialStatus.setText(R.string.provisioning_phone_serial_unverified);
-                verifyPhoneSerialButton.setText(R.string.provisioning_verify_phone_serial);
-                updateInitializeEnabled();
+            @Override public void onTextChanged(CharSequence s, int start, int before, int count) { }
+
+            @Override
+            public void afterTextChanged(Editable editable) {
+                if (editing) return;
+                String normalized = sanitizePhoneSerial(editable.toString());
+                if (!normalized.equals(editable.toString())) {
+                    editing = true;
+                    editable.replace(0, editable.length(), normalized);
+                    editing = false;
+                }
+                updateSerialStatus();
             }
-            @Override public void afterTextChanged(Editable s) { }
         });
     }
 
@@ -269,129 +282,108 @@ public final class ProvisioningActivity extends AppCompatActivity {
             tvConnectedGlasses.setText(getString(R.string.provisioning_glasses_value,
                     safe(bleService.getDeviceName(), getString(R.string.unknown_device)),
                     MockProvisioningApi.normalizeMac(bleService.getConnectedAddress())));
-            authSection.setVisibility(View.VISIBLE);
-            loginButton.setEnabled(true);
-            updateInitializeEnabled();
         } else if (state == CRPBleConnectionStateListener.STATE_CONNECTING) {
             tvConnectionStatus.setText(R.string.state_connecting);
             tvConnectionStatus.setTextColor(getColorCompat(R.color.qimu_connecting));
-            loginButton.setEnabled(false);
         } else {
             tvConnectionStatus.setText(R.string.provisioning_connect_first);
             tvConnectionStatus.setTextColor(getColorCompat(R.color.qimu_error));
             tvConnectedGlasses.setText(R.string.provisioning_no_glasses);
-            loginButton.setEnabled(false);
-            updateInitializeEnabled();
+        }
+        updateStepControls();
+    }
+
+    private void renderStep() {
+        connectSection.setVisibility(currentStep == STEP_CONNECT ? View.VISIBLE : View.GONE);
+        serialSection.setVisibility(currentStep == STEP_SERIAL ? View.VISIBLE : View.GONE);
+        venueSection.setVisibility(currentStep == STEP_VENUE ? View.VISIBLE : View.GONE);
+        applyStepLabel(tvStepConnect, STEP_CONNECT);
+        applyStepLabel(tvStepSerial, STEP_SERIAL);
+        applyStepLabel(tvStepVenue, STEP_VENUE);
+        btnPrev.setEnabled(currentStep > STEP_CONNECT);
+        if (currentStep == STEP_VENUE && !venuesLoaded && !initializing) loadVenues();
+        updateStepControls();
+    }
+
+    private void applyStepLabel(TextView label, int step) {
+        boolean active = step <= currentStep;
+        label.setTextColor(getColorCompat(active
+                ? R.color.qimu_gold_dark : R.color.qimu_text_tertiary));
+        label.setTypeface(null, active ? Typeface.BOLD : Typeface.NORMAL);
+    }
+
+    private void updateStepControls() {
+        boolean complete;
+        if (currentStep == STEP_CONNECT) {
+            complete = bleService != null && bleService.isConnected();
+        } else if (currentStep == STEP_SERIAL) {
+            complete = MockProvisioningApi.isValidPhoneSerial(textOf(phoneSerialInput));
+        } else {
+            complete = venueGroup.getCheckedRadioButtonId() != -1;
+        }
+        btnNext.setVisibility(complete ? View.VISIBLE : View.GONE);
+        btnNext.setText(currentStep == STEP_VENUE
+                ? R.string.provisioning_initialize : R.string.provisioning_step_next);
+        if (currentStep == STEP_VENUE) {
+            btnNext.setEnabled(complete && !initializing);
+        } else {
+            btnNext.setEnabled(true);
         }
     }
 
-    private void loginOperator() {
-        if (!bleService.isConnected()) {
-            Toast.makeText(this, R.string.must_connect_first, Toast.LENGTH_SHORT).show();
-            return;
-        }
-        String username = textOf(usernameInput);
-        String password = textOf(passwordInput);
-        if (username.isEmpty() || password.isEmpty()) {
-            Toast.makeText(this, R.string.provisioning_credentials_required,
-                    Toast.LENGTH_SHORT).show();
-            return;
-        }
-        loginButton.setEnabled(false);
-        loginButton.setText(R.string.provisioning_verifying);
-        provisioningApi.login(username, password, new ProvisioningApi.Callback<ProvisioningApi.AuthSession>() {
-            @Override public void onSuccess(ProvisioningApi.AuthSession value) {
-                authSession = value;
-                phoneIdentity = null;
-                venueSection.setVisibility(View.GONE);
-                tvPhoneSerialStatus.setText(R.string.provisioning_phone_serial_unverified);
-                verifyPhoneSerialButton.setText(R.string.provisioning_verify_phone_serial);
-                loginButton.setEnabled(true);
-                loginButton.setText(R.string.provisioning_verified);
-                serialSection.setVisibility(View.VISIBLE);
-            }
-
-            @Override public void onFailure(String message) {
-                loginButton.setEnabled(true);
-                loginButton.setText(R.string.provisioning_verify_operator);
-                Toast.makeText(ProvisioningActivity.this, message, Toast.LENGTH_LONG).show();
-            }
-        });
-    }
-
-    private void verifyPhoneSerial() {
-        if (authSession == null || authSession.expiresAtEpochMs <= System.currentTimeMillis()) {
+    private void goToStep(int step) {
+        if (operatorSessionStore.isExpired()) {
             Toast.makeText(this, R.string.provisioning_login_again, Toast.LENGTH_LONG).show();
+            launchLogin();
             return;
         }
-        String phoneSerial = MockProvisioningApi.normalizePhoneSerial(textOf(phoneSerialInput));
-        if (!MockProvisioningApi.isValidPhoneSerial(phoneSerial)) {
-            phoneSerialInput.setError(getString(R.string.provisioning_phone_serial_invalid));
-            return;
-        }
-        phoneSerialInput.setError(null);
-        verifyPhoneSerialButton.setEnabled(false);
-        verifyPhoneSerialButton.setText(R.string.provisioning_phone_serial_verifying);
-        provisioningApi.resolvePhoneSerial(authSession.operatorToken, phoneSerial,
-                new ProvisioningApi.Callback<ProvisioningApi.PhoneIdentity>() {
-                    @Override public void onSuccess(ProvisioningApi.PhoneIdentity value) {
-                        if (value == null
-                                || !phoneSerial.equals(MockProvisioningApi.normalizePhoneSerial(
-                                        value.phoneSerial))) {
-                            onFailure(getString(
-                                    R.string.provisioning_phone_serial_response_invalid));
-                            return;
-                        }
-                        if (!phoneSerial.equals(MockProvisioningApi.normalizePhoneSerial(
-                                textOf(phoneSerialInput)))) {
-                            verifyPhoneSerialButton.setEnabled(true);
-                            verifyPhoneSerialButton.setText(
-                                    R.string.provisioning_verify_phone_serial);
-                            return;
-                        }
-                        phoneIdentity = null;
-                        phoneSerialInput.setText(value.phoneSerial);
-                        phoneSerialInput.setSelection(value.phoneSerial.length());
-                        phoneIdentity = value;
-                        tvPhoneSerialStatus.setText(value.existing
-                                && !TextUtils.isEmpty(value.deviceId)
-                                ? getString(R.string.provisioning_phone_serial_existing,
-                                        value.deviceId)
-                                : getString(R.string.provisioning_phone_serial_new));
-                        verifyPhoneSerialButton.setEnabled(true);
-                        verifyPhoneSerialButton.setText(R.string.provisioning_phone_serial_verified);
-                        loadVenues(value.phoneSerial);
-                    }
-
-                    @Override public void onFailure(String message) {
-                        phoneIdentity = null;
-                        verifyPhoneSerialButton.setEnabled(true);
-                        verifyPhoneSerialButton.setText(R.string.provisioning_verify_phone_serial);
-                        tvPhoneSerialStatus.setText(R.string.provisioning_phone_serial_unverified);
-                        Toast.makeText(ProvisioningActivity.this, message,
-                                Toast.LENGTH_LONG).show();
-                    }
-                });
+        currentStep = step;
+        renderStep();
     }
 
-    private void loadVenues(String expectedPhoneSerial) {
-        provisioningApi.listVenues(authSession.operatorToken,
+    private void onNext() {
+        if (currentStep == STEP_CONNECT) {
+            if (!bleService.isConnected()) {
+                Toast.makeText(this, R.string.provisioning_connect_first,
+                        Toast.LENGTH_LONG).show();
+                return;
+            }
+            goToStep(STEP_SERIAL);
+        } else if (currentStep == STEP_SERIAL) {
+            if (!MockProvisioningApi.isValidPhoneSerial(textOf(phoneSerialInput))) {
+                Toast.makeText(this, R.string.provisioning_phone_serial_invalid,
+                        Toast.LENGTH_LONG).show();
+                return;
+            }
+            goToStep(STEP_VENUE);
+        } else {
+            initializeDevice();
+        }
+    }
+
+    private void loadVenues() {
+        if (operatorSessionStore.isExpired()) {
+            Toast.makeText(this, R.string.provisioning_login_again, Toast.LENGTH_LONG).show();
+            launchLogin();
+            return;
+        }
+        tvVenuesStatus.setVisibility(View.VISIBLE);
+        tvVenuesStatus.setText(R.string.provisioning_venues_loading);
+        venueGroup.setEnabled(false);
+        provisioningApi.listVenues(operatorSessionStore.token(),
                 new ProvisioningApi.Callback<List<ProvisioningApi.Venue>>() {
-                    @Override public void onSuccess(List<ProvisioningApi.Venue> venues) {
-                        if (phoneIdentity == null
-                                || !expectedPhoneSerial.equals(phoneIdentity.phoneSerial)
-                                || !expectedPhoneSerial.equals(
-                                        MockProvisioningApi.normalizePhoneSerial(
-                                                textOf(phoneSerialInput)))) {
-                            return;
-                        }
+                    @Override
+                    public void onSuccess(List<ProvisioningApi.Venue> venues) {
+                        venuesLoaded = true;
+                        venueGroup.setEnabled(true);
                         renderVenues(venues);
                     }
 
-                    @Override public void onFailure(String message) {
-                        authSession = null;
-                        loginButton.setEnabled(true);
-                        loginButton.setText(R.string.provisioning_verify_operator);
+                    @Override
+                    public void onFailure(String message) {
+                        venueGroup.setEnabled(true);
+                        tvVenuesStatus.setVisibility(View.VISIBLE);
+                        tvVenuesStatus.setText(message);
                         Toast.makeText(ProvisioningActivity.this, message,
                                 Toast.LENGTH_LONG).show();
                     }
@@ -402,7 +394,9 @@ public final class ProvisioningActivity extends AppCompatActivity {
         venueGroup.removeAllViews();
         venuesByRadioId.clear();
         if (venues == null || venues.isEmpty()) {
-            Toast.makeText(this, R.string.provisioning_no_venues, Toast.LENGTH_LONG).show();
+            tvVenuesStatus.setVisibility(View.VISIBLE);
+            tvVenuesStatus.setText(R.string.provisioning_no_venues);
+            updateStepControls();
             return;
         }
         for (ProvisioningApi.Venue venue : venues) {
@@ -415,96 +409,101 @@ public final class ProvisioningActivity extends AppCompatActivity {
             venueGroup.addView(radio);
             venuesByRadioId.put(id, venue);
         }
-        venueSection.setVisibility(View.VISIBLE);
-        Integer selectedId = null;
-        if (phoneIdentity != null && phoneIdentity.currentVenue != null) {
-            for (Map.Entry<Integer, ProvisioningApi.Venue> entry : venuesByRadioId.entrySet()) {
-                if (phoneIdentity.currentVenue.id.equals(entry.getValue().id)) {
-                    selectedId = entry.getKey();
-                    break;
-                }
-            }
-        }
-        venueGroup.check(selectedId == null
-                ? venuesByRadioId.keySet().iterator().next()
-                : selectedId);
+        venueGroup.check(venuesByRadioId.keySet().iterator().next());
+        tvVenuesStatus.setVisibility(View.GONE);
+        updateStepControls();
     }
 
     private void initializeDevice() {
-        if (authSession == null || authSession.expiresAtEpochMs <= System.currentTimeMillis()) {
+        if (operatorSessionStore.isExpired()) {
             Toast.makeText(this, R.string.provisioning_login_again, Toast.LENGTH_LONG).show();
+            launchLogin();
             return;
         }
         ProvisioningApi.Venue venue = venuesByRadioId.get(venueGroup.getCheckedRadioButtonId());
         String glassesId = MockProvisioningApi.normalizeMac(bleService.getConnectedAddress());
         if (!bleService.isConnected() || glassesId.isEmpty() || venue == null
-                || phoneIdentity == null
-                || !phoneIdentity.phoneSerial.equals(
-                        MockProvisioningApi.normalizePhoneSerial(textOf(phoneSerialInput)))) {
-            Toast.makeText(this, R.string.provisioning_incomplete, Toast.LENGTH_LONG).show();
+                || !MockProvisioningApi.isValidPhoneSerial(textOf(phoneSerialInput))) {
+            Toast.makeText(this, R.string.provisioning_connect_first, Toast.LENGTH_LONG).show();
             return;
         }
-        String installId = provisioningStore.installId();
-        String androidIdHash = hashAndroidId();
-        ProvisioningApi.InitializeRequest request = new ProvisioningApi.InitializeRequest(
-                installId,
-                installId,
-                phoneIdentity.phoneSerial,
-                androidIdHash,
+        ProvisioningApi.DeviceReportRequest request = new ProvisioningApi.DeviceReportRequest(
+                MockProvisioningApi.normalizePhoneSerial(textOf(phoneSerialInput)),
                 Build.MANUFACTURER + " " + Build.MODEL,
                 "Android " + Build.VERSION.RELEASE,
                 BuildConfig.VERSION_NAME,
                 glassesId,
                 safe(bleService.getDeviceName(), getString(R.string.unknown_device)),
                 venue);
-        initializeButton.setEnabled(false);
-        initializeButton.setText(R.string.provisioning_initializing);
-        provisioningApi.initialize(authSession.operatorToken, request,
+        initializing = true;
+        btnNext.setEnabled(false);
+        btnNext.setText(R.string.provisioning_initializing);
+        provisioningApi.initialize(operatorSessionStore.token(), request,
                 new ProvisioningApi.Callback<ProvisioningApi.ProvisioningSnapshot>() {
-                    @Override public void onSuccess(ProvisioningApi.ProvisioningSnapshot snapshot) {
+                    @Override
+                    public void onSuccess(ProvisioningApi.ProvisioningSnapshot snapshot) {
                         if (!provisioningStore.save(snapshot)) {
                             onFailure(getString(R.string.provisioning_save_failed));
                             return;
                         }
-                        operatorConfigStore.saveDefaultVenue(snapshot.venue.id, snapshot.venue.name);
+                        operatorConfigStore.saveDefaultVenue(
+                                snapshot.venue.id, snapshot.venue.name);
                         Toast.makeText(ProvisioningActivity.this,
                                 R.string.provisioning_complete, Toast.LENGTH_SHORT).show();
                         launchMain();
                     }
 
-                    @Override public void onFailure(String message) {
-                        initializeButton.setText(R.string.provisioning_initialize);
-                        updateInitializeEnabled();
+                    @Override
+                    public void onFailure(String message) {
+                        initializing = false;
+                        btnNext.setText(R.string.provisioning_initialize);
+                        updateStepControls();
                         Toast.makeText(ProvisioningActivity.this, message,
                                 Toast.LENGTH_LONG).show();
                     }
                 });
     }
 
-    private void updateInitializeEnabled() {
-        initializeButton.setEnabled(bleService != null
-                && bleService.isConnected()
-                && phoneIdentity != null
-                && venueGroup.getCheckedRadioButtonId() != -1);
+    private void updateSerialStatus() {
+        String serial = textOf(phoneSerialInput);
+        if (serial.isEmpty()) {
+            tvPhoneSerialStatus.setText(R.string.provisioning_phone_serial_unverified);
+            tvPhoneSerialStatus.setTextColor(getColorCompat(R.color.qimu_text_tertiary));
+        } else if (MockProvisioningApi.isValidPhoneSerial(serial)) {
+            tvPhoneSerialStatus.setText(R.string.provisioning_phone_serial_valid);
+            tvPhoneSerialStatus.setTextColor(getColorCompat(R.color.qimu_connected));
+        } else {
+            tvPhoneSerialStatus.setText(R.string.provisioning_phone_serial_invalid);
+            tvPhoneSerialStatus.setTextColor(getColorCompat(R.color.qimu_error));
+        }
+        updateStepControls();
     }
 
-    private String hashAndroidId() {
-        String androidId = Settings.Secure.getString(getContentResolver(),
-                Settings.Secure.ANDROID_ID);
-        if (androidId == null || androidId.trim().isEmpty()) return "";
-        try {
-            byte[] digest = MessageDigest.getInstance("SHA-256")
-                    .digest(androidId.getBytes(StandardCharsets.UTF_8));
-            StringBuilder out = new StringBuilder(digest.length * 2);
-            for (byte item : digest) out.append(String.format(Locale.ROOT, "%02x", item));
-            return out.toString();
-        } catch (NoSuchAlgorithmException impossible) {
-            throw new IllegalStateException("SHA-256 unavailable", impossible);
+    /** 防呆输入：去空格、转大写、过滤非法字符，限制长度。 */
+    private String sanitizePhoneSerial(String value) {
+        if (value == null) return "";
+        StringBuilder out = new StringBuilder();
+        for (int i = 0; i < value.length() && out.length() < MAX_SERIAL_LENGTH; i++) {
+            char c = Character.toUpperCase(value.charAt(i));
+            if (isAllowedSerialChar(c)) out.append(c);
         }
+        return out.toString();
+    }
+
+    private boolean isAllowedSerialChar(char c) {
+        return (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9')
+                || c == '.' || c == '_' || c == '-';
     }
 
     private void launchMain() {
         Intent intent = new Intent(this, MainActivity.class)
+                .addFlags(Intent.FLAG_ACTIVITY_CLEAR_TASK | Intent.FLAG_ACTIVITY_NEW_TASK);
+        startActivity(intent);
+        finish();
+    }
+
+    private void launchLogin() {
+        Intent intent = new Intent(this, LoginActivity.class)
                 .addFlags(Intent.FLAG_ACTIVITY_CLEAR_TASK | Intent.FLAG_ACTIVITY_NEW_TASK);
         startActivity(intent);
         finish();
