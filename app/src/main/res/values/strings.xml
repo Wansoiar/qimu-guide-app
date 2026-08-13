@@ -27,6 +27,7 @@
     <string name="operator_reset_title">重置这台设备？</string>
     <string name="operator_reset_message">解除当前绑定，本地初始化数据清除，历史记录保留。</string>
     <string name="operator_reset_action">确认重置</string>
+    <string name="operator_reset_button">重置设备</string>
     <string name="operator_resetting">正在重置…</string>
     <string name="operator_reset_failed">重置失败，本地配置未修改</string>
     <string name="operator_reset_active_tour">请先结束当前导览，再重置设备</string>

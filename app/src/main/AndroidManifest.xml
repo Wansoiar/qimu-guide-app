@@ -80,6 +80,11 @@
             </intent-filter>
         </activity>
 
+        <activity
+            android:name=".provisioning.OperatorConfigActivity"
+            android:exported="false"
+            android:screenOrientation="portrait" />
+
         <!-- 仅保留为内部诊断页；主流程统一由 MainActivity 管理唯一 RTC 引擎。 -->
         <activity
             android:name=".ui.rtc.RtcTestActivity"

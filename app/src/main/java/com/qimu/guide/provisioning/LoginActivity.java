@@ -21,6 +21,9 @@ import com.qimu.guide.R;
  */
 public final class LoginActivity extends AppCompatActivity {
 
+    /** 从使用页运营入口进入时携带：登录后回到运营配置页而非初始化向导。 */
+    public static final String EXTRA_FROM_OPERATOR = "from_operator";
+
     private ProvisioningStore provisioningStore;
     private OperatorSessionStore operatorSessionStore;
     private ProvisioningApi provisioningApi;
@@ -32,17 +35,24 @@ public final class LoginActivity extends AppCompatActivity {
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         provisioningStore = ProvisioningStore.get(this);
-        if (provisioningStore.isInitialized()) {
+        if (provisioningStore.isInitialized() && !fromOperator()) {
             launchMain();
             return;
         }
+        setContentView(R.layout.activity_login);
         operatorSessionStore = OperatorSessionStore.get(this);
-        // 已登录且未初始化（如重置后中途退出 App）→ 免登录直接进初始化向导，复用登录态。
-        if (!operatorSessionStore.isExpired()) {
+        if (fromOperator()) {
+            if (!operatorSessionStore.isExpired()) {
+                launchOperatorConfig();
+                return;
+            }
+            findViewById(R.id.btn_login_close).setVisibility(View.VISIBLE);
+            findViewById(R.id.btn_login_close).setOnClickListener(view -> finish());
+        } else if (!operatorSessionStore.isExpired()) {
+            // 已登录且未初始化（如重置后中途退出 App）→ 免登录直接进初始化向导，复用登录态。
             launchProvisioning();
             return;
         }
-        setContentView(R.layout.activity_login);
         provisioningApi = ProvisioningApiProvider.get();
         bindViews();
     }
@@ -84,7 +94,11 @@ public final class LoginActivity extends AppCompatActivity {
                                 session.operatorToken,
                                 session.expiresAtEpochMs,
                                 session.displayName);
-                        launchProvisioning();
+                        if (fromOperator()) {
+                            launchOperatorConfig();
+                        } else {
+                            launchProvisioning();
+                        }
                     }
 
                     @Override
@@ -100,6 +114,10 @@ public final class LoginActivity extends AppCompatActivity {
         return input.getText() == null ? "" : input.getText().toString().trim();
     }
 
+    private boolean fromOperator() {
+        return getIntent().getBooleanExtra(EXTRA_FROM_OPERATOR, false);
+    }
+
     private void launchMain() {
         Intent intent = new Intent(this, MainActivity.class)
                 .addFlags(Intent.FLAG_ACTIVITY_CLEAR_TASK | Intent.FLAG_ACTIVITY_NEW_TASK);
@@ -111,6 +129,11 @@ public final class LoginActivity extends AppCompatActivity {
         Intent intent = new Intent(this, ProvisioningActivity.class)
                 .addFlags(Intent.FLAG_ACTIVITY_CLEAR_TASK | Intent.FLAG_ACTIVITY_NEW_TASK);
         startActivity(intent);
+        finish();
+    }
+
+    private void launchOperatorConfig() {
+        startActivity(new Intent(this, OperatorConfigActivity.class));
         finish();
     }
 }
