@@ -187,7 +187,7 @@
 
             <com.google.android.material.button.MaterialButton
                 android:id="@+id/btn_reset_device"
-                style="@style/Widget.Qimu.Button.Outline"
+                style="@style/Widget.Qimu.Button.DangerOutline"
                 android:layout_width="match_parent"
                 android:layout_height="52dp"
                 android:layout_marginTop="28dp"
