@@ -37,6 +37,8 @@ import com.qimu.guide.BuildConfig;
 import com.qimu.guide.R;
 import com.qimu.guide.net.ShareBundleApiClient;
 import com.qimu.guide.net.TourSessionManager;
+import com.qimu.guide.provisioning.ProvisioningApi;
+import com.qimu.guide.provisioning.ProvisioningStore;
 import com.qimu.guide.ui.gallery.GallerySelectionStore;
 import com.qimu.guide.ui.gallery.LocalPhoto;
 import com.qimu.guide.ui.gallery.LocalPhotoRepository;
@@ -489,6 +491,16 @@ public final class ShareBundleActivity extends AppCompatActivity {
 
     @SuppressLint("HardwareIds")
     private String androidDeviceId() {
+        ProvisioningApi.ProvisioningSnapshot provisioned =
+                ProvisioningStore.get(this).snapshot();
+        if (provisioned != null) {
+            if (provisioned.deviceId != null && !provisioned.deviceId.trim().isEmpty()) {
+                return provisioned.deviceId.trim();
+            }
+            if (provisioned.phoneSerial != null && !provisioned.phoneSerial.trim().isEmpty()) {
+                return provisioned.phoneSerial.trim();
+            }
+        }
         String id = Settings.Secure.getString(getContentResolver(), Settings.Secure.ANDROID_ID);
         return id == null || id.trim().isEmpty() ? "android-unknown" : "android-" + id;
     }
