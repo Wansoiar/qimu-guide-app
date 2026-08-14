@@ -52,6 +52,7 @@ public class MainActivity extends AppCompatActivity implements TourSessionManage
     private long lastTitleTapAt;
     private boolean longPressFired;
     private boolean debugBallDragging;
+    private View debugFloatingBall;
     private float debugBallDownX;
     private float debugBallDownY;
     private int debugBallMarginLeft;
@@ -97,7 +98,6 @@ public class MainActivity extends AppCompatActivity implements TourSessionManage
         tvHeaderStatus = findViewById(R.id.tv_header_status);
         headerStatusDot = findViewById(R.id.header_status_dot);
         bindTitleOperatorEntry();
-        attachDebugFloatingBall();
         bottomNav.setOnItemSelectedListener(item -> {
             int id = item.getItemId();
             boolean canOpenDialogue = tourSessionManager.isActive()
@@ -171,11 +171,12 @@ public class MainActivity extends AppCompatActivity implements TourSessionManage
         debugPreviewUnlocked = true;
         invalidateTabs();
         Toast.makeText(this, "调试页面预览已开启", Toast.LENGTH_SHORT).show();
+        attachDebugFloatingBall();
     }
 
-    /** 调试悬浮球（仅 debug 包）：可拖拽，点击清除运营登录状态。 */
+    /** 调试悬浮球：仅在 debug 预览解锁后显示，可拖拽，点击清除运营登录状态。 */
     private void attachDebugFloatingBall() {
-        if (!BuildConfig.DEBUG) return;
+        if (!BuildConfig.DEBUG || debugFloatingBall != null) return;
         ViewGroup content = findViewById(android.R.id.content);
         if (content == null) return;
         int size = dp(48);
@@ -186,6 +187,7 @@ public class MainActivity extends AppCompatActivity implements TourSessionManage
         ball.setGravity(Gravity.CENTER);
         ball.setBackgroundResource(R.drawable.bg_debug_float_ball);
         ball.setContentDescription("调试悬浮球");
+        debugFloatingBall = ball;
         int touchSlop = ViewConfiguration.get(this).getScaledTouchSlop();
         ball.setOnClickListener(view -> clearOperatorSession());
         ball.setOnTouchListener((view, event) -> {

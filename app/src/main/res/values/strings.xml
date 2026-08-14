@@ -8,6 +8,7 @@
     <string name="operator_config_title">运营配置</string>
     <string name="operator_config_subtitle">查看设备绑定信息，或解除初始化后重新配置</string>
     <string name="operator_venue_section">默认场馆</string>
+    <string name="operator_device_section">设备信息</string>
     <string name="operator_venue_name">场馆名称</string>
     <string name="operator_venue_id">场馆 ID</string>
     <string name="operator_venue_hint">场馆 ID 会随订单一起创建 Session，并限定 AI 检索的知识库范围。</string>
@@ -35,9 +36,9 @@
     <string name="provisioning_badge">设备首次启用</string>
     <string name="provisioning_title">初始化齐目导览设备</string>
     <string name="provisioning_subtitle">连接眼镜、录入手机 SN 并选择场馆后，即可进入导览主页。</string>
-    <string name="provisioning_step_connect">1. 连接眼镜</string>
-    <string name="provisioning_step_phone_serial">2. 录入手机 SN</string>
-    <string name="provisioning_step_venue">3. 选择场馆</string>
+    <string name="provisioning_step_connect">连接眼镜</string>
+    <string name="provisioning_step_phone_serial">手机 SN</string>
+    <string name="provisioning_step_venue">选择场馆</string>
     <string name="provisioning_step_prev">上一步</string>
     <string name="provisioning_step_next">下一步</string>
     <string name="provisioning_connect_first">请先连接一副眼镜</string>
@@ -54,7 +55,7 @@
     <string name="provisioning_phone_serial_unverified">SN 尚未录入</string>
     <string name="provisioning_phone_serial_valid">SN 格式正确，可进入下一步</string>
     <string name="provisioning_phone_serial_invalid">请输入 4–64 位字母、数字、点、短横线或下划线</string>
-    <string name="provisioning_initialize">初始化并进入主页</string>
+    <string name="provisioning_initialize">初始化完成</string>
     <string name="provisioning_initializing">正在初始化…</string>
     <string name="provisioning_complete">设备初始化成功</string>
     <string name="provisioning_credentials_required">请输入运营账号和密码</string>
@@ -67,7 +68,7 @@
 
     <string name="login_badge">运营入口</string>
     <string name="login_title">运营登录</string>
-    <string name="login_subtitle">登录运营后台账号后，开始设备初始化向导。</string>
+    <string name="login_subtitle">登录运营账号，运营配置导览设备</string>
     <string name="login_action">登录</string>
     <string name="login_version">版本 %1$s</string>
     <string name="mock_order_title">体验订单</string>
