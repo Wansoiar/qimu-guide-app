@@ -892,6 +892,31 @@ public final class RealtimeGuideManager {
         }
     }
 
+    /**
+     * 处理火山 client-side FC 指令。
+     * 阶段1（当前）：仅对 take_photo 做假结果回填，验证 FC 通路（收 tool → 回填 func → 火山播报）。
+     * 阶段2a 再改为：触发真实拍照 + describe-image + 回填识图结果。
+     */
+    private void handleFunctionCall(RtcVoiceChatManager rtc, String senderUid,
+                                    String toolCallId, String functionName) {
+        if (!"take_photo".equals(functionName)) {
+            Log.w(TAG, "收到未知 FC: " + functionName);
+            return;
+        }
+        GuideApiClient.RtcSessionInfo currentSession = rtcSession;
+        if (currentSession == null || rtc == null) {
+            Log.w(TAG, "FC take_photo 跳过：会话未就绪");
+            return;
+        }
+        // 阶段1 假回填：先不真拍照，验证 func 回填能否让火山用同一把声音讲出来。
+        String fakeResult = "（联调假数据）眼前这件是一尊青铜方鼎，方口、四足、腹部有兽面纹，"
+                + "是商周时期祭祀用的礼器。请用讲解员的口吻向游客介绍它。";
+        String botUid = currentSession.botUid != null && !currentSession.botUid.isEmpty()
+                ? currentSession.botUid : senderUid;
+        rtc.sendFunctionResult(botUid, toolCallId, fakeResult);
+        Log.i(TAG, "FC take_photo 已回填假结果 id=" + toolCallId);
+    }
+
     private void deliverPendingVisionRequest() {
         PendingVisionRequest pending = pendingVisionRequest;
         if (pending == null || visionOperationInProgress) return;
@@ -1021,6 +1046,11 @@ public final class RealtimeGuideManager {
             @Override
             public void onCommand(String senderUid, String payload) {
                 postIfCurrent(() -> handleRtcCommand(senderUid, payload));
+            }
+
+            @Override
+            public void onFunctionCall(String senderUid, String toolCallId, String functionName) {
+                postIfCurrent(() -> handleFunctionCall(expectedRtc, senderUid, toolCallId, functionName));
             }
 
             @Override
