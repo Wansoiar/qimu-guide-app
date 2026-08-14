@@ -7,8 +7,12 @@ import android.graphics.Typeface;
 import android.os.Build;
 import android.os.Bundle;
 import android.text.Editable;
+import android.text.SpannableStringBuilder;
+import android.text.Spanned;
 import android.text.TextUtils;
 import android.text.TextWatcher;
+import android.text.style.ForegroundColorSpan;
+import android.text.style.RelativeSizeSpan;
 import android.view.View;
 import android.widget.LinearLayout;
 import android.widget.RadioButton;
@@ -56,6 +60,9 @@ public final class ProvisioningActivity extends AppCompatActivity {
     private TextView tvScanStatus;
     private TextView tvPhoneSerialStatus;
     private TextView tvVenuesStatus;
+    private TextView tvStepCircleConnect;
+    private TextView tvStepCircleSerial;
+    private TextView tvStepCircleVenue;
     private TextView tvStepConnect;
     private TextView tvStepSerial;
     private TextView tvStepVenue;
@@ -125,6 +132,9 @@ public final class ProvisioningActivity extends AppCompatActivity {
         tvScanStatus = findViewById(R.id.tv_provisioning_scan_status);
         tvPhoneSerialStatus = findViewById(R.id.tv_provisioning_phone_serial_status);
         tvVenuesStatus = findViewById(R.id.tv_provisioning_venues_status);
+        tvStepCircleConnect = findViewById(R.id.tv_step_circle_connect);
+        tvStepCircleSerial = findViewById(R.id.tv_step_circle_serial);
+        tvStepCircleVenue = findViewById(R.id.tv_step_circle_venue);
         tvStepConnect = findViewById(R.id.tv_step_connect);
         tvStepSerial = findViewById(R.id.tv_step_serial);
         tvStepVenue = findViewById(R.id.tv_step_venue);
@@ -282,13 +292,16 @@ public final class ProvisioningActivity extends AppCompatActivity {
             tvConnectedGlasses.setText(getString(R.string.provisioning_glasses_value,
                     safe(bleService.getDeviceName(), getString(R.string.unknown_device)),
                     MockProvisioningApi.normalizeMac(bleService.getConnectedAddress())));
+            tvScanStatus.setText(R.string.state_connected);
         } else if (state == CRPBleConnectionStateListener.STATE_CONNECTING) {
             tvConnectionStatus.setText(R.string.state_connecting);
             tvConnectionStatus.setTextColor(getColorCompat(R.color.qimu_connecting));
+            tvScanStatus.setText(R.string.state_connecting);
         } else {
             tvConnectionStatus.setText(R.string.provisioning_connect_first);
             tvConnectionStatus.setTextColor(getColorCompat(R.color.qimu_error));
             tvConnectedGlasses.setText(R.string.provisioning_no_glasses);
+            tvScanStatus.setText(R.string.connect_hint);
         }
         updateStepControls();
     }
@@ -297,19 +310,35 @@ public final class ProvisioningActivity extends AppCompatActivity {
         connectSection.setVisibility(currentStep == STEP_CONNECT ? View.VISIBLE : View.GONE);
         serialSection.setVisibility(currentStep == STEP_SERIAL ? View.VISIBLE : View.GONE);
         venueSection.setVisibility(currentStep == STEP_VENUE ? View.VISIBLE : View.GONE);
-        applyStepLabel(tvStepConnect, STEP_CONNECT);
-        applyStepLabel(tvStepSerial, STEP_SERIAL);
-        applyStepLabel(tvStepVenue, STEP_VENUE);
+        renderStepIndicator();
         btnPrev.setEnabled(currentStep > STEP_CONNECT);
         if (currentStep == STEP_VENUE && !venuesLoaded && !initializing) loadVenues();
         updateStepControls();
     }
 
-    private void applyStepLabel(TextView label, int step) {
-        boolean active = step <= currentStep;
-        label.setTextColor(getColorCompat(active
-                ? R.color.qimu_gold_dark : R.color.qimu_text_tertiary));
-        label.setTypeface(null, active ? Typeface.BOLD : Typeface.NORMAL);
+    private void renderStepIndicator() {
+        applyStep(tvStepCircleConnect, tvStepConnect, STEP_CONNECT);
+        applyStep(tvStepCircleSerial, tvStepSerial, STEP_SERIAL);
+        applyStep(tvStepCircleVenue, tvStepVenue, STEP_VENUE);
+    }
+
+    private void applyStep(TextView circle, TextView label, int step) {
+        if (step < currentStep) {
+            circle.setBackgroundResource(R.drawable.bg_step_circle_done);
+            circle.setTextColor(getColorCompat(R.color.qimu_gold_dark));
+            label.setTextColor(getColorCompat(R.color.qimu_gold_dark));
+            label.setTypeface(null, Typeface.BOLD);
+        } else if (step == currentStep) {
+            circle.setBackgroundResource(R.drawable.bg_step_circle_current);
+            circle.setTextColor(getColorCompat(R.color.qimu_surface));
+            label.setTextColor(getColorCompat(R.color.qimu_brown));
+            label.setTypeface(null, Typeface.BOLD);
+        } else {
+            circle.setBackgroundResource(R.drawable.bg_step_circle_idle);
+            circle.setTextColor(getColorCompat(R.color.qimu_text_tertiary));
+            label.setTextColor(getColorCompat(R.color.qimu_text_tertiary));
+            label.setTypeface(null, Typeface.NORMAL);
+        }
     }
 
     private void updateStepControls() {
@@ -403,8 +432,7 @@ public final class ProvisioningActivity extends AppCompatActivity {
             RadioButton radio = new RadioButton(this);
             int id = View.generateViewId();
             radio.setId(id);
-            radio.setText(venue.name + "\n" + venue.address);
-            radio.setTextColor(getColorCompat(R.color.qimu_text_primary));
+            radio.setText(venueRadioText(venue));
             radio.setPadding(0, dp(8), 0, dp(8));
             venueGroup.addView(radio);
             venuesByRadioId.put(id, venue);
@@ -412,6 +440,23 @@ public final class ProvisioningActivity extends AppCompatActivity {
         venueGroup.check(venuesByRadioId.keySet().iterator().next());
         tvVenuesStatus.setVisibility(View.GONE);
         updateStepControls();
+    }
+
+    /** 场馆单选文案：名称加粗、地址次色小字，避免长地址挤压排版。 */
+    private CharSequence venueRadioText(ProvisioningApi.Venue venue) {
+        String name = safe(venue.name, "");
+        String address = safe(venue.address, "");
+        SpannableStringBuilder text = new SpannableStringBuilder(name);
+        if (!address.isEmpty()) {
+            int start = text.length();
+            text.append('\n').append(address);
+            text.setSpan(new ForegroundColorSpan(
+                            getColorCompat(R.color.qimu_text_secondary)),
+                    start, text.length(), Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+            text.setSpan(new RelativeSizeSpan(0.82f),
+                    start, text.length(), Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+        }
+        return text;
     }
 
     private void initializeDevice() {

@@ -12,16 +12,17 @@
         android:background="@drawable/bg_app_bar"
         android:gravity="center_vertical"
         android:orientation="horizontal"
-        android:paddingStart="20dp"
-        android:paddingEnd="8dp">
+        android:paddingStart="22dp"
+        android:paddingEnd="6dp">
 
         <TextView
             android:layout_width="0dp"
             android:layout_height="wrap_content"
             android:layout_weight="1"
+            android:letterSpacing="0.05"
             android:text="@string/operator_config_title"
             android:textAppearance="@style/TextAppearance.Qimu.PageTitle"
-            android:textSize="22sp" />
+            android:textSize="20sp" />
 
         <ImageButton
             android:id="@+id/btn_close_operator_config"
@@ -46,11 +47,13 @@
             android:paddingStart="22dp"
             android:paddingTop="20dp"
             android:paddingEnd="22dp"
-            android:paddingBottom="32dp">
+            android:paddingBottom="36dp">
 
             <TextView
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
+                android:letterSpacing="0.03"
+                android:lineSpacingExtra="2dp"
                 android:text="@string/operator_config_subtitle"
                 android:textColor="@color/qimu_text_secondary"
                 android:textSize="12sp" />
@@ -61,44 +64,59 @@
                 android:layout_marginTop="20dp"
                 android:background="@drawable/bg_card_accent"
                 android:orientation="vertical"
-                android:padding="16dp">
+                android:padding="18dp">
 
                 <TextView
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
+                    android:letterSpacing="0.06"
                     android:text="@string/operator_venue_section"
-                    android:textAppearance="@style/TextAppearance.Qimu.SectionTitle" />
+                    android:textAppearance="@style/TextAppearance.Qimu.SectionTitle"
+                    android:textSize="15sp" />
 
                 <TextView
                     android:id="@+id/tv_operator_current_venue"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:layout_marginTop="4dp"
+                    android:layout_marginTop="14dp"
+                    android:lineSpacingExtra="2dp"
                     android:textColor="@color/qimu_gold_dark"
-                    android:textSize="13sp"
+                    android:textSize="16sp"
                     android:textStyle="bold" />
 
                 <TextView
                     android:id="@+id/tv_operator_venue_id"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:layout_marginTop="6dp"
+                    android:layout_marginTop="8dp"
+                    android:ellipsize="end"
                     android:fontFamily="monospace"
+                    android:maxLines="2"
                     android:textColor="@color/qimu_text_secondary"
-                    android:textSize="12sp" />
+                    android:textSize="11sp" />
             </LinearLayout>
 
             <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="18dp"
+                android:layout_marginTop="16dp"
                 android:background="@drawable/bg_card_default"
                 android:orientation="vertical"
-                android:padding="16dp">
+                android:padding="18dp">
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:letterSpacing="0.06"
+                    android:text="@string/operator_device_section"
+                    android:textAppearance="@style/TextAppearance.Qimu.SectionTitle"
+                    android:textSize="15sp" />
 
                 <TextView
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
+                    android:layout_marginTop="16dp"
+                    android:letterSpacing="0.1"
                     android:text="@string/operator_device_id"
                     android:textColor="@color/qimu_text_tertiary"
                     android:textSize="12sp" />
@@ -107,15 +125,24 @@
                     android:id="@+id/tv_operator_device_id"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:layout_marginTop="3dp"
+                    android:layout_marginTop="5dp"
+                    android:ellipsize="end"
                     android:fontFamily="monospace"
+                    android:maxLines="2"
                     android:textColor="@color/qimu_text_primary"
-                    android:textSize="12sp" />
+                    android:textSize="13sp" />
+
+                <View
+                    android:layout_width="match_parent"
+                    android:layout_height="1dp"
+                    android:layout_marginTop="14dp"
+                    android:layout_marginBottom="14dp"
+                    android:background="@color/qimu_outline" />
 
                 <TextView
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:layout_marginTop="14dp"
+                    android:letterSpacing="0.1"
                     android:text="@string/operator_phone_serial"
                     android:textColor="@color/qimu_text_tertiary"
                     android:textSize="12sp" />
@@ -124,15 +151,24 @@
                     android:id="@+id/tv_operator_phone_serial"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:layout_marginTop="3dp"
+                    android:layout_marginTop="5dp"
+                    android:ellipsize="end"
                     android:fontFamily="monospace"
+                    android:maxLines="2"
                     android:textColor="@color/qimu_text_primary"
-                    android:textSize="12sp" />
+                    android:textSize="13sp" />
+
+                <View
+                    android:layout_width="match_parent"
+                    android:layout_height="1dp"
+                    android:layout_marginTop="14dp"
+                    android:layout_marginBottom="14dp"
+                    android:background="@color/qimu_outline" />
 
                 <TextView
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:layout_marginTop="14dp"
+                    android:letterSpacing="0.1"
                     android:text="@string/operator_glasses_id"
                     android:textColor="@color/qimu_text_tertiary"
                     android:textSize="12sp" />
@@ -141,10 +177,12 @@
                     android:id="@+id/tv_operator_glasses_id"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:layout_marginTop="3dp"
+                    android:layout_marginTop="5dp"
+                    android:ellipsize="end"
                     android:fontFamily="monospace"
+                    android:maxLines="2"
                     android:textColor="@color/qimu_text_primary"
-                    android:textSize="12sp" />
+                    android:textSize="13sp" />
             </LinearLayout>
 
             <LinearLayout
@@ -160,6 +198,7 @@
                 <TextView
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
+                    android:letterSpacing="0.05"
                     android:text="@string/mock_order_title"
                     android:textColor="@color/qimu_text_primary"
                     android:textSize="14sp"
@@ -190,7 +229,8 @@
                 style="@style/Widget.Qimu.Button.DangerOutline"
                 android:layout_width="match_parent"
                 android:layout_height="52dp"
-                android:layout_marginTop="28dp"
+                android:layout_marginTop="30dp"
+                android:letterSpacing="0.08"
                 android:text="@string/operator_reset_button" />
         </LinearLayout>
     </ScrollView>
