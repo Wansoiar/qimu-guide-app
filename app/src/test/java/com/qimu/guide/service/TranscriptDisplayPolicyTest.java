@@ -18,6 +18,8 @@ public final class TranscriptDisplayPolicyTest {
                 false, "我确认一下场馆信息。"));
         assertEquals("", TranscriptDisplayPolicy.visibleText(
                 false, "我看看眼前的展品。"));
+        assertEquals("", TranscriptDisplayPolicy.visibleText(
+                false, "让我想一想。"));
     }
 
     @Test
@@ -32,6 +34,8 @@ public final class TranscriptDisplayPolicyTest {
     public void stripsGuidancePrefixButKeepsAnswerInSameSubtitle() {
         assertEquals("这是西汉时期的金缕玉衣。", TranscriptDisplayPolicy.visibleText(
                 false, "我查一下它的历史背景。 这是西汉时期的金缕玉衣。"));
+        assertEquals("这是商代的青铜器。", TranscriptDisplayPolicy.visibleText(
+                false, "让我想一想……这是商代的青铜器。"));
     }
 
     @Test
