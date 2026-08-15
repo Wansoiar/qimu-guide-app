@@ -18,6 +18,12 @@ public final class TranscriptDisplayPolicyTest {
                 false, "我确认一下场馆信息。"));
         assertEquals("", TranscriptDisplayPolicy.visibleText(
                 false, "我看看眼前的展品。"));
+        assertEquals("", TranscriptDisplayPolicy.visibleText(
+                false, "我来确认一下这个问题。"));
+        assertEquals("", TranscriptDisplayPolicy.visibleText(
+                false, "让我来看一看～"));
+        assertEquals("", TranscriptDisplayPolicy.visibleText(
+                false, "让我想一想呀。"));
     }
 
     @Test

@@ -127,6 +127,8 @@ public final class RealtimeGuideManager {
     private final Map<String, TranscriptEntry> transcript = new LinkedHashMap<>();
     private final Map<String, RecentSubtitle> recentSubtitlesByContent = new HashMap<>();
     private final Set<String> handledCommandIds = new HashSet<>();
+    private final SpokenGuidanceDeduplicator spokenGuidanceDeduplicator =
+            new SpokenGuidanceDeduplicator();
     private final GuideApiClient apiClient = new GuideApiClient();
     private final GlassesPcmAudioSource glassesAudioSource = new GlassesPcmAudioSource();
 
@@ -157,6 +159,7 @@ public final class RealtimeGuideManager {
     private OperationCallback activeVisionCallback;
     private volatile String activeVisionCommandId;
     private PendingVisionRequest pendingVisionRequest;
+    private SpokenGuidanceSpeaker spokenGuidanceSpeaker;
 
     private final BleService.BleListener bleListener = new BleService.BleListener() {
         @Override
@@ -253,6 +256,9 @@ public final class RealtimeGuideManager {
         activeVisionCommandId = commandId;
         activeVisionCallback = null;
         apiClient.beginVisionCalls();
+        speakProcessGuidance(
+                "vision-reserve:" + (commandId == null ? visionOperationId : commandId),
+                SpokenGuidancePolicy.VISION);
         publishVisionOperation(true, "正在调用眼镜拍照…");
         return true;
     }
@@ -330,6 +336,8 @@ public final class RealtimeGuideManager {
         }
 
         int requestGeneration = ++generation;
+        spokenGuidanceDeduplicator.reset();
+        prepareSpokenGuidance();
         tourSession = session;
         tourSessionId = session.sessionId;
         rtcRoomJoined = false;
@@ -524,6 +532,8 @@ public final class RealtimeGuideManager {
         RtcVoiceChatManager currentRtc = rtc;
         if (currentRtc != null) currentRtc.setInputEnabled(false);
         glassesAudioSource.stop();
+        if (spokenGuidanceSpeaker != null) spokenGuidanceSpeaker.stop();
+        spokenGuidanceDeduplicator.reset();
         updateState(State.PAUSED, message);
     }
 
@@ -575,6 +585,8 @@ public final class RealtimeGuideManager {
         RtcVoiceChatManager currentRtc = rtc;
         if (currentRtc != null) currentRtc.setInputEnabled(false);
         glassesAudioSource.stop();
+        if (spokenGuidanceSpeaker != null) spokenGuidanceSpeaker.stop();
+        spokenGuidanceDeduplicator.reset();
 
         rtc = null;
         if (currentRtc != null) currentRtc.stop();
@@ -921,6 +933,7 @@ public final class RealtimeGuideManager {
             String question = command.optString("question", "").trim();
             if (question.isEmpty()) question = "请介绍我眼前的展品或产品";
             pendingVisionRequest = new PendingVisionRequest(commandId, question);
+            speakProcessGuidance("command:" + commandId, SpokenGuidancePolicy.VISION);
             deliverPendingVisionRequest();
         } catch (Exception parseError) {
             Log.w(TAG, "忽略无法解析的 RTC 控制消息", parseError);
@@ -958,6 +971,7 @@ public final class RealtimeGuideManager {
         String commandId = FC_COMMAND_PREFIX + toolCallId;
         Log.i(TAG, "FC take_photo → 触发拍照 commandId=" + commandId);
         pendingVisionRequest = new PendingVisionRequest(commandId, "请介绍我眼前的展品或产品");
+        speakProcessGuidance(commandId, SpokenGuidancePolicy.VISION);
         deliverPendingVisionRequest();
     }
 
@@ -1089,6 +1103,12 @@ public final class RealtimeGuideManager {
                     TranscriptEntry recorded = recordTranscript(
                             fromSelf, normalized, definite, stableSequence);
                     if (recorded == null) return;
+                    if (recorded.fromSelf && recorded.definite) {
+                        String phrase = SpokenGuidancePolicy.phraseForUserText(recorded.text);
+                        if (phrase != null) {
+                            speakProcessGuidance("subtitle:" + recorded.sequence, phrase);
+                        }
+                    }
                     for (Listener listener : listeners) {
                         listener.onSubtitle(recorded.fromSelf, recorded.text,
                                 recorded.definite, recorded.sequence);
@@ -1114,5 +1134,21 @@ public final class RealtimeGuideManager {
                 });
             }
         };
+    }
+
+    private void prepareSpokenGuidance() {
+        if (spokenGuidanceSpeaker == null) {
+            spokenGuidanceSpeaker = new SpokenGuidanceSpeaker(QimuApplication.getAppContext());
+        }
+        spokenGuidanceSpeaker.prepare();
+    }
+
+    private void speakProcessGuidance(@NonNull String eventId, @NonNull String phrase) {
+        if (!spokenGuidanceDeduplicator.shouldSpeak(
+                eventId, phrase, SystemClock.elapsedRealtime())) {
+            return;
+        }
+        prepareSpokenGuidance();
+        spokenGuidanceSpeaker.speak(phrase);
     }
 }
