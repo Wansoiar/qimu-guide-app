@@ -256,11 +256,29 @@ public final class RealtimeGuideManager {
         activeVisionCommandId = commandId;
         activeVisionCallback = null;
         apiClient.beginVisionCalls();
-        speakProcessGuidance(
-                "vision-reserve:" + (commandId == null ? visionOperationId : commandId),
-                SpokenGuidancePolicy.VISION);
         publishVisionOperation(true, "正在调用眼镜拍照…");
         return true;
+    }
+
+    /**
+     * 拍照预留成功后先关闭 RTC 输入，再播放视觉引导，防止眼镜麦克风把
+     * “让我来看一看”回灌给模型并延迟触发第二次 take_photo。
+     */
+    public void announceReservedVisionCapture(@Nullable String commandId) {
+        Runnable announce = () -> {
+            if (!visionOperationInProgress
+                    || !sameCommandId(activeVisionCommandId, commandId)) {
+                return;
+            }
+            if (state == State.LISTENING || state == State.AUDIO_LINK_STARTING) {
+                pauseGuidanceOnMain("拍照中，已暂停收音");
+            }
+            speakProcessGuidance(
+                    "vision-reserve:" + (commandId == null ? visionOperationId : commandId),
+                    SpokenGuidancePolicy.VISION);
+        };
+        if (Looper.myLooper() == Looper.getMainLooper()) announce.run();
+        else mainHandler.post(announce);
     }
 
     public void abandonVisionCapture(@Nullable String commandId,
@@ -935,7 +953,6 @@ public final class RealtimeGuideManager {
             String question = command.optString("question", "").trim();
             if (question.isEmpty()) question = "请介绍我眼前的展品或产品";
             pendingVisionRequest = new PendingVisionRequest(commandId, question);
-            speakProcessGuidance("command:" + commandId, SpokenGuidancePolicy.VISION);
             deliverPendingVisionRequest();
         } catch (Exception parseError) {
             Log.w(TAG, "忽略无法解析的 RTC 控制消息", parseError);
@@ -973,7 +990,6 @@ public final class RealtimeGuideManager {
         String commandId = FC_COMMAND_PREFIX + toolCallId;
         Log.i(TAG, "FC take_photo → 触发拍照 commandId=" + commandId);
         pendingVisionRequest = new PendingVisionRequest(commandId, "请介绍我眼前的展品或产品");
-        speakProcessGuidance(commandId, SpokenGuidancePolicy.VISION);
         deliverPendingVisionRequest();
     }
 
@@ -1105,12 +1121,6 @@ public final class RealtimeGuideManager {
                     TranscriptEntry recorded = recordTranscript(
                             fromSelf, normalized, definite, stableSequence);
                     if (recorded == null) return;
-                    if (recorded.fromSelf && recorded.definite) {
-                        String phrase = SpokenGuidancePolicy.phraseForUserText(recorded.text);
-                        if (phrase != null) {
-                            speakProcessGuidance("subtitle:" + recorded.sequence, phrase);
-                        }
-                    }
                     for (Listener listener : listeners) {
                         listener.onSubtitle(recorded.fromSelf, recorded.text,
                                 recorded.definite, recorded.sequence);
