@@ -327,8 +327,7 @@ public class DialogueFragment extends Fragment {
         resumeAfterVisionFailure = state == RealtimeGuideManager.State.LISTENING;
         int operation = ++visionGeneration;
         visionConnection = connection;
-        // Manager 必须先关闭 RTC 输入再播放拍照引导，避免音频回灌触发第二次 FC。
-        guideManager.announceReservedVisionCapture(commandId);
+        if (resumeAfterVisionFailure) guideManager.pauseGuidance();
         // 拍照发起即落一条状态气泡，作为对话时间轴锚点，确保后续 AI 识图讲解
         // （走 RTC 字幕通道）不会抢在“拍照—照片—讲解”之前。
         // 关键：重置字幕合并锚点，否则识图讲解字幕会 sameSpeaker 命中拍照前那条

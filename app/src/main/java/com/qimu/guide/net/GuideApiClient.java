@@ -85,14 +85,11 @@ public class GuideApiClient {
         public final String taskId;
         public final String botUid;
         public final boolean photoEnabled;
-        public final String visionGuidanceAudioUrl;
         public final boolean mocked;
 
         RtcSessionInfo(String sessionId, String appId, String roomId, String uid,
                        String token, String taskId, String botUid,
-                       boolean photoEnabled,
-                       String visionGuidanceAudioUrl,
-                       boolean mocked) {
+                       boolean photoEnabled, boolean mocked) {
             this.sessionId = sessionId;
             this.appId = appId;
             this.roomId = roomId;
@@ -101,7 +98,6 @@ public class GuideApiClient {
             this.taskId = taskId;
             this.botUid = botUid;
             this.photoEnabled = photoEnabled;
-            this.visionGuidanceAudioUrl = visionGuidanceAudioUrl;
             this.mocked = mocked;
         }
     }
@@ -257,9 +253,6 @@ public class GuideApiClient {
                 }
                 JSONObject data = json.getJSONObject("data");
                 JSONObject settings = data.optJSONObject("settings");
-                JSONObject guidanceAudio = data.optJSONObject("guidance_audio");
-                JSONObject visionGuidance = guidanceAudio == null
-                        ? null : guidanceAudio.optJSONObject("vision");
                 return new RtcSessionInfo(
                         data.optString("session_id", ""),
                         data.optString("app_id", ""),
@@ -269,7 +262,6 @@ public class GuideApiClient {
                         data.optString("task_id", ""),
                         data.optString("bot_uid", ""),
                         settings == null || settings.optBoolean("photo_enabled", true),
-                        visionGuidance == null ? "" : visionGuidance.optString("url", ""),
                         data.optBoolean("mocked", false));
             }
         } catch (Exception e) {

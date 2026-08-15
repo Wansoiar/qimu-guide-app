@@ -127,8 +127,6 @@ public final class RealtimeGuideManager {
     private final Map<String, TranscriptEntry> transcript = new LinkedHashMap<>();
     private final Map<String, RecentSubtitle> recentSubtitlesByContent = new HashMap<>();
     private final Set<String> handledCommandIds = new HashSet<>();
-    private final SpokenGuidanceDeduplicator spokenGuidanceDeduplicator =
-            new SpokenGuidanceDeduplicator();
     private final GuideApiClient apiClient = new GuideApiClient();
     private final GlassesPcmAudioSource glassesAudioSource = new GlassesPcmAudioSource();
 
@@ -159,7 +157,6 @@ public final class RealtimeGuideManager {
     private OperationCallback activeVisionCallback;
     private volatile String activeVisionCommandId;
     private PendingVisionRequest pendingVisionRequest;
-    private SpokenGuidanceSpeaker spokenGuidanceSpeaker;
 
     private final BleService.BleListener bleListener = new BleService.BleListener() {
         @Override
@@ -260,27 +257,6 @@ public final class RealtimeGuideManager {
         return true;
     }
 
-    /**
-     * 拍照预留成功后先关闭 RTC 输入，再播放视觉引导，防止眼镜麦克风把
-     * “让我来看一看”回灌给模型并延迟触发第二次 take_photo。
-     */
-    public void announceReservedVisionCapture(@Nullable String commandId) {
-        Runnable announce = () -> {
-            if (!visionOperationInProgress
-                    || !sameCommandId(activeVisionCommandId, commandId)) {
-                return;
-            }
-            if (state == State.LISTENING || state == State.AUDIO_LINK_STARTING) {
-                pauseGuidanceOnMain("拍照中，已暂停收音");
-            }
-            speakProcessGuidance(
-                    "vision-reserve:" + (commandId == null ? visionOperationId : commandId),
-                    SpokenGuidancePolicy.VISION);
-        };
-        if (Looper.myLooper() == Looper.getMainLooper()) announce.run();
-        else mainHandler.post(announce);
-    }
-
     public void abandonVisionCapture(@Nullable String commandId,
                                      boolean retryRemoteCommand,
                                      String message) {
@@ -354,8 +330,6 @@ public final class RealtimeGuideManager {
         }
 
         int requestGeneration = ++generation;
-        spokenGuidanceDeduplicator.reset();
-        prepareSpokenGuidance();
         tourSession = session;
         tourSessionId = session.sessionId;
         rtcRoomJoined = false;
@@ -399,8 +373,6 @@ public final class RealtimeGuideManager {
         }
 
         rtcSession = created;
-        prepareSpokenGuidance();
-        spokenGuidanceSpeaker.configure(created.visionGuidanceAudioUrl);
         RtcVoiceChatManager manager = new RtcVoiceChatManager(QimuApplication.getAppContext());
         rtc = manager;
         updateState(State.RTC_CONNECTING,
@@ -552,8 +524,6 @@ public final class RealtimeGuideManager {
         RtcVoiceChatManager currentRtc = rtc;
         if (currentRtc != null) currentRtc.setInputEnabled(false);
         glassesAudioSource.stop();
-        if (spokenGuidanceSpeaker != null) spokenGuidanceSpeaker.stop();
-        spokenGuidanceDeduplicator.reset();
         updateState(State.PAUSED, message);
     }
 
@@ -605,8 +575,6 @@ public final class RealtimeGuideManager {
         RtcVoiceChatManager currentRtc = rtc;
         if (currentRtc != null) currentRtc.setInputEnabled(false);
         glassesAudioSource.stop();
-        if (spokenGuidanceSpeaker != null) spokenGuidanceSpeaker.stop();
-        spokenGuidanceDeduplicator.reset();
 
         rtc = null;
         if (currentRtc != null) currentRtc.stop();
@@ -1146,21 +1114,5 @@ public final class RealtimeGuideManager {
                 });
             }
         };
-    }
-
-    private void prepareSpokenGuidance() {
-        if (spokenGuidanceSpeaker == null) {
-            spokenGuidanceSpeaker = new SpokenGuidanceSpeaker();
-        }
-        spokenGuidanceSpeaker.prepare();
-    }
-
-    private void speakProcessGuidance(@NonNull String eventId, @NonNull String phrase) {
-        if (!spokenGuidanceDeduplicator.shouldSpeak(
-                eventId, phrase, SystemClock.elapsedRealtime())) {
-            return;
-        }
-        prepareSpokenGuidance();
-        spokenGuidanceSpeaker.speak(phrase);
     }
 }

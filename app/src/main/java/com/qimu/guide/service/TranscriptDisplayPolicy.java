@@ -16,9 +16,6 @@ public final class TranscriptDisplayPolicy {
             "我核对一下相关细节",
             "我确认一下场馆信息",
             "我看看眼前的展品",
-            "我来确认一下这个问题",
-            "让我来看一看",
-            "让我想一想呀",
             // 兼容已创建 RTC 会话及旧版本固定话术
             "让我看看这件展品",
             "我看看这件展品",
@@ -55,9 +52,9 @@ public final class TranscriptDisplayPolicy {
             char ch = value.charAt(index);
             if (Character.isWhitespace(ch)
                     || ch == '，' || ch == '。' || ch == '！' || ch == '？'
-                    || ch == '、' || ch == '…' || ch == '～'
+                    || ch == '、' || ch == '…'
                     || ch == ',' || ch == '.' || ch == '!' || ch == '?'
-                    || ch == ':' || ch == '：' || ch == ';' || ch == '；' || ch == '~') {
+                    || ch == ':' || ch == '：' || ch == ';' || ch == '；') {
                 index++;
                 continue;
             }
