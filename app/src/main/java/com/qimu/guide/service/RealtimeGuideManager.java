@@ -1081,7 +1081,8 @@ public final class RealtimeGuideManager {
             public void onSubtitle(boolean fromSelf, String text,
                                    boolean definite, int sequence) {
                 if (text == null || text.trim().isEmpty()) return;
-                String normalized = text.trim();
+                String normalized = TranscriptDisplayPolicy.visibleText(fromSelf, text);
+                if (normalized.isEmpty()) return;
                 long stableSequence = ((long) rtcGeneration << 32)
                         | (sequence & 0xffffffffL);
                 postIfCurrent(() -> {
