@@ -468,9 +468,11 @@ public class RtcVoiceChatManager {
             msg.put("ToolCallID", toolCallId);
             msg.put("Content", content);
             byte[] buf = buildTlv("func", msg.toString());
-            current.sendUserBinaryMessage(
+            long ret = current.sendUserBinaryMessage(
                     botUid, buf, com.ss.bytertc.engine.type.MessageConfig.RELIABLE_ORDERED);
-            Log.i(TAG, "FC func 结果已回填 id=" + toolCallId + " len=" + content.length());
+            // 注：content 过长时火山虽发送成功(sendRet>0)也不生成讲解，长度由后端控制。
+            Log.i(TAG, "FC func 结果已回填 id=" + toolCallId + " len=" + content.length()
+                    + " bytes=" + buf.length + " sendRet=" + ret);
         } catch (Exception e) {
             Log.w(TAG, "sendFunctionResult 失败 id=" + toolCallId, e);
         }

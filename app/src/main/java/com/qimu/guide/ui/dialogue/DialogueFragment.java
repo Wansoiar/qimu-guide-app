@@ -420,9 +420,8 @@ public class DialogueFragment extends Fragment {
                                 message,
                                 System.currentTimeMillis()));
                     }
-                    // FC 链路：func 回填后火山在同一会话继续讲解，不再割裂交互。
-                    // 拍照时为释放眼镜硬件通道短暂 pause 了收音，这里自动恢复，
-                    // 无需用户手动点“继续对话”。
+                    // FC 链路：func 回填后火山在同一会话继续讲解，拍照时为释放眼镜硬件
+                    // 通道短暂 pause 的收音在此自动恢复，无需用户手动点“继续对话”。
                     if (wasListening && !guideManager.hasPendingVisionRequest()) {
                         guideManager.startGuidance();
                     }
