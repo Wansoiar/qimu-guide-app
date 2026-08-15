@@ -11,12 +11,11 @@ import androidx.annotation.Nullable;
 public final class SpokenGuidancePolicy {
 
     public static final String VISION = "让我来看一看～";
-    public static final String GENERAL = "让我想一想呀";
 
     private SpokenGuidancePolicy() {
     }
 
-    /** 拍照意图使用视觉引导，其余普通问答统一使用思考引导。 */
+    /** 拍照意图使用视觉引导；普通问答由 RTC MCP ComfortWords 统一处理。 */
     @Nullable
     public static String phraseForUserText(@Nullable String rawText) {
         if (rawText == null) return null;
@@ -28,7 +27,7 @@ public final class SpokenGuidancePolicy {
                 "这是什么", "这个是什么", "拍张照", "拍照", "识别一下")) {
             return VISION;
         }
-        return GENERAL;
+        return null;
     }
 
     private static boolean isShortConversation(String text) {

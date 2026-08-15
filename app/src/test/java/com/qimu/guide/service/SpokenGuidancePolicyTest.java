@@ -10,20 +10,20 @@ import static org.junit.Assert.assertTrue;
 public final class SpokenGuidancePolicyTest {
 
     @Test
-    public void usesOnePhraseForVisionAndOneForOtherQuestions() {
+    public void onlyHandlesVisionBecauseNormalGuidanceComesFromRtc() {
         assertEquals(SpokenGuidancePolicy.VISION,
                 SpokenGuidancePolicy.phraseForUserText("帮我看看眼前有什么"));
         assertEquals(SpokenGuidancePolicy.VISION,
                 SpokenGuidancePolicy.phraseForUserText("拍照识别一下"));
-        assertEquals(SpokenGuidancePolicy.GENERAL,
+        assertNull(
                 SpokenGuidancePolicy.phraseForUserText("它是什么年代出土的？"));
-        assertEquals(SpokenGuidancePolicy.GENERAL,
+        assertNull(
                 SpokenGuidancePolicy.phraseForUserText("这件文物是什么材质？"));
-        assertEquals(SpokenGuidancePolicy.GENERAL,
+        assertNull(
                 SpokenGuidancePolicy.phraseForUserText("博物馆几点闭馆？"));
-        assertEquals(SpokenGuidancePolicy.GENERAL,
+        assertNull(
                 SpokenGuidancePolicy.phraseForUserText("介绍一下这件展品"));
-        assertEquals(SpokenGuidancePolicy.GENERAL,
+        assertNull(
                 SpokenGuidancePolicy.phraseForUserText("为什么会这样？"));
     }
 
@@ -31,7 +31,7 @@ public final class SpokenGuidancePolicyTest {
     public void skipsOnlyShortGreetingsAndAcknowledgements() {
         assertNull(SpokenGuidancePolicy.phraseForUserText("你好"));
         assertNull(SpokenGuidancePolicy.phraseForUserText("谢谢"));
-        assertEquals(SpokenGuidancePolicy.GENERAL,
+        assertNull(
                 SpokenGuidancePolicy.phraseForUserText("请继续介绍"));
     }
 

@@ -381,6 +381,8 @@ public final class RealtimeGuideManager {
         }
 
         rtcSession = created;
+        prepareSpokenGuidance();
+        spokenGuidanceSpeaker.configure(created.visionGuidanceAudioUrl);
         RtcVoiceChatManager manager = new RtcVoiceChatManager(QimuApplication.getAppContext());
         rtc = manager;
         updateState(State.RTC_CONNECTING,
@@ -1138,7 +1140,7 @@ public final class RealtimeGuideManager {
 
     private void prepareSpokenGuidance() {
         if (spokenGuidanceSpeaker == null) {
-            spokenGuidanceSpeaker = new SpokenGuidanceSpeaker(QimuApplication.getAppContext());
+            spokenGuidanceSpeaker = new SpokenGuidanceSpeaker();
         }
         spokenGuidanceSpeaker.prepare();
     }
