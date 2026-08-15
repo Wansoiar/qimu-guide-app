@@ -13,6 +13,20 @@ def asBuildConfigString = { value ->
 android {
     compileSdk 35
 
+    // 眼镜私有全双工收音的探索性实现（未接主链路、当前不编译：引用了尚未定义的
+    // RtcVoiceChatManager.AI_DIALOGUE_AUDIO_MODE / CAPTURE_MODE）。先排除出编译，
+    // 让 SCO 全双工自测（ScoFullDuplexProbe）能跑；决定走私有通道时再补常量并移除本排除。
+    sourceSets {
+        main {
+            java {
+                exclude 'com/qimu/guide/service/GlassesAiDialogueAudioSource.java'
+                exclude 'com/qimu/guide/service/GlassesNormalStreamAudioSource.java'
+                exclude 'com/qimu/guide/service/GlassesNavAudioSource.java'
+                exclude 'com/qimu/guide/service/GlassesAudioSource.java'
+            }
+        }
+    }
+
     defaultConfig {
         applicationId "com.qimu.guide"
         minSdk 21
