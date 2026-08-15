@@ -23,7 +23,7 @@ public final class LocalPhotoGridAdapter
     public interface Listener {
         void onOpenPhoto(@NonNull LocalPhoto photo);
 
-        /** Return false to reject a change, for example when the 50-photo cap is reached. */
+        /** Return false to reject a change, for example when the share-photo cap is reached. */
         boolean onSelectionChanged(@NonNull LocalPhoto photo, boolean selected);
     }
 

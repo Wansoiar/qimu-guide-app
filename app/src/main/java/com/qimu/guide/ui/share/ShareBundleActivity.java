@@ -186,7 +186,8 @@ public final class ShareBundleActivity extends AppCompatActivity {
 
     private void startShare() {
         if (uploading || completed) return;
-        if (!TourSessionManager.get().isActive()) {
+        TourSessionManager.TourSession session = TourSessionManager.get().current();
+        if (session == null) {
             showError("本次导览已结束，无法继续创建分享");
             return;
         }
@@ -211,10 +212,14 @@ public final class ShareBundleActivity extends AppCompatActivity {
         setUploading(true, "正在创建分享…", true, 0);
 
         AtomicReference<String> phone = new AtomicReference<>(normalizedPhone);
-        orchestrationExecutor.execute(() -> runUploadFlow(phone));
+        String sessionId = validUuidOrNull(session.sessionId);
+        String venueId = validUuidOrNull(session.venueId);
+        orchestrationExecutor.execute(() -> runUploadFlow(phone, sessionId, venueId));
     }
 
-    private void runUploadFlow(@NonNull AtomicReference<String> phone) {
+    private void runUploadFlow(@NonNull AtomicReference<String> phone,
+                               @Nullable String sessionId,
+                               @Nullable String venueId) {
         ShareBundleApiClient client = new ShareBundleApiClient(
                 BuildConfig.SHARE_APP_TOKEN, androidDeviceId());
         apiClient = client;
@@ -231,14 +236,12 @@ public final class ShareBundleActivity extends AppCompatActivity {
                 }
                 setUploading(true, "正在创建分享…", true, 0);
             });
-            TourSessionManager.TourSession session = TourSessionManager.get().current();
-            String venueId = session == null ? null : validUuidOrNull(session.venueId);
             ShareBundleApiClient.CreateResult created = client.createBundle(
                     phone.get(), preparedPhotos.size(), needVlog, venueId);
             phone.set(null);
             runOnUiThread(() -> phoneInput.setText(""));
 
-            uploadAllPhotos(client, created.bundleId, preparedPhotos);
+            uploadAllPhotos(client, created.bundleId, preparedPhotos, sessionId);
             runOnUiThread(() -> setUploading(true, "正在激活分享…", true, 0));
             ShareBundleApiClient.FinishResult finished = client.finishBundle(created.bundleId);
             runOnUiThread(() -> showShareResult(finished));
@@ -272,7 +275,8 @@ public final class ShareBundleActivity extends AppCompatActivity {
 
     private void uploadAllPhotos(@NonNull ShareBundleApiClient client,
                                  @NonNull String bundleId,
-                                 @NonNull List<PreparedPhoto> photos) throws IOException {
+                                 @NonNull List<PreparedPhoto> photos,
+                                 @Nullable String sessionId) throws IOException {
         CompletionService<ShareBundleApiClient.UploadResult> completion =
                 new ExecutorCompletionService<>(uploadExecutor);
         synchronized (uploadFutures) {
@@ -288,7 +292,8 @@ public final class ShareBundleActivity extends AppCompatActivity {
                             prepared.mimeType,
                             bytes,
                             sortOrder,
-                            prepared.sha256);
+                            prepared.sha256,
+                            sessionId);
                 }));
             }
         }
@@ -456,7 +461,9 @@ public final class ShareBundleActivity extends AppCompatActivity {
                 case 30001: message = "APP 分享服务密钥无效，请联系管理员"; break;
                 case 30002: message = "手机号格式不正确，请重新输入"; break;
                 case 30003:
-                case 30014: message = "最多只能分享 50 张照片"; break;
+                case 30014:
+                    message = "最多只能分享 " + GallerySelectionStore.MAX_SELECTION + " 张照片";
+                    break;
                 case 30011: message = "分享会话不存在，请重新生成"; break;
                 case 30012: message = "本次分享已完成或已失效，请重新生成"; break;
                 case 30013: message = "有照片超过 10MB，无法上传"; break;

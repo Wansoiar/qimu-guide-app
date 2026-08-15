@@ -126,13 +126,14 @@ public class GuideApiClient {
 
     /** 上传眼镜照片，返回供 RTC Agent 访问的图片 URL。阻塞调用。 */
     public UploadedImage uploadImage(File imageFile) {
+        return uploadImage(imageFile, null);
+    }
+
+    /** 上传 AI 拍图，并将对象归属到当前导览会话。阻塞调用。 */
+    public UploadedImage uploadImage(File imageFile, @Nullable String sessionId) {
         Call call = null;
         try {
-            RequestBody fileBody = RequestBody.create(imageFile, MediaType.parse("image/jpeg"));
-            MultipartBody body = new MultipartBody.Builder()
-                    .setType(MultipartBody.FORM)
-                    .addFormDataPart("file", imageFile.getName(), fileBody)
-                    .build();
+            MultipartBody body = buildImageUploadBody(imageFile, sessionId);
             Request request = new Request.Builder()
                     .url(ApiConfig.uploadImage())
                     .header("X-Client-Type", "android")
@@ -160,6 +161,17 @@ public class GuideApiClient {
             unregisterVisionCall(call);
             unregister(call);
         }
+    }
+
+    static MultipartBody buildImageUploadBody(File imageFile, @Nullable String sessionId) {
+        RequestBody fileBody = RequestBody.create(imageFile, MediaType.parse("image/jpeg"));
+        MultipartBody.Builder builder = new MultipartBody.Builder()
+                .setType(MultipartBody.FORM)
+                .addFormDataPart("file", imageFile.getName(), fileBody);
+        if (sessionId != null && !sessionId.trim().isEmpty()) {
+            builder.addFormDataPart("session_id", sessionId.trim());
+        }
+        return builder.build();
     }
 
     /** 发起语音查询并流式派发 text_delta、audio_chunk、done。 */

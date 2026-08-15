@@ -15,7 +15,7 @@ import java.util.Set;
 /** Persists photo selection and Vlog preference without tying it to an Activity instance. */
 public final class GallerySelectionStore {
 
-    public static final int MAX_SELECTION = 50;
+    public static final int MAX_SELECTION = 30;
 
     private static final String PREFERENCES = "qimu_local_gallery";
     private static final String KEY_SELECTION_INITIALIZED = "selection_initialized";
@@ -41,7 +41,7 @@ public final class GallerySelectionStore {
     }
 
     /**
-     * Removes vanished rows and applies the one-time default of selecting the newest 50 photos.
+     * Removes vanished rows and applies the one-time default up to the share limit.
      * An empty first visit does not consume the default-selection behavior.
      */
     public void reconcile(@NonNull List<LocalPhoto> currentPhotos) {
@@ -51,7 +51,7 @@ public final class GallerySelectionStore {
         boolean changed = selectedUris.retainAll(available);
         if (!selectionInitialized && !currentPhotos.isEmpty()) {
             selectedUris.clear();
-            addFirstFifty(currentPhotos, selectedUris);
+            addFirstUpToLimit(currentPhotos, selectedUris);
             selectionInitialized = true;
             changed = true;
         } else if (selectedUris.size() > MAX_SELECTION) {
@@ -73,10 +73,10 @@ public final class GallerySelectionStore {
         return selectedUris.contains(photo.selectionKey());
     }
 
-    /** Returns false only when selecting this item would exceed the 50-photo cap. */
+    /** Returns false only when selecting this item would exceed the share-photo cap. */
     public boolean setSelected(@NonNull LocalPhoto photo, boolean selected) {
         String key = photo.selectionKey();
-        if (selected && !selectedUris.contains(key) && selectedUris.size() >= MAX_SELECTION) {
+        if (selected && !selectedUris.contains(key) && !canAddSelection(selectedUris.size())) {
             return false;
         }
         boolean changed = selected ? selectedUris.add(key) : selectedUris.remove(key);
@@ -84,9 +84,13 @@ public final class GallerySelectionStore {
         return true;
     }
 
+    static boolean canAddSelection(int selectedCount) {
+        return selectedCount < MAX_SELECTION;
+    }
+
     public void selectAll(@NonNull List<LocalPhoto> photos) {
         selectedUris.clear();
-        addFirstFifty(photos, selectedUris);
+        addFirstUpToLimit(photos, selectedUris);
         if (!photos.isEmpty()) selectionInitialized = true;
         persistSelection();
     }
@@ -106,7 +110,7 @@ public final class GallerySelectionStore {
         return cleared;
     }
 
-    /** "All" means every selectable item: all rows when <=50, otherwise the newest 50. */
+    /** "All" means every selectable item up to the share-photo limit. */
     public boolean areAllSelectablePhotosSelected(@NonNull List<LocalPhoto> photos) {
         int targetCount = Math.min(MAX_SELECTION, photos.size());
         if (targetCount == 0 || selectedUris.size() != targetCount) return false;
@@ -149,8 +153,8 @@ public final class GallerySelectionStore {
                 .apply();
     }
 
-    private static void addFirstFifty(@NonNull Collection<LocalPhoto> photos,
-                                      @NonNull Set<String> destination) {
+    private static void addFirstUpToLimit(@NonNull Collection<LocalPhoto> photos,
+                                          @NonNull Set<String> destination) {
         int count = 0;
         for (LocalPhoto photo : photos) {
             destination.add(photo.selectionKey());

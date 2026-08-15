@@ -80,15 +80,19 @@ public final class ShareBundleApiClient implements Closeable {
                                     @NonNull byte[] bytes,
                                     int sortOrder,
                                     @NonNull String sha256) throws IOException {
-        MediaType mediaType = MediaType.parse(mimeType);
-        if (mediaType == null) mediaType = MediaType.parse("image/jpeg");
-        RequestBody fileBody = RequestBody.create(bytes, mediaType);
-        MultipartBody body = new MultipartBody.Builder()
-                .setType(MultipartBody.FORM)
-                .addFormDataPart("file", safeFileName(fileName, mimeType), fileBody)
-                .addFormDataPart("sort_order", String.valueOf(sortOrder))
-                .addFormDataPart("sha256", sha256)
-                .build();
+        return uploadPhoto(bundleId, fileName, mimeType, bytes, sortOrder, sha256, null);
+    }
+
+    @NonNull
+    public UploadResult uploadPhoto(@NonNull String bundleId,
+                                    @NonNull String fileName,
+                                    @NonNull String mimeType,
+                                    @NonNull byte[] bytes,
+                                    int sortOrder,
+                                    @NonNull String sha256,
+                                    @Nullable String sessionId) throws IOException {
+        MultipartBody body = buildPhotoUploadBody(
+                fileName, mimeType, bytes, sortOrder, sha256, sessionId);
         JSONObject data = null;
         for (int integrityAttempt = 0; integrityAttempt < MAX_ATTEMPTS; integrityAttempt++) {
             try {
@@ -106,6 +110,27 @@ public final class ShareBundleApiClient implements Closeable {
                 data.optInt("uploaded_count", 0),
                 data.optInt("expected_count", 0),
                 data.optBoolean("is_duplicate", false));
+    }
+
+    @NonNull
+    static MultipartBody buildPhotoUploadBody(@NonNull String fileName,
+                                              @NonNull String mimeType,
+                                              @NonNull byte[] bytes,
+                                              int sortOrder,
+                                              @NonNull String sha256,
+                                              @Nullable String sessionId) {
+        MediaType mediaType = MediaType.parse(mimeType);
+        if (mediaType == null) mediaType = MediaType.parse("image/jpeg");
+        RequestBody fileBody = RequestBody.create(bytes, mediaType);
+        MultipartBody.Builder builder = new MultipartBody.Builder()
+                .setType(MultipartBody.FORM)
+                .addFormDataPart("file", safeFileName(fileName, mimeType), fileBody)
+                .addFormDataPart("sort_order", String.valueOf(sortOrder))
+                .addFormDataPart("sha256", sha256);
+        if (sessionId != null && !sessionId.trim().isEmpty()) {
+            builder.addFormDataPart("session_id", sessionId.trim());
+        }
+        return builder.build();
     }
 
     @NonNull

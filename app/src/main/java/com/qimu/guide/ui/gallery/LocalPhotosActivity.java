@@ -275,7 +275,9 @@ public final class LocalPhotosActivity extends AppCompatActivity {
             selectionStore.selectAll(photos);
             if (photos.size() > GallerySelectionStore.MAX_SELECTION) {
                 Toast.makeText(this,
-                        "最多选择 50 张，已选择最新的 50 张",
+                        "最多选择 " + GallerySelectionStore.MAX_SELECTION
+                                + " 张，已选择最新的 "
+                                + GallerySelectionStore.MAX_SELECTION + " 张",
                         Toast.LENGTH_SHORT).show();
             }
         }

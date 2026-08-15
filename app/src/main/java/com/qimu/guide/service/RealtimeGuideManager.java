@@ -634,10 +634,17 @@ public final class RealtimeGuideManager {
 
         int operationId = visionOperationId;
         int operationGeneration = generation;
+        String uploadTourSessionId = tourSessionId;
+        if (uploadTourSessionId == null || uploadTourSessionId.trim().isEmpty()) {
+            finishVisionOperation(operationId, callback, false,
+                    "导览会话已失效，请重新拍照");
+            return;
+        }
         activeVisionCallback = callback;
         publishVisionOperation(true, "照片正在交给 AI 讲解…");
         ioExecutor.execute(() -> {
-            GuideApiClient.UploadedImage uploaded = apiClient.uploadImage(imageFile);
+            GuideApiClient.UploadedImage uploaded = apiClient.uploadImage(
+                    imageFile, uploadTourSessionId);
             if (uploaded == null) {
                 finishVisionOperation(operationId, callback, false, "照片上传失败");
                 return;
