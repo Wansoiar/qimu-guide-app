@@ -652,6 +652,34 @@ public final class RealtimeGuideManager {
             String question = userQuestion == null || userQuestion.trim().isEmpty()
                     ? "请介绍这张照片中的展品或产品"
                     : userQuestion.trim();
+
+            // FC 触发（commandId=fc:<toolCallId>）：后端 describe-image 识图 → func 回填给模型。
+            if (isFcCommand(commandId)) {
+                TourSessionManager.TourSession tour = tourSession;
+                String venueId = tour != null ? tour.venueId : null;
+                GuideApiClient.ImageDescribeResult desc =
+                        apiClient.describeRtcImage(venueId, uploaded.url);
+                String content;
+                if (desc != null && desc.recognized && desc.summary != null
+                        && !desc.summary.trim().isEmpty()) {
+                    content = "这是「" + desc.exhibitName + "」。以下是讲解资料，"
+                            + "请用讲解员口吻面向游客口语化介绍：" + desc.summary;
+                } else {
+                    // CLIP 未命中（阈值拒识）→ 让模型引导用户重拍，保持单一声音。
+                    content = "没有从本馆知识库里识别出这件展品。请用讲解员口吻告诉游客："
+                            + "暂时没认出眼前这件，建议靠近一点或换个角度再让我看看。";
+                }
+                String botUid = activeFcBotUid;
+                RtcVoiceChatManager currentRtc = rtc;
+                boolean ok = botUid != null && currentRtc != null;
+                if (ok) {
+                    currentRtc.sendFunctionResult(botUid, toolCallIdOf(commandId), content);
+                }
+                finishVisionOperation(operationId, callback, ok,
+                        ok ? "照片已交给 AI，正在讲解" : "识图结果回填失败");
+                return;
+            }
+
             String prompt = "[VISION_IMAGE] 用户的问题：" + question
                     + "。眼镜刚拍摄的 image_url 是 " + uploaded.url
                     + "。请查看图片并直接用中文讲解，不要猜测未看见的内容。";
@@ -892,6 +920,48 @@ public final class RealtimeGuideManager {
         }
     }
 
+    /** FC 触发拍照的 commandId 前缀，用于在 injectVisionImageOnMain 区分回填方式（func vs inject）。 */
+    private static final String FC_COMMAND_PREFIX = "fc:";
+
+    /** 记录 FC commandId → botUid / toolCallId，供拍照完成后 func 回填使用。 */
+    private volatile String activeFcBotUid;
+
+    /**
+     * 处理火山 client-side FC 指令（阶段2a）。
+     * take_photo → 触发真实拍照（复用 pendingVisionRequest 机制，commandId=fc:<toolCallId>），
+     * 拍照+upload+describe-image 后走 func 回填（见 injectVisionImageOnMain 的 FC 分支）。
+     */
+    private void handleFunctionCall(RtcVoiceChatManager rtc, String senderUid,
+                                    String toolCallId, String functionName) {
+        if (!"take_photo".equals(functionName)) {
+            Log.w(TAG, "收到未知 FC: " + functionName);
+            return;
+        }
+        GuideApiClient.RtcSessionInfo currentSession = rtcSession;
+        if (currentSession == null || rtc == null) {
+            Log.w(TAG, "FC take_photo 跳过：会话未就绪");
+            return;
+        }
+        if (pendingVisionRequest != null || visionOperationInProgress) {
+            Log.w(TAG, "FC take_photo 跳过：已有识图任务进行中");
+            return;
+        }
+        activeFcBotUid = currentSession.botUid != null && !currentSession.botUid.isEmpty()
+                ? currentSession.botUid : senderUid;
+        String commandId = FC_COMMAND_PREFIX + toolCallId;
+        Log.i(TAG, "FC take_photo → 触发拍照 commandId=" + commandId);
+        pendingVisionRequest = new PendingVisionRequest(commandId, "请介绍我眼前的展品或产品");
+        deliverPendingVisionRequest();
+    }
+
+    private static boolean isFcCommand(@Nullable String commandId) {
+        return commandId != null && commandId.startsWith(FC_COMMAND_PREFIX);
+    }
+
+    private static String toolCallIdOf(String fcCommandId) {
+        return fcCommandId.substring(FC_COMMAND_PREFIX.length());
+    }
+
     private void deliverPendingVisionRequest() {
         PendingVisionRequest pending = pendingVisionRequest;
         if (pending == null || visionOperationInProgress) return;
@@ -1021,6 +1091,11 @@ public final class RealtimeGuideManager {
             @Override
             public void onCommand(String senderUid, String payload) {
                 postIfCurrent(() -> handleRtcCommand(senderUid, payload));
+            }
+
+            @Override
+            public void onFunctionCall(String senderUid, String toolCallId, String functionName) {
+                postIfCurrent(() -> handleFunctionCall(expectedRtc, senderUid, toolCallId, functionName));
             }
 
             @Override

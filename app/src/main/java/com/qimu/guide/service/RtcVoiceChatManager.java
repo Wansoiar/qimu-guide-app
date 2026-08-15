@@ -52,6 +52,11 @@ public class RtcVoiceChatManager {
         void onUserLeave(String uid);
         void onSubtitle(boolean fromSelf, String text, boolean definite, int sequence);
         default void onCommand(String senderUid, String payload) { }
+        /**
+         * 火山 client-side Function Calling：模型下发工具调用指令（如 take_photo）。
+         * 端侧执行后需调 {@link #sendFunctionResult} 把结果回填给模型继续讲解。
+         */
+        default void onFunctionCall(String senderUid, String toolCallId, String functionName) { }
         void onError(int code, String desc);
     }
 
@@ -377,6 +382,16 @@ public class RtcVoiceChatManager {
             if (jsonStart < 0) return;
             String magic = raw.substring(0, Math.min(4, jsonStart));
             String payload = raw.substring(jsonStart);
+            // 火山 client-side Function Calling 二进制 TLV：magic=info(通知)/tool(指令)/func(结果)。
+            // tool 指令里含 tool_calls，需解析出 function.name + id 交给上层执行拍照等本地动作。
+            if (magic.contains("tool")) {
+                handleFunctionCallTool(uid, payload);
+                return;
+            }
+            if (magic.contains("info")) {
+                Log.d(TAG, "FC info 通知: " + payload);
+                return;
+            }
             if (!magic.contains("subv")) {
                 Log.d(TAG, "AIGC event magic=" + magic);
                 current.onCommand(uid, payload);
@@ -407,6 +422,73 @@ public class RtcVoiceChatManager {
         } catch (Exception error) {
             Log.d(TAG, "忽略无法解析的 AIGC 二进制消息", error);
         }
+    }
+
+    /**
+     * 解析火山 FC `tool` 指令 payload（JSON，含 tool_calls 数组），取第一个函数调用的
+     * id + name 交给上层执行。arguments 当前工具（take_photo）无参数，暂不解析。
+     */
+    private void handleFunctionCallTool(String uid, String payload) {
+        Listener current = listener;
+        if (current == null) return;
+        try {
+            org.json.JSONObject root = new org.json.JSONObject(payload);
+            org.json.JSONArray calls = root.optJSONArray("tool_calls");
+            if (calls == null || calls.length() == 0) {
+                Log.w(TAG, "FC tool payload 无 tool_calls: " + payload);
+                return;
+            }
+            org.json.JSONObject call = calls.optJSONObject(0);
+            if (call == null) return;
+            String toolCallId = call.optString("id", "");
+            org.json.JSONObject fn = call.optJSONObject("function");
+            String name = fn != null ? fn.optString("name", "") : "";
+            Log.i(TAG, "FC tool 指令: name=" + name + " id=" + toolCallId);
+            if (name.isEmpty() || toolCallId.isEmpty()) return;
+            current.onFunctionCall(uid, toolCallId, name);
+        } catch (Exception e) {
+            Log.w(TAG, "解析 FC tool 指令失败: " + payload, e);
+        }
+    }
+
+    /**
+     * 回填 FC 执行结果给模型（magic=func TLV），模型据此继续用同一把 TTS 讲解。
+     * @param botUid AI Bot 的 UserId（AgentConfig.UserId）
+     * @param toolCallId 必须与收到的 tool 指令 id 一致
+     * @param content 函数执行结果（如识图讲解素材 / 重拍提示）
+     */
+    public void sendFunctionResult(String botUid, String toolCallId, String content) {
+        RTCRoom current = room;
+        if (current == null || botUid == null || botUid.isEmpty()) {
+            Log.w(TAG, "sendFunctionResult 跳过：room/botUid 为空");
+            return;
+        }
+        try {
+            org.json.JSONObject msg = new org.json.JSONObject();
+            msg.put("ToolCallID", toolCallId);
+            msg.put("Content", content);
+            byte[] buf = buildTlv("func", msg.toString());
+            long ret = current.sendUserBinaryMessage(
+                    botUid, buf, com.ss.bytertc.engine.type.MessageConfig.RELIABLE_ORDERED);
+            // 注：content 过长时火山虽发送成功(sendRet>0)也不生成讲解，长度由后端控制。
+            Log.i(TAG, "FC func 结果已回填 id=" + toolCallId + " len=" + content.length()
+                    + " bytes=" + buf.length + " sendRet=" + ret);
+        } catch (Exception e) {
+            Log.w(TAG, "sendFunctionResult 失败 id=" + toolCallId, e);
+        }
+    }
+
+    /** 构造火山二进制 TLV：[4B magic ascii][4B big-endian length][UTF-8 payload]。 */
+    private static byte[] buildTlv(String magic, String content) {
+        byte[] magicBytes = magic.getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        byte[] contentBytes = content.getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        java.nio.ByteBuffer buffer =
+                java.nio.ByteBuffer.allocate(magicBytes.length + 4 + contentBytes.length);
+        buffer.order(java.nio.ByteOrder.BIG_ENDIAN);
+        buffer.put(magicBytes);
+        buffer.putInt(contentBytes.length);
+        buffer.put(contentBytes);
+        return buffer.array();
     }
 
     private synchronized int resolveBinarySubtitleSequence(

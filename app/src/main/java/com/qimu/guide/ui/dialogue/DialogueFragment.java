@@ -256,6 +256,12 @@ public class DialogueFragment extends Fragment {
         photoButton.setText(effectiveVisionBusy ? "正在拍照…" : getString(R.string.photo_hint));
     }
 
+    /** 断开字幕合并锚点：下一条字幕将新建气泡，而不是追加进上方旧气泡。 */
+    private void resetVolcSubtitleBubble() {
+        volcBubbleIndex = -1;
+        volcBubbleText.setLength(0);
+    }
+
     private void upsertSubtitle(boolean fromSelf, String text,
                                 boolean definite, long sequence) {
         if (!viewActive || text == null || text.trim().isEmpty()) return;
@@ -322,6 +328,15 @@ public class DialogueFragment extends Fragment {
         int operation = ++visionGeneration;
         visionConnection = connection;
         if (resumeAfterVisionFailure) guideManager.pauseGuidance();
+        // 拍照发起即落一条状态气泡，作为对话时间轴锚点，确保后续 AI 识图讲解
+        // （走 RTC 字幕通道）不会抢在“拍照—照片—讲解”之前。
+        // 关键：重置字幕合并锚点，否则识图讲解字幕会 sameSpeaker 命中拍照前那条
+        // 旧 AI 气泡、被追加到照片上方，造成“讲解跑到照片前”的乱序。
+        resetVolcSubtitleBubble();
+        appendMessageDirect(new DialogueMessage(
+                DialogueMessage.Type.AI_REPLY,
+                "正在拍照…",
+                System.currentTimeMillis()));
         renderState(guideManager.getState(), "正在准备眼镜拍照…");
 
         long delay = resumeAfterVisionFailure ? HARDWARE_RELEASE_DELAY_MS : 0L;
@@ -383,6 +398,8 @@ public class DialogueFragment extends Fragment {
                 DialogueMessage.Type.AI_REPLY,
                 "照片已收到，正在交给 AI 导览员讲解…",
                 System.currentTimeMillis()));
+        // 让紧随其后的识图讲解字幕独立成条，排在照片/状态提示之后，不被合并进上方气泡。
+        resetVolcSubtitleBubble();
 
         boolean wasListening = resumeAfterVisionFailure;
         String question = visionQuestion;
@@ -402,14 +419,11 @@ public class DialogueFragment extends Fragment {
                                 DialogueMessage.Type.AI_REPLY,
                                 message,
                                 System.currentTimeMillis()));
-                        if (wasListening && !guideManager.hasPendingVisionRequest()) {
-                            guideManager.startGuidance();
-                        }
-                    } else if (wasListening) {
-                        appendMessageDirect(new DialogueMessage(
-                                DialogueMessage.Type.AI_REPLY,
-                                "识图讲解期间已暂停收音；听完后点击“继续对话”。",
-                                System.currentTimeMillis()));
+                    }
+                    // FC 链路：func 回填后火山在同一会话继续讲解，拍照时为释放眼镜硬件
+                    // 通道短暂 pause 的收音在此自动恢复，无需用户手动点“继续对话”。
+                    if (wasListening && !guideManager.hasPendingVisionRequest()) {
+                        guideManager.startGuidance();
                     }
                 });
     }

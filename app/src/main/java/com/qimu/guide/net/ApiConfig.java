@@ -45,6 +45,10 @@ public final class ApiConfig {
         return baseUrl() + "/v1/rtc/session/inject";
     }
 
+    public static String rtcSessionDescribeImage() {
+        return baseUrl() + "/v1/rtc/session/describe-image";
+    }
+
     public static String shareBundles() {
         return baseUrl() + "/v1/share-bundles";
     }
