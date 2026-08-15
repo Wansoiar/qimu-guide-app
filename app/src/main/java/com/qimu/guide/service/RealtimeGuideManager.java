@@ -128,7 +128,10 @@ public final class RealtimeGuideManager {
     private final Map<String, RecentSubtitle> recentSubtitlesByContent = new HashMap<>();
     private final Set<String> handledCommandIds = new HashSet<>();
     private final GuideApiClient apiClient = new GuideApiClient();
-    private final GlassesPcmAudioSource glassesAudioSource = new GlassesPcmAudioSource();
+    // 收音源：眼镜当标准蓝牙耳机走系统 SCO 全双工（外放时仍收音→可打断），
+    // 替换旧的眼镜私有 BLE Translation 通道（GlassesPcmAudioSource，外放时收不到音打不断）。
+    private final ScoMicAudioSource glassesAudioSource =
+            new ScoMicAudioSource(QimuApplication.getAppContext());
 
     private volatile State state = State.IDLE;
     private volatile String stateMessage = "尚未开始游览";
@@ -415,7 +418,7 @@ public final class RealtimeGuideManager {
         int startAttempt = ++audioStartAttempt;
         currentRtc.setInputEnabled(false);
         updateState(State.AUDIO_LINK_STARTING, "正在连接眼镜麦克风…");
-        glassesAudioSource.start(connection, new GlassesPcmAudioSource.Listener() {
+        glassesAudioSource.start(QimuApplication.getAppContext(), new ScoMicAudioSource.Listener() {
             @Override
             public void onStarted() {
                 mainHandler.post(() -> {

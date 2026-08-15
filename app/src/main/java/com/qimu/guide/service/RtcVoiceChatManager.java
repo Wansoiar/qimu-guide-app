@@ -110,6 +110,11 @@ public class RtcVoiceChatManager {
         }
         engine = created;
         created.setAudioScenario(AudioScenarioType.AICLIENT);
+        // 走系统 SCO 时 AI 下行走通话音量流，档位偏低（真机实测 SDK 进房会把 STREAM_VOICE_CALL
+        // 压到 6/15，声音很小）。用 SDK 自己的播放音量接口把远端音频放大，这是 SDK 层增益，
+        // 不与系统通话音量竞争、不会被 SDK 自身覆盖。100=原始，先给 200（2 倍）真机调。
+        int volRet = created.setPlaybackVolume(400);
+        Log.i(TAG, "setPlaybackVolume(400) ret=" + volRet);
         int sourceResult = created.setAudioSourceType(
                 AudioSourceType.AUDIO_SOURCE_TYPE_EXTERNAL);
         if (sourceResult != 0) {
