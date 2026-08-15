@@ -62,6 +62,19 @@ public class GuideApiClient {
         }
     }
 
+    /** /v1/rtc/session/describe-image 的识图结果。 */
+    public static final class ImageDescribeResult {
+        public final boolean recognized;
+        public final String exhibitName;
+        public final String summary;
+
+        ImageDescribeResult(boolean recognized, String exhibitName, String summary) {
+            this.recognized = recognized;
+            this.exhibitName = exhibitName;
+            this.summary = summary;
+        }
+    }
+
     /** 后端创建 RTC 房间并启动 VoiceChat Agent 后返回的进房信息。 */
     public static final class RtcSessionInfo {
         public final String sessionId;
@@ -357,6 +370,44 @@ public class GuideApiClient {
             if (call != null && call.isCanceled()) return false;
             Log.e(TAG, "injectRtcMessage 异常", e);
             return false;
+        } finally {
+            unregisterVisionCall(call);
+            unregister(call);
+        }
+    }
+
+    /** 拍照识物：后端 CLIP 以图搜图 -> 返回识别结果与讲解素材（方案A FC 分支用）。 */
+    public ImageDescribeResult describeRtcImage(String venueId, String imageUrl) {
+        Call call = null;
+        try {
+            JSONObject body = new JSONObject();
+            body.put("venue_id", venueId);
+            body.put("image_url", imageUrl);
+            Request request = new Request.Builder()
+                    .url(ApiConfig.rtcSessionDescribeImage())
+                    .header("X-Client-Type", "android")
+                    .post(RequestBody.create(body.toString(), JSON))
+                    .build();
+            call = client.newCall(request);
+            if (!register(call) || !registerVisionCall(call)) return null;
+            try (Response response = call.execute()) {
+                String responseBody = response.body() != null ? response.body().string() : "";
+                JSONObject json = new JSONObject(responseBody);
+                if (!response.isSuccessful() || json.optInt("code", -1) != 0) {
+                    Log.e(TAG, "describeRtcImage backend error: " + json.optString("message"));
+                    return null;
+                }
+                JSONObject data = json.optJSONObject("data");
+                if (data == null) return null;
+                return new ImageDescribeResult(
+                        data.optBoolean("recognized", false),
+                        data.optString("exhibit_name", ""),
+                        data.optString("summary", ""));
+            }
+        } catch (Exception e) {
+            if (call != null && call.isCanceled()) return null;
+            Log.e(TAG, "describeRtcImage exception", e);
+            return null;
         } finally {
             unregisterVisionCall(call);
             unregister(call);
