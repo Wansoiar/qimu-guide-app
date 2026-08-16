@@ -11,7 +11,11 @@ import com.ss.bytertc.engine.RTCRoom;
 import com.ss.bytertc.engine.RTCRoomConfig;
 import com.ss.bytertc.engine.UserInfo;
 import com.ss.bytertc.engine.data.AudioChannel;
+import com.ss.bytertc.engine.data.AudioPropertiesConfig;
+import com.ss.bytertc.engine.data.AudioRenderType;
+import com.ss.bytertc.engine.data.AudioRoute;
 import com.ss.bytertc.engine.data.AudioSampleRate;
+import com.ss.bytertc.engine.data.RemoteAudioPropertiesInfo;
 import com.ss.bytertc.engine.data.AudioSourceType;
 import com.ss.bytertc.engine.data.EngineConfig;
 import com.ss.bytertc.engine.handler.IRTCEngineEventHandler;
@@ -73,6 +77,8 @@ public class RtcVoiceChatManager {
     private int pendingPcmSize;
     private String selfUid;
     private ScheduledExecutorService framePump;
+    // 下行外部渲染播放器：走 VOICE_CALL 通话流，替代 RTC 内部媒体流渲染（见类注释）。
+    private volatile RtcDownlinkVoicePlayer downlinkPlayer;
     // AIGC 的 subv 二进制字幕在部分服务版本里不带 sequence。为同一说话人的
     // interim/final 维护稳定序号，使 UI 能覆盖更新而不是重复追加气泡。
     private int nextBinarySubtitleSequence = 1_000_000;
@@ -110,9 +116,12 @@ public class RtcVoiceChatManager {
         }
         engine = created;
         created.setAudioScenario(AudioScenarioType.AICLIENT);
-        // 走系统 SCO 时 AI 下行走通话音量流，档位偏低（真机实测 SDK 进房会把 STREAM_VOICE_CALL
-        // 压到 6/15，声音很小）。用 SDK 自己的播放音量接口把远端音频放大，这是 SDK 层增益，
-        // 不与系统通话音量竞争、不会被 SDK 自身覆盖。100=原始，先给 200（2 倍）真机调。
+        // 方案 D（2026-08-16）：下行改「外部渲染」。RTC 内部渲染实测把下行钉在媒体流
+        // (mStreamType=3)，通话模式下被压到 tVol~0.0075。改 EXTERNAL 后 RTC 不再自己播，
+        // 由 RtcDownlinkVoicePlayer 拉流并用 VOICE_CALL 通话流 AudioTrack 播出 → 像打电话一样不被压低。
+        int renderRet = created.setAudioRenderType(AudioRenderType.AUDIO_RENDER_TYPE_EXTERNAL);
+        Log.i(TAG, "setAudioRenderType(EXTERNAL) ret=" + renderRet);
+        // setPlaybackVolume 是远端混音增益(100=原始，最大 400)，外部渲染前的混音阶段仍生效，作为额外放大。
         int volRet = created.setPlaybackVolume(400);
         Log.i(TAG, "setPlaybackVolume(400) ret=" + volRet);
         int sourceResult = created.setAudioSourceType(
@@ -123,7 +132,18 @@ public class RtcVoiceChatManager {
             return;
         }
 
+        // 下行音量探针：每 500ms 报一次远端实际音量（linearVolume 0~255），
+        // 把「感觉小」变成数字，用来判定改场景/路由是否真的抬升了下行电平。
+        try {
+            created.enableAudioPropertiesReport(new AudioPropertiesConfig(500));
+        } catch (RuntimeException e) {
+            Log.w(TAG, "enableAudioPropertiesReport 失败", e);
+        }
         startFramePump();
+        // 外部渲染播放器随引擎启动；它内部拉流线程在有下行数据时才出声（无数据=静默），
+        // 早启动不影响，且能确保 AI 首帧就有播放通道。
+        downlinkPlayer = new RtcDownlinkVoicePlayer(created);
+        downlinkPlayer.start();
         room = created.createRTCRoom(session.roomId);
         if (room == null) {
             listener.onError(-102, "RTC 房间创建失败");
@@ -182,6 +202,24 @@ public class RtcVoiceChatManager {
         return inputEnabled;
     }
 
+    /**
+     * 让 SDK 感知当前走蓝牙路由。真机日志发现：external source + 外部手动 SCO 组合下，
+     * SDK 未识别蓝牙路由，把它内部播放 AudioTrack 的 track 音量掐到 ~0.0075（近静音），
+     * 导致系统/SDK/设备三层音量拉满仍偏小。通知 SDK 路由为蓝牙后，SDK 应按正常路由
+     * 处理 track 音量。须在 SCO 建立（call mode 就绪）后调用。
+     */
+    public void routeToBluetooth() {
+        RTCEngine currentEngine = engine;
+        if (currentEngine == null) return;
+        try {
+            int ret = currentEngine.setAudioRoute(AudioRoute.AUDIO_ROUTE_HEADSET_BLUETOOTH);
+            Log.i(TAG, "setAudioRoute(BLUETOOTH) ret=" + ret
+                    + " now=" + currentEngine.getAudioRoute());
+        } catch (RuntimeException e) {
+            Log.w(TAG, "setAudioRoute 失败", e);
+        }
+    }
+
     /** 兼容旧测试入口；外部音频模式下“静音”就是关闭 PCM gate。 */
     public void setMuted(boolean muted) {
         setInputEnabled(!muted);
@@ -194,6 +232,9 @@ public class RtcVoiceChatManager {
         listener = null;
         setInputEnabled(false);
         stopFramePump();
+        RtcDownlinkVoicePlayer player = downlinkPlayer;
+        downlinkPlayer = null;
+        if (player != null) player.stop();
         RTCRoom currentRoom = room;
         room = null;
         if (currentRoom != null) {
@@ -274,6 +315,19 @@ public class RtcVoiceChatManager {
         public void onError(int errorCode) {
             Listener current = listener;
             if (current != null) current.onError(errorCode, "engine error");
+        }
+
+        @Override
+        public void onRemoteAudioPropertiesReport(
+                RemoteAudioPropertiesInfo[] infos, int totalRemoteVolume) {
+            // 下行电平探针：linearVolume 0~255。若这里数值正常(几十~上百)但耳朵仍小，
+            // 说明 SDK 混音后电平是够的，小在系统 SCO 输出端(瓶颈在系统层非 RTC 层)；
+            // 若这里本身就极小，说明瓶颈在 RTC 场景/路由映射(改 scenario 有救)。
+            if (infos == null || infos.length == 0) return;
+            int v = infos[0].audioPropertiesInfo != null
+                    ? infos[0].audioPropertiesInfo.linearVolume : -1;
+            Log.i(TAG, "下行音量探针 linearVolume=" + v
+                    + " totalRemote=" + totalRemoteVolume + " streams=" + infos.length);
         }
     };
 

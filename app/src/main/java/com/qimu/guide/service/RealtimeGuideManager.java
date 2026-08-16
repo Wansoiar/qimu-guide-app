@@ -9,6 +9,7 @@ import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 
 import com.moyoung.glasses.conn.CRPBleConnection;
+import com.moyoung.glasses.conn.callback.CRPDeviceVolumeCallback;
 import com.moyoung.glasses.conn.listener.CRPBleConnectionStateListener;
 import com.qimu.guide.QimuApplication;
 import com.qimu.guide.net.GuideApiClient;
@@ -434,6 +435,11 @@ public final class RealtimeGuideManager {
                         return;
                     }
                     joinedRtc.setInputEnabled(true);
+                    // SCO 已 connected（call mode 就绪）→ 通知 SDK 走蓝牙路由，
+                    // 避免 SDK 把内部播放 track 音量掐到 ~0.0075（近静音）。
+                    // 必须在此处（SCO 起来后）调，进房时调会被系统路由覆盖。
+                    joinedRtc.routeToBluetooth();
+                    setGlassesVolumeMax();
                     updateState(State.LISTENING, "AI 导览员正在聆听");
                 });
             }
@@ -510,6 +516,52 @@ public final class RealtimeGuideManager {
             }
             deliverPendingVisionRequest();
         });
+    }
+
+    /** 眼镜设备音量范围（真机 queryDeviceVolume 实测 0-16）。 */
+    private static final int GLASSES_VOLUME_MAX = 16;
+
+    /**
+     * 用眼镜 SDK 设置设备侧音量（sendDeviceVolume，范围 0-{@link #GLASSES_VOLUME_MAX}）。
+     * 这是眼镜喇叭增益，独立于蓝牙链路。供「语音改音量」直接复用。
+     *
+     * <p>注：真机验证走 SCO 时设备音量本就已在最大 16/16，故它不是 SCO 下行偏小的瓶颈；
+     * 此接口主要留给用户主动调节音量（含未来语音指令）。
+     *
+     * @param volume 目标音量；<0 表示拉到最大。自动 clamp 到 [0, 16]。
+     */
+    public void setGlassesVolume(int volume) {
+        BleService bleService = BleService.getInstance();
+        CRPBleConnection connection = bleService.getConnection();
+        if (!bleService.isConnected() || connection == null) {
+            Log.w(TAG, "setGlassesVolume 跳过：眼镜未连接");
+            return;
+        }
+        int target = volume < 0 ? GLASSES_VOLUME_MAX
+                : Math.max(0, Math.min(GLASSES_VOLUME_MAX, volume));
+        try {
+            connection.sendDeviceVolume(target);
+            Log.i(TAG, "sendDeviceVolume(" + target + ") 已发");
+        } catch (RuntimeException e) {
+            Log.w(TAG, "sendDeviceVolume 失败", e);
+        }
+    }
+
+    /** 查询眼镜当前设备音量，结果经回调返回（供 UI/语音改音量读当前值）。 */
+    public void queryGlassesVolume(CRPDeviceVolumeCallback callback) {
+        BleService bleService = BleService.getInstance();
+        CRPBleConnection connection = bleService.getConnection();
+        if (!bleService.isConnected() || connection == null) return;
+        try {
+            connection.queryDeviceVolume(callback);
+        } catch (RuntimeException e) {
+            Log.w(TAG, "queryDeviceVolume 失败", e);
+        }
+    }
+
+    /** 把眼镜设备音量拉到最大。 */
+    public void setGlassesVolumeMax() {
+        setGlassesVolume(-1);
     }
 
     private void pauseGuidanceOnMain(String message) {
