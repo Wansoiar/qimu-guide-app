@@ -132,8 +132,9 @@ public class RtcVoiceChatManager {
             return;
         }
 
-        // 下行音量探针：每 500ms 报一次远端实际音量（linearVolume 0~255），
-        // 把「感觉小」变成数字，用来判定改场景/路由是否真的抬升了下行电平。
+        // 【诊断探针，非解法，保留备用】每 500ms 报一次远端实际音量（linearVolume 0~255）。
+        // 作用是把「音量感觉小」变成数字，切开「RTC 混音电平低」vs「系统输出被压低」两种可能。
+        // 本次定位音量问题时靠它证明 RTC 电平正常(峰值 200)、真因在 stream type。日常可留，排障重开。
         try {
             created.enableAudioPropertiesReport(new AudioPropertiesConfig(500));
         } catch (RuntimeException e) {
@@ -203,10 +204,14 @@ public class RtcVoiceChatManager {
     }
 
     /**
-     * 让 SDK 感知当前走蓝牙路由。真机日志发现：external source + 外部手动 SCO 组合下，
-     * SDK 未识别蓝牙路由，把它内部播放 AudioTrack 的 track 音量掐到 ~0.0075（近静音），
-     * 导致系统/SDK/设备三层音量拉满仍偏小。通知 SDK 路由为蓝牙后，SDK 应按正常路由
-     * 处理 track 音量。须在 SCO 建立（call mode 就绪）后调用。
+     * 让 SDK 感知当前走蓝牙路由，在 SCO 建立后调用。
+     *
+     * <p>【历史/弯路，非音量解法】曾以为下行音量小是「SDK 没认蓝牙路由、把内部 track 音量
+     * 掐到 ~0.0075」导致，故加此调用。真机验证：setAudioRoute ret=0 路由确实切到蓝牙，
+     * 但音量依旧小 —— 说明这不是真因。真因是「下行走了媒体流(STREAM_MUSIC)被通话模式压低」，
+     * 由 {@link RtcDownlinkVoicePlayer}（外部渲染 + VOICE_CALL 流）真正解决。
+     * 本方法保留：它无害，且能让 SDK 正确记录路由；但要清楚它<b>不是</b>音量修复手段。
+     * 详见 打断实现-原理与踩坑全记录.md 第 6 节弯路表。
      */
     public void routeToBluetooth() {
         RTCEngine currentEngine = engine;

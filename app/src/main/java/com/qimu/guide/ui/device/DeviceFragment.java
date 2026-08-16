@@ -857,6 +857,9 @@ public class DeviceFragment extends Fragment {
      * SCO 全双工自测：进 MODE_IN_COMMUNICATION + startBluetoothSco，边外放正弦音边录音，
      * 打印录音 RMS。外放期间对眼镜说话若 RMS 跳动=全双工OK（拆薄方案可行）。
      * 前提：眼镜已作为蓝牙耳机连上（A2DP+HFP 均 connected，看设备页音频状态）。
+     *
+     * <p>调试自测工具，保留：用于快速验证一副新眼镜/新固件在 SCO 下能否边放边收，
+     * 是打断方案能否成立的前置判据。详见 打断实现-原理与踩坑全记录.md。
      */
     private void startScoProbe(View button) {
         if (bleService == null || !bleService.isConnected()) {

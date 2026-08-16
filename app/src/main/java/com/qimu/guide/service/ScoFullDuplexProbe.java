@@ -20,7 +20,7 @@ import androidx.core.content.ContextCompat;
  *
  * <p>目的：验证「把眼镜当标准蓝牙耳机、走系统 HFP-SCO 路由」时，能否<b>边外放边收音</b>
  * （像微信语音那样的全双工）。若成立，则打断（barge-in）可以不依赖眼镜私有 BLE 通道
- * （{@link GlassesPcmAudioSource} 等），主链路可以大幅拆薄。
+ * （旧的眼镜私有 BLE 通道，已删除），主链路可以大幅拆薄。
  *
  * <p>做法（完全绕开眼镜 SDK，只用 Android 系统音频）：
  * <ol>

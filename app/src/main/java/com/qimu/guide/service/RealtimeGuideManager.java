@@ -130,7 +130,7 @@ public final class RealtimeGuideManager {
     private final Set<String> handledCommandIds = new HashSet<>();
     private final GuideApiClient apiClient = new GuideApiClient();
     // 收音源：眼镜当标准蓝牙耳机走系统 SCO 全双工（外放时仍收音→可打断），
-    // 替换旧的眼镜私有 BLE Translation 通道（GlassesPcmAudioSource，外放时收不到音打不断）。
+    // 替换旧的眼镜私有 BLE Translation 通道（已删除的 GlassesPcmAudioSource，外放时收不到音打不断）。
     private final ScoMicAudioSource glassesAudioSource =
             new ScoMicAudioSource(QimuApplication.getAppContext());
 

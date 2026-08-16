@@ -17,8 +17,8 @@ import androidx.core.content.ContextCompat;
 /**
  * 系统 SCO 麦克风收音源。
  *
- * <p>与 {@link GlassesPcmAudioSource}（眼镜私有 BLE Translation 通道，与 A2DP 外放互斥、
- * 讲解外放时收不到用户语音导致打不断）不同：本源把眼镜当<b>标准蓝牙耳机</b>，进
+ * <p>与旧的眼镜私有 BLE Translation 通道（已删除的 GlassesPcmAudioSource：与 A2DP 外放互斥、
+ * 讲解外放时收不到用户语音导致打不断，这正是它被淘汰的原因）不同：本源把眼镜当<b>标准蓝牙耳机</b>，进
  * {@code MODE_IN_COMMUNICATION} + {@code startBluetoothSco} 走系统 HFP-SCO 全双工，
  * 用 {@link AudioRecord}（{@code VOICE_COMMUNICATION} 源，16k/mono/PCM16）持续采集，
  * 外放（火山 AI 下行）期间仍能收到用户说话，从而让「发声即打断」在讲解期间生效。
@@ -27,7 +27,7 @@ import androidx.core.content.ContextCompat;
  * 静音期上行干净（无外放回声串入）。本类是探针的生产版：去掉自测正弦音（放音交火山），
  * 只保留 SCO 建链 + 持续 PCM 吐出。
  *
- * <p>对上层暴露与 {@link GlassesPcmAudioSource} 一致的 start/pause/stop + Listener 语义，
+ * <p>对上层暴露与旧私有通道一致的 start/pause/stop + Listener 语义，
  * 便于 {@link RealtimeGuideManager} 平替。区别：本源走系统麦，不需要 BLE connection，
  * 因此 {@link #start(Context, Listener)} 只吃 Context。
  *
