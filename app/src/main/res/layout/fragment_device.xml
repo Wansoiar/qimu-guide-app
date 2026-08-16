@@ -486,6 +486,15 @@
             </LinearLayout>
 
             <com.google.android.material.button.MaterialButton
+                android:id="@+id/btn_debug_sco_probe"
+                style="@style/Widget.Qimu.Button.Soft"
+                android:layout_width="match_parent"
+                android:layout_height="42dp"
+                android:layout_marginTop="6dp"
+                android:text="SCO 全双工自测（边放边收）"
+                android:textSize="12sp" />
+
+            <com.google.android.material.button.MaterialButton
                 android:id="@+id/btn_debug_clear_log"
                 style="@style/Widget.Qimu.Button.Outline"
                 android:layout_width="match_parent"

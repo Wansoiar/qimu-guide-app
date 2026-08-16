@@ -64,6 +64,7 @@ public class DeviceFragment extends Fragment {
     private BleService bleService;
     private TourSessionManager tourSessionManager;
     private OperatorConfigStore operatorConfigStore;
+    private com.qimu.guide.service.ScoFullDuplexProbe scoProbe;
 
     private View layoutDisconnected, layoutConnected;
     private TextView tvScanStatus, tvDeviceName, tvDeviceId, tvBattery, tvFirmware, tvDebugLog;
@@ -242,6 +243,7 @@ public class DeviceFragment extends Fragment {
             bleService.ensureBluetoothAudioConnection();
         });
         v.findViewById(R.id.btn_debug_play_tone).setOnClickListener(vi -> playTestTone());
+        v.findViewById(R.id.btn_debug_sco_probe).setOnClickListener(vi -> startScoProbe(vi));
         v.findViewById(R.id.btn_debug_clear_log).setOnClickListener(vi -> tvDebugLog.setText(""));
 
         // 恢复现有状态
@@ -849,6 +851,33 @@ public class DeviceFragment extends Fragment {
         String text = "欢迎使用齐目导览，AI智能眼镜将为您提供全程讲解服务。";
         tts.speak(text, android.speech.tts.TextToSpeech.QUEUE_FLUSH, null, "test");
         appendLog("🔊 TTS语音已播放: \"" + text + "\"");
+    }
+
+    /**
+     * SCO 全双工自测：进 MODE_IN_COMMUNICATION + startBluetoothSco，边外放正弦音边录音，
+     * 打印录音 RMS。外放期间对眼镜说话若 RMS 跳动=全双工OK（拆薄方案可行）。
+     * 前提：眼镜已作为蓝牙耳机连上（A2DP+HFP 均 connected，看设备页音频状态）。
+     *
+     * <p>调试自测工具，保留：用于快速验证一副新眼镜/新固件在 SCO 下能否边放边收，
+     * 是打断方案能否成立的前置判据。详见 打断实现-原理与踩坑全记录.md。
+     */
+    private void startScoProbe(View button) {
+        if (bleService == null || !bleService.isConnected()) {
+            appendLog("请先连接眼镜再做 SCO 自测");
+            return;
+        }
+        if (bleService.getAudioConnectionState() != BleService.AUDIO_STATE_CONNECTED) {
+            appendLog("⚠️ 蓝牙音频(A2DP/HFP)未就绪，SCO 大概率走手机内置麦——先点「音频配对」");
+        }
+        if (scoProbe == null) {
+            scoProbe = new com.qimu.guide.service.ScoFullDuplexProbe(requireContext());
+        }
+        button.setEnabled(false);
+        appendLog("戴上眼镜，点开始后对着眼镜连续说话约 10 秒……");
+        scoProbe.start(new com.qimu.guide.service.ScoFullDuplexProbe.Listener() {
+            @Override public void onLog(String line) { appendLog(line); }
+            @Override public void onFinished() { button.setEnabled(true); }
+        });
     }
 
     // ── 扫描列表适配器 ──
