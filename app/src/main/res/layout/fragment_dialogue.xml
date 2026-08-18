@@ -19,25 +19,6 @@
         android:layout_height="match_parent"
         android:orientation="vertical">
 
-    <TextView
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:layout_marginStart="20dp"
-        android:layout_marginTop="22dp"
-        android:text="@string/dialogue"
-        android:textAppearance="@style/TextAppearance.Qimu.PageTitle" />
-
-    <TextView
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:layout_marginStart="20dp"
-        android:layout_marginTop="5dp"
-        android:layout_marginEnd="20dp"
-        android:lineSpacingExtra="3dp"
-        android:text="@string/dialogue_placeholder"
-        android:textColor="@color/qimu_text_secondary"
-        android:textSize="15sp" />
-
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
@@ -118,7 +99,7 @@
                 android:layout_height="wrap_content"
                 android:layout_marginStart="8dp"
                 android:layout_weight="1"
-                android:text="正在准备 AI 导览房间…"
+                android:text="@string/dialogue_preparing"
                 android:textColor="@color/qimu_text_secondary"
                 android:textSize="12sp" />
         </LinearLayout>
@@ -127,6 +108,7 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="10dp"
+            android:baselineAligned="false"
             android:orientation="horizontal">
 
             <com.google.android.material.button.MaterialButton
@@ -150,7 +132,6 @@
                 android:layout_marginStart="5dp"
                 android:layout_weight="1"
                 android:text="@string/voice_hint"
-                android:textSize="12sp"
                 app:icon="@drawable/ic_voice_20"
                 app:iconGravity="textStart"
                 app:iconPadding="6dp"
