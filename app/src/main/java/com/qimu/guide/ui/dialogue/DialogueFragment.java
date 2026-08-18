@@ -149,12 +149,6 @@ public class DialogueFragment extends Fragment {
         guideManager.addListener(realtimeListener);
         List<RealtimeGuideManager.TranscriptEntry> transcript =
                 guideManager.getTranscriptSnapshot();
-        if (messages.isEmpty() && transcript.isEmpty()) {
-            appendMessageDirect(new DialogueMessage(
-                    DialogueMessage.Type.AI_REPLY,
-                    "AI 导览房间会在本次游览中保持在线。点击开始对话后，直接通过眼镜提问。",
-                    System.currentTimeMillis()));
-        }
         for (RealtimeGuideManager.TranscriptEntry entry : transcript) {
             upsertSubtitle(entry.fromSelf, entry.text, entry.definite, entry.sequence);
         }
@@ -163,9 +157,9 @@ public class DialogueFragment extends Fragment {
 
         if (TourSessionManager.get().consumeFirstTutorial()) {
             new AlertDialog.Builder(requireContext())
-                    .setTitle("开始本次智能导览")
-                    .setMessage("点击“开始对话”后直接说话，声音由眼镜持续采集。点击暂停只停止收音，AI 导览房间仍会保持在线；结束游览时才会关闭。")
-                    .setPositiveButton("我知道了", null)
+                    .setTitle(R.string.dialogue_tutorial_title)
+                    .setMessage(R.string.dialogue_tutorial_body)
+                    .setPositiveButton(R.string.dialogue_tutorial_action, null)
                     .show();
         }
     }
@@ -192,7 +186,7 @@ public class DialogueFragment extends Fragment {
         if (!viewActive || dialogueButton == null) return;
 
         String safeMessage = message == null || message.trim().isEmpty()
-                ? "正在准备 AI 导览房间…" : message;
+                ? getString(R.string.dialogue_preparing) : message;
         rtcStatusText.setText(safeMessage);
         rtcSessionBody.setText(safeMessage);
 
@@ -227,7 +221,7 @@ public class DialogueFragment extends Fragment {
                 dialogueButton.setEnabled(true);
                 break;
             case RTC_CONNECTING:
-                dialogueButton.setText("正在进入房间…");
+                dialogueButton.setText(R.string.dialogue_connecting);
                 dialogueButton.setEnabled(false);
                 break;
             case STOPPING:
@@ -302,7 +296,7 @@ public class DialogueFragment extends Fragment {
         if (state != RealtimeGuideManager.State.READY
                 && state != RealtimeGuideManager.State.PAUSED
                 && state != RealtimeGuideManager.State.LISTENING) {
-            if (showFailure) showToast("AI 导览房间尚未就绪");
+            if (showFailure) showToast(getString(R.string.dialogue_not_ready));
             return false;
         }
 

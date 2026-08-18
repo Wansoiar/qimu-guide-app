@@ -349,7 +349,7 @@ public final class RealtimeGuideManager {
             handledCommandIds.clear();
         }
         registerBleListener();
-        updateState(State.RTC_CONNECTING, "AI 导览员正在上线…");
+        updateState(State.RTC_CONNECTING, "正在准备齐目 AI…");
 
         ioExecutor.execute(() -> {
             // 对齐 feat/volc-main-dialogue 已跑通的 RTC 编排契约：这里只传场馆。
@@ -372,7 +372,7 @@ public final class RealtimeGuideManager {
             return;
         }
         if (created == null) {
-            updateState(State.ERROR, "AI 导览员连接失败，点击重试");
+            updateState(State.ERROR, "齐目 AI 暂时不可用，请重试");
             return;
         }
 
@@ -380,10 +380,10 @@ public final class RealtimeGuideManager {
         RtcVoiceChatManager manager = new RtcVoiceChatManager(QimuApplication.getAppContext());
         rtc = manager;
         updateState(State.RTC_CONNECTING,
-                created.mocked ? "当前为 RTC 模拟模式，AI 导览员不会响应" : "正在连接 AI 导览员…");
+                created.mocked ? "当前为 RTC 模拟模式，齐目 AI 不会响应" : "正在连接齐目 AI…");
         manager.start(created, createRtcListener(requestGeneration, manager));
         scheduleRtcReadyTimeout(requestGeneration, manager,
-                "AI 导览员连接超时，当前房间已停止；点击重试");
+                "齐目 AI 连接超时，请重试");
     }
 
     /** App “开始语音导览/继续语音导览”。RTC 已在房内，仅开启眼镜麦克风链路。 */
@@ -400,7 +400,7 @@ public final class RealtimeGuideManager {
         GuideApiClient.RtcSessionInfo currentSession = rtcSession;
         if (!rtcRoomJoined || currentSession == null
                 || (!currentSession.mocked && !agentOnline)) {
-            updateState(State.RTC_CONNECTING, "已进入 RTC 房间，正在等待 AI 导览员…");
+            updateState(State.RTC_CONNECTING, "正在连接齐目 AI…");
             return;
         }
         BleService bleService = BleService.getInstance();
@@ -411,7 +411,7 @@ public final class RealtimeGuideManager {
         }
         RtcVoiceChatManager currentRtc = rtc;
         if (currentRtc == null) {
-            updateState(State.ERROR, "RTC 房间不可用，点击重试");
+            updateState(State.ERROR, "齐目 AI 暂时不可用，请重试");
             return;
         }
 
@@ -440,7 +440,7 @@ public final class RealtimeGuideManager {
                     // 必须在此处（SCO 起来后）调，进房时调会被系统路由覆盖。
                     joinedRtc.routeToBluetooth();
                     setGlassesVolumeMax();
-                    updateState(State.LISTENING, "AI 导览员正在聆听");
+                    updateState(State.LISTENING, "正在聆听，请直接说话");
                 });
             }
 
@@ -478,7 +478,7 @@ public final class RealtimeGuideManager {
 
     /** App “暂停收音”。仅停止眼镜音频；AI 导览员仍保持在线。 */
     public void pauseGuidance() {
-        mainHandler.post(() -> pauseGuidanceOnMain("已暂停收音 · AI 导览员仍在线"));
+        mainHandler.post(() -> pauseGuidanceOnMain("已暂停收音 · 点击继续对话即可恢复"));
     }
 
     /**
@@ -621,7 +621,7 @@ public final class RealtimeGuideManager {
         ++generation;
         audioStartAttempt++;
         rtcReadyAttempt++;
-        if (publishStopping) updateState(State.STOPPING, "正在关闭 AI 导览房间…");
+        if (publishStopping) updateState(State.STOPPING, "正在结束本次导览…");
         cancelVisionOperationOnMain(publishStopping
                 ? "游览已结束，识图任务已取消"
                 : "RTC 正在重连，请重新拍照");
@@ -651,7 +651,7 @@ public final class RealtimeGuideManager {
             handledCommandIds.clear();
         }
         if (currentSession != null) stopServerSessionAsync(currentSession);
-        updateState(State.IDLE, "RTC 已关闭");
+        updateState(State.IDLE, "本次导览已结束");
     }
 
     /** 上传眼镜照片并注入同一 RTC Agent，供语音触发视觉问答使用。 */
@@ -887,7 +887,7 @@ public final class RealtimeGuideManager {
         if (!rtcRoomJoined || current == null) return;
         if (!current.mocked && !agentOnline) {
             if (state == State.RTC_CONNECTING) {
-                updateState(State.RTC_CONNECTING, "已进入 RTC 房间，正在等待 AI 导览员…");
+                updateState(State.RTC_CONNECTING, "正在连接齐目 AI…");
             }
             return;
         }
@@ -896,8 +896,8 @@ public final class RealtimeGuideManager {
         if (state != State.RTC_CONNECTING) return;
         rtcReadyAttempt++;
         updateState(State.READY, current.mocked
-                ? "当前为 RTC 模拟模式，AI 导览员不会响应"
-                : "AI 导览员已就绪 · 点击开始语音导览");
+                ? "当前为 RTC 模拟模式，齐目 AI 不会响应"
+                : "齐目 AI 已准备好，点击开始对话");
     }
 
     private void scheduleRtcReadyTimeout(int expectedGeneration,
@@ -1085,23 +1085,21 @@ public final class RealtimeGuideManager {
                     rtcRoomJoined = false;
                     if (recoverable && hasJoinedRoom) {
                         updateState(State.RTC_CONNECTING,
-                                "RTC 连接暂时中断，正在保持房间并重连…");
-                        cancelVisionOperationOnMain("RTC 正在重连，识图任务已取消");
+                                "连接暂时中断，正在重试…");
+                        cancelVisionOperationOnMain("连接正在恢复，拍照识别已取消");
                         scheduleRtcReadyTimeout(rtcGeneration, expectedRtc,
-                                "RTC 重连超时，当前房间已停止；点击重试");
+                                "连接超时，请重试");
                         return;
                     }
 
-                    terminateRtcOnError(expectedRtc,
-                            "RTC 房间连接失败：" + (reason == null ? "未知错误" : reason));
+                    terminateRtcOnError(expectedRtc, "连接失败，请重试");
                 });
             }
 
             @Override
             public void onTokenWillExpire() {
                 postIfCurrent(() -> {
-                    terminateRtcOnError(expectedRtc,
-                            "RTC 凭证即将过期，当前房间已停止；点击重试");
+                    terminateRtcOnError(expectedRtc, "连接已过期，请重试");
                 });
             }
 
@@ -1124,10 +1122,10 @@ public final class RealtimeGuideManager {
                     glassesAudioSource.pause();
                     if (state != State.IDLE && state != State.STOPPING && state != State.ERROR) {
                         updateState(State.RTC_CONNECTING,
-                                "AI 导览员暂时离线，房间仍保持并等待重连…");
-                        cancelVisionOperationOnMain("AI 导览员暂时离线，识图任务已取消");
+                                "齐目 AI 暂时离线，正在重连…");
+                        cancelVisionOperationOnMain("齐目 AI 暂时离线，拍照识别已取消");
                         scheduleRtcReadyTimeout(rtcGeneration, expectedRtc,
-                                "AI 导览员重连超时，当前房间已停止；点击重试");
+                                "齐目 AI 重连超时，请重试");
                     }
                 });
             }

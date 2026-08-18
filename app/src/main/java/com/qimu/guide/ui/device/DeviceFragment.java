@@ -30,7 +30,6 @@ import androidx.fragment.app.Fragment;
 import androidx.recyclerview.widget.LinearLayoutManager;
 import androidx.recyclerview.widget.RecyclerView;
 
-import com.moyoung.glasses.conn.CRPBleConnection;
 import com.moyoung.glasses.conn.listener.CRPBleConnectionStateListener;
 import com.moyoung.glasses.scan.CRPScanRecordParser;
 import com.moyoung.glasses.scan.bean.CRPScanRecordInfo;
@@ -44,10 +43,8 @@ import com.qimu.guide.net.TourSessionManager;
 import com.qimu.guide.service.BleService;
 import com.qimu.guide.service.TourReturnCoordinator;
 
-import java.text.DateFormat;
 import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.Date;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -64,17 +61,15 @@ public class DeviceFragment extends Fragment {
     private BleService bleService;
     private TourSessionManager tourSessionManager;
     private OperatorConfigStore operatorConfigStore;
-    private com.qimu.guide.service.ScoFullDuplexProbe scoProbe;
 
     private View layoutDisconnected, layoutConnected;
-    private TextView tvScanStatus, tvDeviceName, tvDeviceId, tvBattery, tvFirmware, tvDebugLog;
+    private TextView tvScanStatus, tvDeviceName, tvDeviceId, tvBattery, tvFirmware;
     private TextView tvBleStatus, tvAudioStatus, tvDeviceReady;
     private ImageView ivBleStatus, ivAudioStatus;
-    private View btnScan, layoutDebug;
+    private View btnScan;
     private View layoutTourStart, layoutTourActive, layoutCleanupWarning;
     private Button btnStartTour;
     private TextView tvActiveTour, tvDefaultVenue, tvTourStartHint;
-    private TextView btnToggleDebug;
     private RecyclerView recyclerDevices;
 
     private final List<ScanResultItem> deviceList = new ArrayList<>();
@@ -172,7 +167,6 @@ public class DeviceFragment extends Fragment {
         ivBleStatus = v.findViewById(R.id.iv_ble_status);
         ivAudioStatus = v.findViewById(R.id.iv_audio_status);
         recyclerDevices = v.findViewById(R.id.recycler_devices);
-        tvDebugLog = v.findViewById(R.id.tv_debug_log);
         btnScan = v.findViewById(R.id.btn_scan);
         layoutTourStart = v.findViewById(R.id.layout_tour_start);
         layoutTourActive = v.findViewById(R.id.layout_tour_active);
@@ -181,8 +175,6 @@ public class DeviceFragment extends Fragment {
         tvActiveTour = v.findViewById(R.id.tv_active_tour);
         tvDefaultVenue = v.findViewById(R.id.tv_default_venue);
         tvTourStartHint = v.findViewById(R.id.tv_tour_start_hint);
-        layoutDebug = v.findViewById(R.id.layout_debug);
-        btnToggleDebug = v.findViewById(R.id.btn_toggle_debug);
 
         // Bind every callback target before subscribing. Bluetooth/profile
         // callbacks can arrive immediately when the Fragment is recreated.
@@ -212,39 +204,7 @@ public class DeviceFragment extends Fragment {
                                 tourSessionManager.clearCleanupWarning())
                         .show());
 
-        btnToggleDebug.setOnClickListener(vi -> {
-            boolean show = layoutDebug.getVisibility() != View.VISIBLE;
-            layoutDebug.setVisibility(show ? View.VISIBLE : View.GONE);
-            btnToggleDebug.setText(show
-                    ? R.string.device_diagnostics_hide
-                    : R.string.device_diagnostics_show);
-        });
-
-        // 调试按钮组
         v.findViewById(R.id.btn_debug_disconnect).setOnClickListener(vi -> { bleService.disconnect(); appendLog("手动断开连接"); });
-        v.findViewById(R.id.btn_debug_query_battery).setOnClickListener(vi -> { bleService.queryBattery(); appendLog("已发送电量查询"); });
-        v.findViewById(R.id.btn_debug_sync_time).setOnClickListener(vi -> {
-            CRPBleConnection conn = bleService.getConnection();
-            if (conn != null) { conn.syncTime(); appendLog("已发送时间同步"); }
-            else appendLog("错误: 连接不存在");
-        });
-        v.findViewById(R.id.btn_debug_query_file).setOnClickListener(vi -> {
-            bleService.queryNewMediaFile();
-            appendLog("已发送新媒体文件查询");
-        });
-        v.findViewById(R.id.btn_debug_wifi_download).setOnClickListener(vi -> {
-            appendLog("通过统一状态机开始 WiFi 下载流程...");
-            if (!bleService.startMediaDownload()) {
-                appendLog("WiFi 下载未启动，请检查连接或现有任务");
-            }
-        });
-        v.findViewById(R.id.btn_debug_a2dp).setOnClickListener(vi -> {
-            appendLog("重新检查 BT/A2DP/HFP 音频连接...");
-            bleService.ensureBluetoothAudioConnection();
-        });
-        v.findViewById(R.id.btn_debug_play_tone).setOnClickListener(vi -> playTestTone());
-        v.findViewById(R.id.btn_debug_sco_probe).setOnClickListener(vi -> startScoProbe(vi));
-        v.findViewById(R.id.btn_debug_clear_log).setOnClickListener(vi -> tvDebugLog.setText(""));
 
         // 恢复现有状态
         updateConnectionUI(bleService.getConnectionState());
@@ -459,6 +419,7 @@ public class DeviceFragment extends Fragment {
         if (!isAdded() || layoutTourStart == null) return;
         TourSessionManager.TourSession session = tourSessionManager.current();
         boolean active = session != null;
+        OperatorConfigStore.Venue venue = operatorConfigStore.defaultVenue();
         layoutTourStart.setVisibility(active ? View.GONE : View.VISIBLE);
         layoutTourActive.setVisibility(active ? View.VISIBLE : View.GONE);
         layoutCleanupWarning.setVisibility(!active && tourSessionManager.hasCleanupWarning()
@@ -469,7 +430,6 @@ public class DeviceFragment extends Fragment {
             btnStartTour.setText("正在连接眼镜…");
             btnStartTour.setEnabled(false);
         } else {
-            OperatorConfigStore.Venue venue = operatorConfigStore.defaultVenue();
             tvDefaultVenue.setText(venue.name);
             tvTourStartHint.setText(BuildConfig.DEBUG
                     ? R.string.venue_mock_session_hint
@@ -771,12 +731,7 @@ public class DeviceFragment extends Fragment {
     }
 
     private void appendLog(String msg) {
-        if (!isAdded() || tvDebugLog == null) return;
-        tvDebugLog.post(() -> {
-            String cur = tvDebugLog.getText().toString();
-            if (cur.length() > 5000) cur = cur.substring(cur.length() - 4000);
-            tvDebugLog.setText(cur + "\n" + DateFormat.getTimeInstance(DateFormat.MEDIUM).format(new Date()) + " " + msg);
-        });
+        if (BuildConfig.DEBUG) android.util.Log.d("DeviceFragment", msg);
     }
 
     private String stateToString(int s) {
@@ -790,8 +745,6 @@ public class DeviceFragment extends Fragment {
             default: return "DISCONNECTED";
         }
     }
-
-    private android.speech.tts.TextToSpeech tts;
 
     @Override
     public void onResume() {
@@ -827,57 +780,7 @@ public class DeviceFragment extends Fragment {
         if (tourSessionManager != null) tourSessionManager.removeListener(tourSessionListener);
         if (operatorConfigStore != null) operatorConfigStore.removeListener(operatorConfigListener);
         bleService.removeListener(bleListener);
-        if (tts != null) { tts.stop(); tts.shutdown(); tts = null; }
         super.onDestroyView();
-    }
-
-    /** 使用 TTS 播放语音测试 A2DP 音频通道 */
-    private void playTestTone() {
-        if (tts == null) {
-            tts = new android.speech.tts.TextToSpeech(getContext(), status -> {
-                if (status == android.speech.tts.TextToSpeech.SUCCESS) {
-                    tts.setLanguage(java.util.Locale.CHINESE);
-                    doTtsSpeak();
-                } else {
-                    appendLog("✘ TTS初始化失败");
-                }
-            });
-        } else {
-            doTtsSpeak();
-        }
-    }
-
-    private void doTtsSpeak() {
-        String text = "欢迎使用齐目导览，AI智能眼镜将为您提供全程讲解服务。";
-        tts.speak(text, android.speech.tts.TextToSpeech.QUEUE_FLUSH, null, "test");
-        appendLog("🔊 TTS语音已播放: \"" + text + "\"");
-    }
-
-    /**
-     * SCO 全双工自测：进 MODE_IN_COMMUNICATION + startBluetoothSco，边外放正弦音边录音，
-     * 打印录音 RMS。外放期间对眼镜说话若 RMS 跳动=全双工OK（拆薄方案可行）。
-     * 前提：眼镜已作为蓝牙耳机连上（A2DP+HFP 均 connected，看设备页音频状态）。
-     *
-     * <p>调试自测工具，保留：用于快速验证一副新眼镜/新固件在 SCO 下能否边放边收，
-     * 是打断方案能否成立的前置判据。详见 打断实现-原理与踩坑全记录.md。
-     */
-    private void startScoProbe(View button) {
-        if (bleService == null || !bleService.isConnected()) {
-            appendLog("请先连接眼镜再做 SCO 自测");
-            return;
-        }
-        if (bleService.getAudioConnectionState() != BleService.AUDIO_STATE_CONNECTED) {
-            appendLog("⚠️ 蓝牙音频(A2DP/HFP)未就绪，SCO 大概率走手机内置麦——先点「音频配对」");
-        }
-        if (scoProbe == null) {
-            scoProbe = new com.qimu.guide.service.ScoFullDuplexProbe(requireContext());
-        }
-        button.setEnabled(false);
-        appendLog("戴上眼镜，点开始后对着眼镜连续说话约 10 秒……");
-        scoProbe.start(new com.qimu.guide.service.ScoFullDuplexProbe.Listener() {
-            @Override public void onLog(String line) { appendLog(line); }
-            @Override public void onFinished() { button.setEnabled(true); }
-        });
     }
 
     // ── 扫描列表适配器 ──

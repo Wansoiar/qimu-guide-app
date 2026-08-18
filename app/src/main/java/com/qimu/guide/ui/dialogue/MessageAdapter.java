@@ -53,7 +53,7 @@ public class MessageAdapter extends RecyclerView.Adapter<RecyclerView.ViewHolder
     @Override
     public void onBindViewHolder(@NonNull RecyclerView.ViewHolder holder, int position) {
         DialogueMessage msg = messages.get(position);
-        String time = DateFormat.format("HH:mm:ss", msg.getTimestamp()).toString();
+        String time = DateFormat.format("HH:mm", msg.getTimestamp()).toString();
 
         if (holder instanceof PhotoViewHolder) {
             PhotoViewHolder h = (PhotoViewHolder) holder;
