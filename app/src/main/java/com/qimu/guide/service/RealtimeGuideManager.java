@@ -12,6 +12,8 @@ import com.moyoung.glasses.conn.CRPBleConnection;
 import com.moyoung.glasses.conn.callback.CRPDeviceVolumeCallback;
 import com.moyoung.glasses.conn.listener.CRPBleConnectionStateListener;
 import com.qimu.guide.QimuApplication;
+import com.qimu.guide.provisioning.ProvisioningApi;
+import com.qimu.guide.provisioning.ProvisioningStore;
 import com.qimu.guide.net.GuideApiClient;
 import com.qimu.guide.net.TourSessionManager;
 
@@ -366,9 +368,10 @@ public final class RealtimeGuideManager {
         // 断线重连复用同一次借阅：若本 Tour 已在后端建过 rtc session，回传其 id
         // 让后端复用同一条 session 行（停旧 task 起新 task）；首次为 null 由后端新建。
         final String reuseSessionId = backendRtcSessionId;
+        final String[] devIds = deviceIdsForSession();
         ioExecutor.execute(() -> {
             GuideApiClient.RtcSessionInfo created =
-                    apiClient.createRtcSession(session.venueId, reuseSessionId);
+                    apiClient.createRtcSession(session.venueId, reuseSessionId, devIds[0], devIds[1]);
             mainHandler.post(() -> onRtcSessionCreated(requestGeneration, session, created));
         });
     }
@@ -824,6 +827,22 @@ public final class RealtimeGuideManager {
         if (callback != null) mainHandler.post(() -> callback.onComplete(success, message));
     }
 
+    /** 读本地设备标识 [眼镜MAC, 手机device_id]，供建会话时上报（设备口径对齐）。缺失返回 ["",""]。 */
+    private String[] deviceIdsForSession() {
+        try {
+            ProvisioningApi.ProvisioningSnapshot snap =
+                    ProvisioningStore.get(QimuApplication.getAppContext()).snapshot();
+            if (snap != null) {
+                String glasses = snap.glassesId == null ? "" : snap.glassesId;  // = glasses_mac
+                String phone = snap.deviceId == null ? "" : snap.deviceId;      // = report device_id
+                return new String[]{glasses, phone};
+            }
+        } catch (Exception e) {
+            Log.w(TAG, "读取设备标识失败", e);
+        }
+        return new String[]{"", ""};
+    }
+
     private void stopServerSessionAsync(GuideApiClient.RtcSessionInfo session) {
         stopExecutor.execute(() -> {
             for (int attempt = 1; attempt <= 3; attempt++) {
@@ -909,9 +928,10 @@ public final class RealtimeGuideManager {
         registerBleListener();
         updateState(State.RTC_CONNECTING, "正在自动重连齐目 AI…");
         final String reuseSessionId = backendRtcSessionId;
+        final String[] devIds = deviceIdsForSession();
         ioExecutor.execute(() -> {
             GuideApiClient.RtcSessionInfo created =
-                    apiClient.createRtcSession(session.venueId, reuseSessionId);
+                    apiClient.createRtcSession(session.venueId, reuseSessionId, devIds[0], devIds[1]);
             mainHandler.post(() -> onRtcSessionCreated(requestGeneration, session, created));
         });
     }

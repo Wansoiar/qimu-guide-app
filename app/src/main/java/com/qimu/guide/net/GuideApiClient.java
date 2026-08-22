@@ -233,13 +233,20 @@ public class GuideApiClient {
         return createRtcSession(venueId, null);
     }
 
+    public RtcSessionInfo createRtcSession(@Nullable String venueId, @Nullable String sessionId) {
+        return createRtcSession(venueId, sessionId, null, null);
+    }
+
     /**
      * 创建/复用 RTC 会话。阻塞调用。
      *
      * @param sessionId 传入则复用同一条 Tour Session（断线重连场景，后端换新 RTC task
      *                  并停掉旧 task，同一次借阅贯穿）；传 null 则由后端新建。
+     * @param glassesId 眼镜 BLE MAC（设备口径对齐，落 session 供设备统计）；可空。
+     * @param phoneId   手机 device_id（report 返回的 UUID）；可空。
      */
-    public RtcSessionInfo createRtcSession(@Nullable String venueId, @Nullable String sessionId) {
+    public RtcSessionInfo createRtcSession(@Nullable String venueId, @Nullable String sessionId,
+                                           @Nullable String glassesId, @Nullable String phoneId) {
         Call call = null;
         try {
             JSONObject body = new JSONObject();
@@ -248,6 +255,12 @@ public class GuideApiClient {
             }
             if (sessionId != null && !sessionId.trim().isEmpty()) {
                 body.put("session_id", sessionId.trim());
+            }
+            if (glassesId != null && !glassesId.trim().isEmpty()) {
+                body.put("device_glasses_id", glassesId.trim());
+            }
+            if (phoneId != null && !phoneId.trim().isEmpty()) {
+                body.put("device_phone_id", phoneId.trim());
             }
             Request request = new Request.Builder()
                     .url(ApiConfig.rtcSession())
