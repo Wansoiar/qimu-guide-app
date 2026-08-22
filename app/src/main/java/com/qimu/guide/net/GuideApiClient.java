@@ -64,15 +64,24 @@ public class GuideApiClient {
 
     /** /v1/rtc/session/describe-image 的识图结果。 */
     public static final class ImageDescribeResult {
-        public final boolean recognized;
+        /** 后端置信度三态字符串（PRD §4.4）。 */
+        public static final String HIGH_CONF = "high_conf";       // 已确定展品，summary 为讲解资料
+        public static final String AMBIGUOUS = "ambiguous";       // 多个候选展品，summary 为引导确认语
+        public static final String NOT_RECOGNIZED = "not_recognized"; // 未匹配到知识库展品
+
+        /** 三态之一（旧版曾是 boolean，后端已改为字符串，勿再用 optBoolean 解析）。 */
+        public final String recognized;
         public final String exhibitName;
         public final String summary;
 
-        ImageDescribeResult(boolean recognized, String exhibitName, String summary) {
+        ImageDescribeResult(String recognized, String exhibitName, String summary) {
             this.recognized = recognized;
             this.exhibitName = exhibitName;
             this.summary = summary;
         }
+
+        public boolean isHighConf() { return HIGH_CONF.equals(recognized); }
+        public boolean isAmbiguous() { return AMBIGUOUS.equals(recognized); }
     }
 
     /** 后端创建 RTC 房间并启动 VoiceChat Agent 后返回的进房信息。 */
@@ -426,7 +435,7 @@ public class GuideApiClient {
                 JSONObject data = json.optJSONObject("data");
                 if (data == null) return null;
                 return new ImageDescribeResult(
-                        data.optBoolean("recognized", false),
+                        data.optString("recognized", ImageDescribeResult.NOT_RECOGNIZED),
                         data.optString("exhibit_name", ""),
                         data.optString("summary", ""));
             }

@@ -745,13 +745,21 @@ public final class RealtimeGuideManager {
                 String venueId = tour != null ? tour.venueId : null;
                 GuideApiClient.ImageDescribeResult desc =
                         apiClient.describeRtcImage(venueId, uploaded.url);
+                // 按后端置信度三态分别回填不同指令，让模型用不同语音回应（单一声音，不弹 UI）。
+                boolean hasSummary = desc != null && desc.summary != null
+                        && !desc.summary.trim().isEmpty();
                 String content;
-                if (desc != null && desc.recognized && desc.summary != null
-                        && !desc.summary.trim().isEmpty()) {
+                if (desc != null && desc.isHighConf() && hasSummary) {
+                    // 高置信：已确定展品，直接口语化讲解。
                     content = "这是「" + desc.exhibitName + "」。以下是讲解资料，"
                             + "请用讲解员口吻面向游客口语化介绍：" + desc.summary;
+                } else if (desc != null && desc.isAmbiguous() && hasSummary) {
+                    // 待确认：识别到多个候选，引导用户确认是哪一件，不要硬挑一个讲。
+                    content = "眼前这件有多个相似的候选展品，还不能确定是哪一件，先别急着讲解。"
+                            + "请用讲解员口吻自然地把这些候选口语化地说给游客，"
+                            + "并问他看的是哪一件，帮你确认后再讲。以下是候选信息：" + desc.summary;
                 } else {
-                    // CLIP 未命中（阈值拒识）→ 让模型引导用户重拍，保持单一声音。
+                    // 未匹配（含 null/异常）→ 让模型引导用户重拍，保持单一声音。
                     content = "没有从本馆知识库里识别出这件展品。请用讲解员口吻告诉游客："
                             + "暂时没认出眼前这件，建议靠近一点或换个角度再让我看看。";
                 }
