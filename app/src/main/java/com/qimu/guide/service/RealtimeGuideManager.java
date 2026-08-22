@@ -12,6 +12,8 @@ import com.moyoung.glasses.conn.CRPBleConnection;
 import com.moyoung.glasses.conn.callback.CRPDeviceVolumeCallback;
 import com.moyoung.glasses.conn.listener.CRPBleConnectionStateListener;
 import com.qimu.guide.QimuApplication;
+import com.qimu.guide.provisioning.ProvisioningApi;
+import com.qimu.guide.provisioning.ProvisioningStore;
 import com.qimu.guide.net.GuideApiClient;
 import com.qimu.guide.net.TourSessionManager;
 
@@ -42,6 +44,8 @@ public final class RealtimeGuideManager {
     private static final RealtimeGuideManager INSTANCE = new RealtimeGuideManager();
     private static final long AUDIO_LINK_START_TIMEOUT_MS = 8_000L;
     private static final long RTC_READY_TIMEOUT_MS = 20_000L;
+    // 断线自动重连上限：超过后不再自动重连，进 ERROR 让用户手动点“重试”。
+    private static final int RTC_AUTO_RECONNECT_MAX = 3;
     private static final long VISION_COMMAND_TTL_MS = 30_000L;
     private static final long MEDIA_AUDIO_RELEASE_GRACE_MS = 1_000L;
     private static final long SUBTITLE_CROSS_CHANNEL_DEDUP_MS = 1_500L;
@@ -156,6 +160,12 @@ public final class RealtimeGuideManager {
     // 让“重试连接”的延迟重建可被结束游览或后续重试失效，避免旧 runnable
     // 在房间已经关闭后再次启动 Agent。
     private int rtcRetryAttempt;
+    // 断线重连复用同一次借阅：后端 rtc/session 返回的 session_id。同一 Tour 期间
+    // 记住它，重连时回传后端 → 后端复用同一条 session 行 + 停旧 task 起新 task
+    // （一次借阅贯穿，见 04-Session 改造方案 P0）。切换/结束 Tour 时清空。
+    private String backendRtcSessionId;
+    // 自动重连计数：RTC 断开（AI 退/重连超时）后自动重连，超上限才进 ERROR 让用户手动重试。
+    private int rtcAutoReconnectAttempt;
     private volatile boolean visionOperationInProgress;
     private volatile int visionOperationId;
     private OperationCallback activeVisionCallback;
@@ -347,15 +357,21 @@ public final class RealtimeGuideManager {
                 recentSubtitlesByContent.clear();
             }
             handledCommandIds.clear();
+            // 换了不同的 Tour（新借阅）：清后端 session 复用指针 + 自动重连计数，
+            // 避免新借阅误用上一次借阅的后端 session_id。
+            backendRtcSessionId = null;
+            rtcAutoReconnectAttempt = 0;
         }
         registerBleListener();
         updateState(State.RTC_CONNECTING, "正在准备齐目 AI…");
 
+        // 断线重连复用同一次借阅：若本 Tour 已在后端建过 rtc session，回传其 id
+        // 让后端复用同一条 session 行（停旧 task 起新 task）；首次为 null 由后端新建。
+        final String reuseSessionId = backendRtcSessionId;
+        final String[] devIds = deviceIdsForSession();
         ioExecutor.execute(() -> {
-            // 对齐 feat/volc-main-dialogue 已跑通的 RTC 编排契约：这里只传场馆。
-            // Tour Session 属于 App 游览生命周期，不作为 RTC 接口的 session_id。
             GuideApiClient.RtcSessionInfo created =
-                    apiClient.createRtcSession(session.venueId);
+                    apiClient.createRtcSession(session.venueId, reuseSessionId, devIds[0], devIds[1]);
             mainHandler.post(() -> onRtcSessionCreated(requestGeneration, session, created));
         });
     }
@@ -377,6 +393,10 @@ public final class RealtimeGuideManager {
         }
 
         rtcSession = created;
+        // 记住后端 session_id，供本次借阅内断线重连复用（后端据此复用同一 session 行）。
+        if (created.sessionId != null && !created.sessionId.isEmpty()) {
+            backendRtcSessionId = created.sessionId;
+        }
         RtcVoiceChatManager manager = new RtcVoiceChatManager(QimuApplication.getAppContext());
         rtc = manager;
         updateState(State.RTC_CONNECTING,
@@ -649,6 +669,10 @@ public final class RealtimeGuideManager {
                 recentSubtitlesByContent.clear();
             }
             handledCommandIds.clear();
+            // 真正结束游览才清后端 session 复用指针；publishStopping=false 是重连前的
+            // 临时释放，必须保留 backendRtcSessionId 供随后重连复用同一 session。
+            backendRtcSessionId = null;
+            rtcAutoReconnectAttempt = 0;
         }
         if (currentSession != null) stopServerSessionAsync(currentSession);
         updateState(State.IDLE, "本次导览已结束");
@@ -803,6 +827,22 @@ public final class RealtimeGuideManager {
         if (callback != null) mainHandler.post(() -> callback.onComplete(success, message));
     }
 
+    /** 读本地设备标识 [眼镜MAC, 手机device_id]，供建会话时上报（设备口径对齐）。缺失返回 ["",""]。 */
+    private String[] deviceIdsForSession() {
+        try {
+            ProvisioningApi.ProvisioningSnapshot snap =
+                    ProvisioningStore.get(QimuApplication.getAppContext()).snapshot();
+            if (snap != null) {
+                String glasses = snap.glassesId == null ? "" : snap.glassesId;  // = glasses_mac
+                String phone = snap.deviceId == null ? "" : snap.deviceId;      // = report device_id
+                return new String[]{glasses, phone};
+            }
+        } catch (Exception e) {
+            Log.w(TAG, "读取设备标识失败", e);
+        }
+        return new String[]{"", ""};
+    }
+
     private void stopServerSessionAsync(GuideApiClient.RtcSessionInfo session) {
         stopExecutor.execute(() -> {
             for (int attempt = 1; attempt <= 3; attempt++) {
@@ -824,6 +864,78 @@ public final class RealtimeGuideManager {
     }
 
     /** 不可恢复错误不属于“暂停”：立即释放坏房间与 Agent，避免空转计费。 */
+    /**
+     * 处理“可恢复”的 RTC 失败（AI 退房 / 重连超时）：优先自动重连（复用同一次借阅的
+     * 后端 session_id），超过 {@link #RTC_AUTO_RECONNECT_MAX} 次才进 ERROR 让用户手动重试。
+     * 上下文可断——重连起的是新 RTC task，AI 可不记得之前对话（P0 目标：保可用）。
+     */
+    private void handleRecoverableRtcFailure(RtcVoiceChatManager expectedRtc, String message) {
+        if (rtc != expectedRtc) return;
+        TourSessionManager.TourSession current = TourSessionManager.get().current();
+        boolean canAuto = current != null
+                && current.sessionId.equals(tourSessionId)
+                && !TourReturnCoordinator.get().isInProgress()
+                && rtcAutoReconnectAttempt < RTC_AUTO_RECONNECT_MAX;
+        if (!canAuto) {
+            terminateRtcOnError(expectedRtc, message);
+            return;
+        }
+        rtcAutoReconnectAttempt++;
+        Log.w(TAG, "RTC 断开，自动重连 " + rtcAutoReconnectAttempt + "/" + RTC_AUTO_RECONNECT_MAX
+                + "：" + message);
+
+        // 释放当前 RTC（停旧 SDK 引擎），但保持 RTC_CONNECTING、保留 backendRtcSessionId，
+        // 让随后的 startForTourOnMain 复用同一后端 session。后端会停旧 task 起新 task。
+        ++generation;
+        audioStartAttempt++;
+        rtcReadyAttempt++;
+        cancelVisionOperationOnMain("RTC 正在重连，识图任务已取消");
+        pendingVisionRequest = null;
+        expectedRtc.setInputEnabled(false);
+        glassesAudioSource.stop();
+        rtc = null;
+        expectedRtc.stop();
+        rtcSession = null;
+        rtcRoomJoined = false;
+        agentOnline = false;
+        updateState(State.RTC_CONNECTING, "连接中断，正在自动重连…");
+
+        int attempt = ++rtcRetryAttempt;
+        mainHandler.postDelayed(() -> {
+            TourSessionManager.TourSession active = TourSessionManager.get().current();
+            if (attempt != rtcRetryAttempt
+                    || TourReturnCoordinator.get().isInProgress()
+                    || active == null
+                    || !active.sessionId.equals(tourSessionId)
+                    || rtc != null || rtcSession != null) {
+                return;
+            }
+            // 直接进入建房（此路径已释放旧 rtc，state=RTC_CONNECTING）。
+            startForTourReconnect(active);
+        }, 500L);
+    }
+
+    /** 自动重连专用：绕过 startForTourOnMain 的 IDLE/ERROR 前置校验，复用当前 tour 直接重建房间。 */
+    private void startForTourReconnect(TourSessionManager.TourSession session) {
+        if (rtc != null || rtcSession != null) return;
+        int requestGeneration = ++generation;
+        tourSession = session;
+        tourSessionId = session.sessionId;
+        rtcRoomJoined = false;
+        agentOnline = false;
+        audioStartAttempt++;
+        rtcReadyAttempt++;
+        registerBleListener();
+        updateState(State.RTC_CONNECTING, "正在自动重连齐目 AI…");
+        final String reuseSessionId = backendRtcSessionId;
+        final String[] devIds = deviceIdsForSession();
+        ioExecutor.execute(() -> {
+            GuideApiClient.RtcSessionInfo created =
+                    apiClient.createRtcSession(session.venueId, reuseSessionId, devIds[0], devIds[1]);
+            mainHandler.post(() -> onRtcSessionCreated(requestGeneration, session, created));
+        });
+    }
+
     private void terminateRtcOnError(RtcVoiceChatManager expectedRtc, String message) {
         if (rtc != expectedRtc) return;
         ++generation;
@@ -895,6 +1007,7 @@ public final class RealtimeGuideManager {
         // 或 ERROR 覆盖回 READY，更不能让 PCM gate 与 UI 状态失配。
         if (state != State.RTC_CONNECTING) return;
         rtcReadyAttempt++;
+        rtcAutoReconnectAttempt = 0;  // 成功连上，重置自动重连计数（下次断开可重新自动重连）
         updateState(State.READY, current.mocked
                 ? "当前为 RTC 模拟模式，齐目 AI 不会响应"
                 : "齐目 AI 已准备好，点击开始对话");
@@ -909,7 +1022,8 @@ public final class RealtimeGuideManager {
                     || rtc != expectedRtc || state != State.RTC_CONNECTING) {
                 return;
             }
-            terminateRtcOnError(expectedRtc, timeoutMessage);
+            // 连接/重连超时属可恢复失败：先自动重连，超上限才进 ERROR。
+            handleRecoverableRtcFailure(expectedRtc, timeoutMessage);
         }, RTC_READY_TIMEOUT_MS);
     }
 
