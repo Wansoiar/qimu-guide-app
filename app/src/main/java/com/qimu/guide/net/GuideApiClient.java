@@ -151,7 +151,7 @@ public class GuideApiClient {
         return uploadImage(imageFile, null);
     }
 
-    /** 上传 AI 拍图，并将对象归属到当前导览会话。阻塞调用。 */
+    /** 上传 AI 拍图，并将对象归属到当前会话。阻塞调用。 */
     public UploadedImage uploadImage(File imageFile, @Nullable String sessionId) {
         Call call = null;
         try {
@@ -411,12 +411,21 @@ public class GuideApiClient {
         }
     }
 
-    /** 拍照识物：后端 CLIP 以图搜图 -> 返回识别结果与讲解素材（方案A FC 分支用）。 */
-    public ImageDescribeResult describeRtcImage(String venueId, String imageUrl) {
+    /**
+     * 拍照识物：后端 CLIP 以图搜图 -> 返回识别结果与讲解素材（方案A FC 分支用）。
+     *
+     * @param sessionId 当前 RTC 会话 id（/v1/rtc/session 返回的 session_id），
+     *                  用于把识图结果挂到会话并落库；可空。
+     */
+    public ImageDescribeResult describeRtcImage(String venueId, @Nullable String sessionId,
+                                                String imageUrl) {
         Call call = null;
         try {
             JSONObject body = new JSONObject();
             body.put("venue_id", venueId);
+            if (sessionId != null && !sessionId.trim().isEmpty()) {
+                body.put("session_id", sessionId.trim());
+            }
             body.put("image_url", imageUrl);
             Request request = new Request.Builder()
                     .url(ApiConfig.rtcSessionDescribeImage())
