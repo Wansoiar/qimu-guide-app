@@ -719,11 +719,14 @@ public final class RealtimeGuideManager {
                     "导览会话已失效，请重新拍照");
             return;
         }
+        // 照片/识图归属用 /v1/rtc/session 返回的 RTC 会话 id；导览会话 id 只作流程门槛
+        // （本地联调时它是 App 生成的 mock UUID，后端不认，不能用于落照片回合）。
+        String rtcSessionId = currentSession.sessionId;
         activeVisionCallback = callback;
         publishVisionOperation(true, "照片正在交给 AI 讲解…");
         ioExecutor.execute(() -> {
             GuideApiClient.UploadedImage uploaded = apiClient.uploadImage(
-                    imageFile, uploadTourSessionId);
+                    imageFile, rtcSessionId);
             if (uploaded == null) {
                 finishVisionOperation(operationId, callback, false, "照片上传失败");
                 return;
@@ -744,7 +747,7 @@ public final class RealtimeGuideManager {
                 TourSessionManager.TourSession tour = tourSession;
                 String venueId = tour != null ? tour.venueId : null;
                 GuideApiClient.ImageDescribeResult desc =
-                        apiClient.describeRtcImage(venueId, uploaded.url);
+                        apiClient.describeRtcImage(venueId, rtcSessionId, uploaded.url);
                 // 按后端置信度三态分别回填不同指令，让模型用不同语音回应（单一声音，不弹 UI）。
                 boolean hasSummary = desc != null && desc.summary != null
                         && !desc.summary.trim().isEmpty();

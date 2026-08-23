@@ -10,6 +10,7 @@ import java.io.BufferedReader;
 import java.io.File;
 import java.io.InputStreamReader;
 import java.nio.charset.StandardCharsets;
+import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
@@ -41,6 +42,14 @@ public class GuideApiClient {
     private Call activeVisionCall;
     private boolean visionCallsCancelled;
     private boolean closed;
+
+    /** 给对话/RTC 链路请求统一加公参 header（X-Device-Id / X-Glasses-Sn / X-Order-Id 等）。 */
+    private Request.Builder withDialogueHeaders(Request.Builder builder) {
+        for (Map.Entry<String, String> entry : AppContextHeaders.dialogue().entrySet()) {
+            builder.header(entry.getKey(), entry.getValue());
+        }
+        return builder;
+    }
 
     public interface QueryCallback {
         void onTextDelta(String delta);
@@ -120,10 +129,10 @@ public class GuideApiClient {
                     .setType(MultipartBody.FORM)
                     .addFormDataPart("file", wavFile.getName(), fileBody)
                     .build();
-            Request request = new Request.Builder()
+            Request request = withDialogueHeaders(new Request.Builder()
                     .url(ApiConfig.uploadAudio())
                     .header("X-Client-Type", "android")
-                    .post(body)
+                    .post(body))
                     .build();
             call = client.newCall(request);
             if (!register(call)) return null;
@@ -151,15 +160,15 @@ public class GuideApiClient {
         return uploadImage(imageFile, null);
     }
 
-    /** 上传 AI 拍图，并将对象归属到当前导览会话。阻塞调用。 */
+    /** 上传 AI 拍图，并将对象归属到当前会话。阻塞调用。 */
     public UploadedImage uploadImage(File imageFile, @Nullable String sessionId) {
         Call call = null;
         try {
             MultipartBody body = buildImageUploadBody(imageFile, sessionId);
-            Request request = new Request.Builder()
+            Request request = withDialogueHeaders(new Request.Builder()
                     .url(ApiConfig.uploadImage())
                     .header("X-Client-Type", "android")
-                    .post(body)
+                    .post(body))
                     .build();
             call = client.newCall(request);
             if (!register(call) || !registerVisionCall(call)) return null;
@@ -209,11 +218,11 @@ public class GuideApiClient {
             body.put("audio_id", audioId);
             body.put("language", "zh");
 
-            Request request = new Request.Builder()
+            Request request = withDialogueHeaders(new Request.Builder()
                     .url(ApiConfig.query())
                     .header("X-Client-Type", "android")
                     .header("Accept", "text/event-stream")
-                    .post(RequestBody.create(body.toString(), JSON))
+                    .post(RequestBody.create(body.toString(), JSON)))
                     .build();
             call = client.newCall(request);
             if (!register(call)) return;
@@ -271,10 +280,10 @@ public class GuideApiClient {
             if (phoneId != null && !phoneId.trim().isEmpty()) {
                 body.put("device_phone_id", phoneId.trim());
             }
-            Request request = new Request.Builder()
+            Request request = withDialogueHeaders(new Request.Builder()
                     .url(ApiConfig.rtcSession())
                     .header("X-Client-Type", "android")
-                    .post(RequestBody.create(body.toString(), JSON))
+                    .post(RequestBody.create(body.toString(), JSON)))
                     .build();
             call = client.newCall(request);
             if (!register(call)) return null;
@@ -315,10 +324,10 @@ public class GuideApiClient {
             JSONObject body = new JSONObject();
             body.put("room_id", roomId);
             body.put("task_id", taskId);
-            Request request = new Request.Builder()
+            Request request = withDialogueHeaders(new Request.Builder()
                     .url(ApiConfig.rtcSessionStop())
                     .header("X-Client-Type", "android")
-                    .post(RequestBody.create(body.toString(), JSON))
+                    .post(RequestBody.create(body.toString(), JSON)))
                     .build();
             call = client.newCall(request);
             if (!register(call)) return false;
@@ -385,10 +394,10 @@ public class GuideApiClient {
             body.put("task_id", taskId);
             body.put("message", message);
             body.put("interrupt_mode", 1);
-            Request request = new Request.Builder()
+            Request request = withDialogueHeaders(new Request.Builder()
                     .url(ApiConfig.rtcSessionInject())
                     .header("X-Client-Type", "android")
-                    .post(RequestBody.create(body.toString(), JSON))
+                    .post(RequestBody.create(body.toString(), JSON)))
                     .build();
             call = client.newCall(request);
             if (!register(call) || !registerVisionCall(call)) return false;
@@ -411,17 +420,26 @@ public class GuideApiClient {
         }
     }
 
-    /** 拍照识物：后端 CLIP 以图搜图 -> 返回识别结果与讲解素材（方案A FC 分支用）。 */
-    public ImageDescribeResult describeRtcImage(String venueId, String imageUrl) {
+    /**
+     * 拍照识物：后端 CLIP 以图搜图 -> 返回识别结果与讲解素材（方案A FC 分支用）。
+     *
+     * @param sessionId 当前 RTC 会话 id（/v1/rtc/session 返回的 session_id），
+     *                  用于把识图结果挂到会话并落库；可空。
+     */
+    public ImageDescribeResult describeRtcImage(String venueId, @Nullable String sessionId,
+                                                String imageUrl) {
         Call call = null;
         try {
             JSONObject body = new JSONObject();
             body.put("venue_id", venueId);
+            if (sessionId != null && !sessionId.trim().isEmpty()) {
+                body.put("session_id", sessionId.trim());
+            }
             body.put("image_url", imageUrl);
-            Request request = new Request.Builder()
+            Request request = withDialogueHeaders(new Request.Builder()
                     .url(ApiConfig.rtcSessionDescribeImage())
                     .header("X-Client-Type", "android")
-                    .post(RequestBody.create(body.toString(), JSON))
+                    .post(RequestBody.create(body.toString(), JSON)))
                     .build();
             call = client.newCall(request);
             if (!register(call) || !registerVisionCall(call)) return null;
