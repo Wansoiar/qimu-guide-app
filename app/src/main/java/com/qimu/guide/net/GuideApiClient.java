@@ -10,6 +10,7 @@ import java.io.BufferedReader;
 import java.io.File;
 import java.io.InputStreamReader;
 import java.nio.charset.StandardCharsets;
+import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
@@ -41,6 +42,14 @@ public class GuideApiClient {
     private Call activeVisionCall;
     private boolean visionCallsCancelled;
     private boolean closed;
+
+    /** 给对话/RTC 链路请求统一加公参 header（X-Device-Id / X-Glasses-Sn / X-Order-Id 等）。 */
+    private Request.Builder withDialogueHeaders(Request.Builder builder) {
+        for (Map.Entry<String, String> entry : AppContextHeaders.dialogue().entrySet()) {
+            builder.header(entry.getKey(), entry.getValue());
+        }
+        return builder;
+    }
 
     public interface QueryCallback {
         void onTextDelta(String delta);
@@ -120,10 +129,10 @@ public class GuideApiClient {
                     .setType(MultipartBody.FORM)
                     .addFormDataPart("file", wavFile.getName(), fileBody)
                     .build();
-            Request request = new Request.Builder()
+            Request request = withDialogueHeaders(new Request.Builder()
                     .url(ApiConfig.uploadAudio())
                     .header("X-Client-Type", "android")
-                    .post(body)
+                    .post(body))
                     .build();
             call = client.newCall(request);
             if (!register(call)) return null;
@@ -156,10 +165,10 @@ public class GuideApiClient {
         Call call = null;
         try {
             MultipartBody body = buildImageUploadBody(imageFile, sessionId);
-            Request request = new Request.Builder()
+            Request request = withDialogueHeaders(new Request.Builder()
                     .url(ApiConfig.uploadImage())
                     .header("X-Client-Type", "android")
-                    .post(body)
+                    .post(body))
                     .build();
             call = client.newCall(request);
             if (!register(call) || !registerVisionCall(call)) return null;
@@ -209,11 +218,11 @@ public class GuideApiClient {
             body.put("audio_id", audioId);
             body.put("language", "zh");
 
-            Request request = new Request.Builder()
+            Request request = withDialogueHeaders(new Request.Builder()
                     .url(ApiConfig.query())
                     .header("X-Client-Type", "android")
                     .header("Accept", "text/event-stream")
-                    .post(RequestBody.create(body.toString(), JSON))
+                    .post(RequestBody.create(body.toString(), JSON)))
                     .build();
             call = client.newCall(request);
             if (!register(call)) return;
@@ -271,10 +280,10 @@ public class GuideApiClient {
             if (phoneId != null && !phoneId.trim().isEmpty()) {
                 body.put("device_phone_id", phoneId.trim());
             }
-            Request request = new Request.Builder()
+            Request request = withDialogueHeaders(new Request.Builder()
                     .url(ApiConfig.rtcSession())
                     .header("X-Client-Type", "android")
-                    .post(RequestBody.create(body.toString(), JSON))
+                    .post(RequestBody.create(body.toString(), JSON)))
                     .build();
             call = client.newCall(request);
             if (!register(call)) return null;
@@ -315,10 +324,10 @@ public class GuideApiClient {
             JSONObject body = new JSONObject();
             body.put("room_id", roomId);
             body.put("task_id", taskId);
-            Request request = new Request.Builder()
+            Request request = withDialogueHeaders(new Request.Builder()
                     .url(ApiConfig.rtcSessionStop())
                     .header("X-Client-Type", "android")
-                    .post(RequestBody.create(body.toString(), JSON))
+                    .post(RequestBody.create(body.toString(), JSON)))
                     .build();
             call = client.newCall(request);
             if (!register(call)) return false;
@@ -385,10 +394,10 @@ public class GuideApiClient {
             body.put("task_id", taskId);
             body.put("message", message);
             body.put("interrupt_mode", 1);
-            Request request = new Request.Builder()
+            Request request = withDialogueHeaders(new Request.Builder()
                     .url(ApiConfig.rtcSessionInject())
                     .header("X-Client-Type", "android")
-                    .post(RequestBody.create(body.toString(), JSON))
+                    .post(RequestBody.create(body.toString(), JSON)))
                     .build();
             call = client.newCall(request);
             if (!register(call) || !registerVisionCall(call)) return false;
@@ -427,10 +436,10 @@ public class GuideApiClient {
                 body.put("session_id", sessionId.trim());
             }
             body.put("image_url", imageUrl);
-            Request request = new Request.Builder()
+            Request request = withDialogueHeaders(new Request.Builder()
                     .url(ApiConfig.rtcSessionDescribeImage())
                     .header("X-Client-Type", "android")
-                    .post(RequestBody.create(body.toString(), JSON))
+                    .post(RequestBody.create(body.toString(), JSON)))
                     .build();
             call = client.newCall(request);
             if (!register(call) || !registerVisionCall(call)) return null;
