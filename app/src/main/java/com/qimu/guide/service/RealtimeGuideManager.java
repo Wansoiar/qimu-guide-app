@@ -64,7 +64,7 @@ public final class RealtimeGuideManager {
     public interface Listener {
         void onStateChanged(State state, String message);
         void onSubtitle(boolean fromSelf, String text, boolean definite, long sequence);
-        default boolean onVisionCaptureRequested(String commandId, String question) {
+        default boolean onVisionCaptureRequested(String commandId) {
             return false;
         }
         default void onVisionOperationChanged(boolean inProgress, String message) { }
@@ -90,13 +90,11 @@ public final class RealtimeGuideManager {
 
     private static final class PendingVisionRequest {
         final String commandId;
-        final String question;
         final long createdElapsedMs;
         int attempts;
 
-        PendingVisionRequest(String commandId, String question) {
+        PendingVisionRequest(String commandId) {
             this.commandId = commandId;
-            this.question = question;
             this.createdElapsedMs = SystemClock.elapsedRealtime();
         }
     }
@@ -678,17 +676,15 @@ public final class RealtimeGuideManager {
         updateState(State.IDLE, "本次导览已结束");
     }
 
-    /** 上传眼镜照片并注入同一 RTC Agent，供语音触发视觉问答使用。 */
+    /** 上传眼镜照片并让同一 RTC Agent 讲解（手动按钮与模型 take_photo 共用同一链路）。 */
     public void injectVisionImage(@NonNull File imageFile,
-                                  @Nullable String userQuestion,
                                   @Nullable String commandId,
                                   @Nullable OperationCallback callback) {
         mainHandler.post(() -> injectVisionImageOnMain(
-                imageFile, userQuestion, commandId, callback));
+                imageFile, commandId, callback));
     }
 
     private void injectVisionImageOnMain(@NonNull File imageFile,
-                                         @Nullable String userQuestion,
                                          @Nullable String commandId,
                                          @Nullable OperationCallback callback) {
         GuideApiClient.RtcSessionInfo currentSession = rtcSession;
@@ -738,53 +734,56 @@ public final class RealtimeGuideManager {
                         "RTC 会话已变化，请重新拍照");
                 return;
             }
-            String question = userQuestion == null || userQuestion.trim().isEmpty()
-                    ? "请介绍这张照片中的展品或产品"
-                    : userQuestion.trim();
+            // 统一识图链路：upload → describe-image（后端 CLIP 图搜 → 三态）→ 同一回填文案。
+            // 手动按钮与模型 take_photo 只差“如何让模型讲出来”：
+            // - FC（commandId=fc:<toolCallId>）：模型下发过工具调用 → func 回填继续讲解；
+            // - 手动：没有模型下发的 toolCallId → 同一文案以文本注入对话（ExternalTextToLLM）。
+            TourSessionManager.TourSession tour = tourSession;
+            String venueId = tour != null ? tour.venueId : null;
+            GuideApiClient.ImageDescribeResult desc =
+                    apiClient.describeRtcImage(venueId, rtcSessionId, uploaded.url);
+            String content = buildVisionReplyContent(desc);
 
-            // FC 触发（commandId=fc:<toolCallId>）：后端 describe-image 识图 → func 回填给模型。
+            boolean ok;
             if (isFcCommand(commandId)) {
-                TourSessionManager.TourSession tour = tourSession;
-                String venueId = tour != null ? tour.venueId : null;
-                GuideApiClient.ImageDescribeResult desc =
-                        apiClient.describeRtcImage(venueId, rtcSessionId, uploaded.url);
-                // 按后端置信度三态分别回填不同指令，让模型用不同语音回应（单一声音，不弹 UI）。
-                boolean hasSummary = desc != null && desc.summary != null
-                        && !desc.summary.trim().isEmpty();
-                String content;
-                if (desc != null && desc.isHighConf() && hasSummary) {
-                    // 高置信：已确定展品，直接口语化讲解。
-                    content = "这是「" + desc.exhibitName + "」。以下是讲解资料，"
-                            + "请用讲解员口吻面向游客口语化介绍：" + desc.summary;
-                } else if (desc != null && desc.isAmbiguous() && hasSummary) {
-                    // 待确认：识别到多个候选，引导用户确认是哪一件，不要硬挑一个讲。
-                    content = "眼前这件有多个相似的候选展品，还不能确定是哪一件，先别急着讲解。"
-                            + "请用讲解员口吻自然地把这些候选口语化地说给游客，"
-                            + "并问他看的是哪一件，帮你确认后再讲。以下是候选信息：" + desc.summary;
-                } else {
-                    // 未匹配（含 null/异常）→ 让模型引导用户重拍，保持单一声音。
-                    content = "没有从本馆知识库里识别出这件展品。请用讲解员口吻告诉游客："
-                            + "暂时没认出眼前这件，建议靠近一点或换个角度再让我看看。";
-                }
                 String botUid = activeFcBotUid;
                 RtcVoiceChatManager currentRtc = rtc;
-                boolean ok = botUid != null && currentRtc != null;
+                ok = botUid != null && currentRtc != null;
                 if (ok) {
                     currentRtc.sendFunctionResult(botUid, toolCallIdOf(commandId), content);
                 }
-                finishVisionOperation(operationId, callback, ok,
-                        ok ? "照片已交给 AI，正在讲解" : "识图结果回填失败");
-                return;
+            } else {
+                ok = apiClient.injectRtcMessage(
+                        currentSession.roomId, currentSession.taskId, content);
             }
-
-            String prompt = "[VISION_IMAGE] 用户的问题：" + question
-                    + "。眼镜刚拍摄的 image_url 是 " + uploaded.url
-                    + "。请查看图片并直接用中文讲解，不要猜测未看见的内容。";
-            boolean injected = apiClient.injectRtcMessage(
-                    currentSession.roomId, currentSession.taskId, prompt);
-            finishVisionOperation(operationId, callback, injected,
-                    injected ? "照片已交给 AI，正在讲解" : "照片注入 AI 失败");
+            finishVisionOperation(operationId, callback, ok,
+                    ok ? "照片已交给 AI，正在讲解" : "识图结果回填失败");
         });
+    }
+
+    /**
+     * 按后端置信度三态拼给模型的回填文案（单一声音，不弹 UI）：
+     * high_conf 直接讲 / ambiguous 引导确认 / 未匹配建议重拍。
+     * FC func 回填与手动文本注入共用同一份。
+     */
+    private static String buildVisionReplyContent(
+            @Nullable GuideApiClient.ImageDescribeResult desc) {
+        boolean hasSummary = desc != null && desc.summary != null
+                && !desc.summary.trim().isEmpty();
+        if (desc != null && desc.isHighConf() && hasSummary) {
+            // 高置信：已确定展品，直接口语化讲解。
+            return "这是「" + desc.exhibitName + "」。以下是讲解资料，"
+                    + "请用讲解员口吻面向游客口语化介绍：" + desc.summary;
+        }
+        if (desc != null && desc.isAmbiguous() && hasSummary) {
+            // 待确认：识别到多个候选，引导用户确认是哪一件，不要硬挑一个讲。
+            return "眼前这件有多个相似的候选展品，还不能确定是哪一件，先别急着讲解。"
+                    + "请用讲解员口吻自然地把这些候选口语化地说给游客，"
+                    + "并问他看的是哪一件，帮你确认后再讲。以下是候选信息：" + desc.summary;
+        }
+        // 未匹配（含 null/异常）→ 让模型引导用户重拍，保持单一声音。
+        return "没有从本馆知识库里识别出这件展品。请用讲解员口吻告诉游客："
+                + "暂时没认出眼前这件，建议靠近一点或换个角度再让我看看。";
     }
 
     private void publishVisionOperation(boolean inProgress, String message) {
@@ -1098,9 +1097,7 @@ public final class RealtimeGuideManager {
                 return;
             }
 
-            String question = command.optString("question", "").trim();
-            if (question.isEmpty()) question = "请介绍我眼前的展品或产品";
-            pendingVisionRequest = new PendingVisionRequest(commandId, question);
+            pendingVisionRequest = new PendingVisionRequest(commandId);
             deliverPendingVisionRequest();
         } catch (Exception parseError) {
             Log.w(TAG, "忽略无法解析的 RTC 控制消息", parseError);
@@ -1137,7 +1134,7 @@ public final class RealtimeGuideManager {
                 ? currentSession.botUid : senderUid;
         String commandId = FC_COMMAND_PREFIX + toolCallId;
         Log.i(TAG, "FC take_photo → 触发拍照 commandId=" + commandId);
-        pendingVisionRequest = new PendingVisionRequest(commandId, "请介绍我眼前的展品或产品");
+        pendingVisionRequest = new PendingVisionRequest(commandId);
         deliverPendingVisionRequest();
     }
 
@@ -1159,7 +1156,7 @@ public final class RealtimeGuideManager {
         }
         if (state != State.READY && state != State.PAUSED && state != State.LISTENING) return;
         for (Listener listener : listeners) {
-            if (listener.onVisionCaptureRequested(pending.commandId, pending.question)) {
+            if (listener.onVisionCaptureRequested(pending.commandId)) {
                 if (!visionOperationInProgress
                         || !pending.commandId.equals(activeVisionCommandId)) {
                     Log.e(TAG, "识图消费者返回已接单，但没有预留 manager 任务");
