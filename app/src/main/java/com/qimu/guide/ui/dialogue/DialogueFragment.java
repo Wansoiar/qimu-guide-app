@@ -1,8 +1,13 @@
 package com.qimu.guide.ui.dialogue;
 
+import android.Manifest;
+import android.content.Intent;
+import android.content.pm.PackageManager;
+import android.net.Uri;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
+import android.provider.Settings;
 import android.util.Log;
 import android.view.LayoutInflater;
 import android.view.View;
@@ -10,9 +15,13 @@ import android.view.ViewGroup;
 import android.widget.TextView;
 import android.widget.Toast;
 
+import androidx.activity.result.ActivityResultLauncher;
+import androidx.activity.result.contract.ActivityResultContracts;
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 import androidx.appcompat.app.AlertDialog;
+import androidx.core.app.ActivityCompat;
+import androidx.core.content.ContextCompat;
 import androidx.fragment.app.Fragment;
 import androidx.fragment.app.FragmentActivity;
 import androidx.recyclerview.widget.LinearLayoutManager;
@@ -59,6 +68,27 @@ public class DialogueFragment extends Fragment {
     private TextView rtcSessionBody;
     private View rtcCardStatusDot;
     private View rtcControlStatusDot;
+    private boolean startGuidanceAfterAudioPermission;
+    private boolean waitingForAudioPermissionSettings;
+
+    private final ActivityResultLauncher<String> recordAudioPermissionLauncher =
+            registerForActivityResult(new ActivityResultContracts.RequestPermission(), granted -> {
+                if (granted) {
+                    boolean shouldStart = startGuidanceAfterAudioPermission;
+                    startGuidanceAfterAudioPermission = false;
+                    if (shouldStart) startGuidanceIfReady();
+                    return;
+                }
+                startGuidanceAfterAudioPermission = false;
+                if (!isAdded()) return;
+                if (ActivityCompat.shouldShowRequestPermissionRationale(
+                        requireActivity(), Manifest.permission.RECORD_AUDIO)) {
+                    Toast.makeText(requireContext(), R.string.audio_permission_denied,
+                            Toast.LENGTH_LONG).show();
+                } else {
+                    showAudioPermissionSettingsDialog();
+                }
+            });
 
     // 对齐 feat/volc-main-dialogue：中间态不上屏；同一说话人的连续 final 分句
     // 合并进同一个气泡，只有说话人切换时才新建气泡。
@@ -168,7 +198,7 @@ public class DialogueFragment extends Fragment {
         switch (guideManager.getState()) {
             case READY:
             case PAUSED:
-                guideManager.startGuidance();
+                startGuidanceWithAudioPermission();
                 break;
             case LISTENING:
             case AUDIO_LINK_STARTING:
@@ -180,6 +210,54 @@ public class DialogueFragment extends Fragment {
             default:
                 break;
         }
+    }
+
+    private void startGuidanceWithAudioPermission() {
+        if (ContextCompat.checkSelfPermission(requireContext(), Manifest.permission.RECORD_AUDIO)
+                == PackageManager.PERMISSION_GRANTED) {
+            guideManager.startGuidance();
+            return;
+        }
+
+        startGuidanceAfterAudioPermission = true;
+        if (ActivityCompat.shouldShowRequestPermissionRationale(
+                requireActivity(), Manifest.permission.RECORD_AUDIO)) {
+            new AlertDialog.Builder(requireContext())
+                    .setTitle(R.string.audio_permission_title)
+                    .setMessage(R.string.audio_permission_rationale)
+                    .setNegativeButton(R.string.cancel, (dialog, which) ->
+                            startGuidanceAfterAudioPermission = false)
+                    .setPositiveButton(R.string.audio_permission_continue, (dialog, which) ->
+                            recordAudioPermissionLauncher.launch(
+                                    Manifest.permission.RECORD_AUDIO))
+                    .show();
+        } else {
+            recordAudioPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO);
+        }
+    }
+
+    private void startGuidanceIfReady() {
+        if (!isAdded() || !viewActive) return;
+        RealtimeGuideManager.State state = guideManager.getState();
+        if (state == RealtimeGuideManager.State.READY
+                || state == RealtimeGuideManager.State.PAUSED) {
+            guideManager.startGuidance();
+        }
+    }
+
+    private void showAudioPermissionSettingsDialog() {
+        if (!isAdded()) return;
+        new AlertDialog.Builder(requireContext())
+                .setTitle(R.string.audio_permission_settings_title)
+                .setMessage(R.string.audio_permission_settings_body)
+                .setNegativeButton(R.string.cancel, null)
+                .setPositiveButton(R.string.audio_permission_open_settings, (dialog, which) -> {
+                    waitingForAudioPermissionSettings = true;
+                    Intent intent = new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                            Uri.fromParts("package", requireContext().getPackageName(), null));
+                    startActivity(intent);
+                })
+                .show();
     }
 
     private void renderState(RealtimeGuideManager.State state, String message) {
@@ -514,6 +592,17 @@ public class DialogueFragment extends Fragment {
 
     private void showToast(String text) {
         postUi(() -> Toast.makeText(requireContext(), text, Toast.LENGTH_SHORT).show());
+    }
+
+    @Override
+    public void onResume() {
+        super.onResume();
+        if (!waitingForAudioPermissionSettings) return;
+        waitingForAudioPermissionSettings = false;
+        if (ContextCompat.checkSelfPermission(requireContext(), Manifest.permission.RECORD_AUDIO)
+                == PackageManager.PERMISSION_GRANTED) {
+            startGuidanceIfReady();
+        }
     }
 
     @Override
