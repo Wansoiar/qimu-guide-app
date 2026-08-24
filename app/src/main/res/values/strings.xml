@@ -137,8 +137,15 @@
     <string name="dialogue_tutorial_body">点击“开始对话”，直接说出你想了解的问题。需要暂时停下时，点击“暂停对话”即可停止收音，之后可以继续。</string>
     <string name="dialogue_tutorial_action">开始参观</string>
     <string name="dialogue_preparing">正在准备齐目 AI…</string>
-    <string name="dialogue_connecting">正在连接齐目 AI…</string>
+    <string name="dialogue_connecting">连接中…</string>
     <string name="dialogue_not_ready">齐目 AI 尚未准备好，请稍候</string>
+    <string name="audio_permission_title">允许使用麦克风</string>
+    <string name="audio_permission_rationale">开始对话需要麦克风权限，才能接收你通过眼镜提出的问题。只有在对话进行中才会收音，点击“暂停对话”后会停止收音。</string>
+    <string name="audio_permission_continue">继续授权</string>
+    <string name="audio_permission_denied">需要麦克风权限才能开始对话</string>
+    <string name="audio_permission_settings_title">需要开启麦克风权限</string>
+    <string name="audio_permission_settings_body">请前往系统设置，在“权限”中允许齐目导览使用麦克风，然后返回继续对话。</string>
+    <string name="audio_permission_open_settings">前往设置</string>
     <string name="photo_hint">拍照提问</string>
     <string name="voice_hint">开始对话</string>
     <string name="replay_hint">重播讲解</string>
