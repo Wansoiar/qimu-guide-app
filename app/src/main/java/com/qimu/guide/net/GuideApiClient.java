@@ -385,7 +385,7 @@ public class GuideApiClient {
         }
     }
 
-    /** 把图片 URL 作为一条外部用户消息注入当前 RTC Agent。阻塞调用。 */
+    /** 把一段文本作为外部用户消息注入当前 RTC Agent（手动拍照讲解用）。阻塞调用。 */
     public boolean injectRtcMessage(String roomId, String taskId, String message) {
         Call call = null;
         try {

@@ -72,7 +72,6 @@ public class DialogueFragment extends Fragment {
     private boolean visionImageAccepted;
     private boolean visionHardwareStageActive;
     private boolean resumeAfterVisionFailure;
-    private String visionQuestion;
     private String visionCommandId;
     private CRPBleConnection visionConnection;
     private Runnable visionTimeout;
@@ -98,9 +97,9 @@ public class DialogueFragment extends Fragment {
                 }
 
                 @Override
-                public boolean onVisionCaptureRequested(String commandId, String question) {
+                public boolean onVisionCaptureRequested(String commandId) {
                     if (!viewActive || getActivity() == null || getView() == null) return false;
-                    return requestVisionCapture(question, commandId, false);
+                    return requestVisionCapture(commandId, false);
                 }
 
                 @Override
@@ -143,7 +142,7 @@ public class DialogueFragment extends Fragment {
         rtcControlStatusDot = view.findViewById(R.id.rtc_control_status_dot);
 
         dialogueButton.setOnClickListener(clicked -> handleDialogueButton());
-        photoButton.setOnClickListener(clicked -> requestVisionCapture(null, null, true));
+        photoButton.setOnClickListener(clicked -> requestVisionCapture(null, true));
 
         // 先注册再取快照，避免视图重建时字幕恰好到达而漏掉一条。
         guideManager.addListener(realtimeListener);
@@ -283,9 +282,8 @@ public class DialogueFragment extends Fragment {
         }
     }
 
-    /** App 主动拍照：抢占眼镜硬件任务，图片返回后注入当前 RTC Agent。 */
-    private boolean requestVisionCapture(@Nullable String requestedQuestion,
-                                         @Nullable String commandId,
+    /** App 主动拍照：抢占眼镜硬件任务，图片返回后交给 RTC Agent 讲解（与模型 take_photo 同一链路）。 */
+    private boolean requestVisionCapture(@Nullable String commandId,
                                          boolean showFailure) {
         if (visionBusy || guideManager.isVisionOperationInProgress()) return false;
         if (!guideManager.isVisionEnabled()) {
@@ -315,9 +313,6 @@ public class DialogueFragment extends Fragment {
         visionImageAccepted = false;
         visionHardwareStageActive = true;
         visionCommandId = commandId;
-        visionQuestion = requestedQuestion == null || requestedQuestion.trim().isEmpty()
-                ? "请介绍我眼前的展品或产品"
-                : requestedQuestion.trim();
         resumeAfterVisionFailure = state == RealtimeGuideManager.State.LISTENING;
         int operation = ++visionGeneration;
         visionConnection = connection;
@@ -396,16 +391,14 @@ public class DialogueFragment extends Fragment {
         resetVolcSubtitleBubble();
 
         boolean wasListening = resumeAfterVisionFailure;
-        String question = visionQuestion;
         String commandId = visionCommandId;
-        guideManager.injectVisionImage(imageFile, question, commandId,
+        guideManager.injectVisionImage(imageFile, commandId,
                 (success, message) -> {
                     if (operation != visionGeneration) return;
                     visionBusy = false;
                     visionImageAccepted = false;
                     visionHardwareStageActive = false;
                     resumeAfterVisionFailure = false;
-                    visionQuestion = null;
                     visionCommandId = null;
                     renderState(guideManager.getState(), guideManager.getStateMessage());
                     if (!success) {
@@ -431,7 +424,6 @@ public class DialogueFragment extends Fragment {
         visionImageAccepted = false;
         visionHardwareStageActive = false;
         resumeAfterVisionFailure = false;
-        visionQuestion = null;
         visionCommandId = null;
         guideManager.abandonVisionCapture(
                 failedCommandId, true, message);
@@ -471,7 +463,6 @@ public class DialogueFragment extends Fragment {
         visionImageAccepted = false;
         visionHardwareStageActive = false;
         resumeAfterVisionFailure = false;
-        visionQuestion = null;
         visionCommandId = null;
         clearVisionHardwareListener();
         if (abandonManagerReservation && abandonHardwareStage) {
