@@ -12,7 +12,7 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
 
-/** Persists photo selection and Vlog preference without tying it to an Activity instance. */
+/** Persists photo selection without tying it to an Activity instance. */
 public final class GallerySelectionStore {
 
     public static final int MAX_SELECTION = 30;
@@ -20,7 +20,6 @@ public final class GallerySelectionStore {
     private static final String PREFERENCES = "qimu_local_gallery";
     private static final String KEY_SELECTION_INITIALIZED = "selection_initialized";
     private static final String KEY_SELECTED_URIS = "selected_photo_uris";
-    private static final String KEY_VLOG_ENABLED = "vlog_enabled";
 
     private final SharedPreferences preferences;
     private final LinkedHashSet<String> selectedUris = new LinkedHashSet<>();
@@ -136,14 +135,6 @@ public final class GallerySelectionStore {
             if (selectedUris.contains(photo.selectionKey())) ordered.add(photo.selectionKey());
         }
         return ordered;
-    }
-
-    public boolean isVlogEnabled() {
-        return preferences.getBoolean(KEY_VLOG_ENABLED, false);
-    }
-
-    public void setVlogEnabled(boolean enabled) {
-        preferences.edit().putBoolean(KEY_VLOG_ENABLED, enabled).apply();
     }
 
     private void persistSelection() {

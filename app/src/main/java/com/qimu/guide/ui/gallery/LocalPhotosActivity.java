@@ -18,7 +18,6 @@ import androidx.activity.result.contract.ActivityResultContracts;
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 import androidx.appcompat.app.AppCompatActivity;
-import androidx.appcompat.widget.SwitchCompat;
 import androidx.core.app.ActivityCompat;
 import androidx.core.content.ContextCompat;
 import androidx.recyclerview.widget.GridLayoutManager;
@@ -35,7 +34,6 @@ public final class LocalPhotosActivity extends AppCompatActivity {
 
     public static final String EXTRA_SELECTION_MODE = "selection_mode";
     public static final String EXTRA_SELECTED_COUNT = "selected_count";
-    public static final String EXTRA_VLOG_ENABLED = "vlog_enabled";
 
     private RecyclerView photoGrid;
     private ProgressBar progressBar;
@@ -45,7 +43,6 @@ public final class LocalPhotosActivity extends AppCompatActivity {
     private TextView selectionSummary;
     private TextView selectAllAction;
     private TextView galleryTitle;
-    private SwitchCompat vlogSwitch;
     private MaterialButton retryAction;
     private MaterialButton confirmSelectionAction;
     private View selectionPanel;
@@ -81,7 +78,6 @@ public final class LocalPhotosActivity extends AppCompatActivity {
 
         repository = new LocalPhotoRepository(this);
         selectionStore = new GallerySelectionStore(this);
-        if (initializeShareDefaults) selectionStore.setVlogEnabled(false);
         thumbnailLoader = new GalleryThumbnailLoader(this);
 
         photoGrid = findViewById(R.id.gallery_photo_grid);
@@ -92,7 +88,6 @@ public final class LocalPhotosActivity extends AppCompatActivity {
         selectionSummary = findViewById(R.id.gallery_selection_summary);
         selectAllAction = findViewById(R.id.gallery_select_all);
         galleryTitle = findViewById(R.id.gallery_title);
-        vlogSwitch = findViewById(R.id.gallery_vlog_switch);
         retryAction = findViewById(R.id.gallery_retry);
         confirmSelectionAction = findViewById(R.id.gallery_confirm_selection);
         selectionPanel = findViewById(R.id.gallery_selection_panel);
@@ -106,11 +101,6 @@ public final class LocalPhotosActivity extends AppCompatActivity {
                 ? R.string.gallery_select_title : R.string.gallery_view_title);
         selectAllAction.setVisibility(selectionMode ? View.VISIBLE : View.GONE);
         selectionPanel.setVisibility(selectionMode ? View.VISIBLE : View.GONE);
-
-        vlogSwitch.setChecked(selectionStore.isVlogEnabled());
-        vlogSwitch.setOnCheckedChangeListener((button, checked) ->
-                selectionStore.setVlogEnabled(checked));
-        findViewById(R.id.gallery_vlog_row).setOnClickListener(view -> vlogSwitch.toggle());
 
         int spacing = dp(4);
         int estimatedCell = Math.max(dp(96),
@@ -313,7 +303,6 @@ public final class LocalPhotosActivity extends AppCompatActivity {
         }
         Intent result = new Intent();
         result.putExtra(EXTRA_SELECTED_COUNT, selectedCount);
-        result.putExtra(EXTRA_VLOG_ENABLED, selectionStore.isVlogEnabled());
         setResult(RESULT_OK, result);
         finish();
     }

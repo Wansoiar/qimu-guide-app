@@ -155,44 +155,6 @@
         android:paddingBottom="12dp"
         android:visibility="gone">
 
-        <LinearLayout
-            android:id="@+id/gallery_vlog_row"
-            android:layout_width="match_parent"
-            android:layout_height="64dp"
-            android:gravity="center_vertical"
-            android:orientation="horizontal">
-
-            <LinearLayout
-                android:layout_width="0dp"
-                android:layout_height="wrap_content"
-                android:layout_weight="1"
-                android:orientation="vertical">
-
-                <TextView
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:text="@string/gallery_vlog_title"
-                    android:textColor="@color/qimu_text_primary"
-                    android:textSize="15sp"
-                    android:textStyle="bold" />
-
-                <TextView
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:layout_marginTop="3dp"
-                    android:text="@string/gallery_vlog_body"
-                    android:textColor="@color/qimu_text_tertiary"
-                    android:textSize="12sp" />
-            </LinearLayout>
-
-            <androidx.appcompat.widget.SwitchCompat
-                android:id="@+id/gallery_vlog_switch"
-                android:layout_width="wrap_content"
-                android:layout_height="48dp"
-                android:checked="false"
-                android:contentDescription="@string/gallery_vlog_title" />
-        </LinearLayout>
-
         <com.google.android.material.button.MaterialButton
             android:id="@+id/gallery_confirm_selection"
             style="@style/Widget.Qimu.Button.Primary"

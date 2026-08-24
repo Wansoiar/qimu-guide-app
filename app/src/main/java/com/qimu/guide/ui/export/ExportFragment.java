@@ -198,11 +198,8 @@ public class ExportFragment extends Fragment {
                         || result.getData() == null) return;
                 int photoCount = result.getData().getIntExtra(
                         ShareBundleActivity.EXTRA_PHOTO_COUNT, 0);
-                String vlogStatus = result.getData().getStringExtra(
-                        ShareBundleActivity.EXTRA_VLOG_STATUS);
-                String suffix = vlogStatus == null || vlogStatus.isEmpty()
-                        ? "未生成 Vlog" : "Vlog " + vlogStatus;
-                tvQrStatus.setText("分享码已生成 · " + photoCount + " 张 · " + suffix);
+                tvQrStatus.setText("分享码已生成 · " + photoCount
+                        + " 张 · 扫码后可选视频模板");
                 Toast.makeText(requireContext(), "分享二维码已生成",
                         Toast.LENGTH_SHORT).show();
             });
@@ -213,16 +210,12 @@ public class ExportFragment extends Fragment {
                         || result.getData() == null) return;
                 int selectedCount = result.getData().getIntExtra(
                         LocalPhotosActivity.EXTRA_SELECTED_COUNT, 0);
-                boolean vlogEnabled = result.getData().getBooleanExtra(
-                        LocalPhotosActivity.EXTRA_VLOG_ENABLED, false);
                 if (selectedCount <= 0) return;
                 gallerySelectionStore.reload();
                 tvQrStatus.setText(getString(R.string.export_share_selection_summary,
-                        selectedCount,
-                        getString(vlogEnabled
-                                ? R.string.vlog_enabled : R.string.vlog_disabled)));
+                        selectedCount));
                 shareUploadLauncher.launch(ShareBundleActivity.createIntent(
-                        requireContext(), selectedCount, vlogEnabled));
+                        requireContext(), selectedCount));
             });
 
     private final BleService.BleListener bleListener = new BleService.BleListener() {
@@ -484,7 +477,7 @@ public class ExportFragment extends Fragment {
             if (success) {
                 new AlertDialog.Builder(requireContext())
                         .setTitle("照片已保存到本机")
-                        .setMessage("可以先检查选中的照片和 Vlog 设置；二维码上传暂未接入。是否现在结束游览？")
+                        .setMessage("可以先检查要分享的照片；游客扫码后可在 H5 选择视频模板。是否现在结束游览？")
                         .setNegativeButton("先选照片", (dialog, which) ->
                                 startActivity(new Intent(requireContext(), LocalPhotosActivity.class)))
                         .setPositiveButton("结束游览", (dialog, which) ->

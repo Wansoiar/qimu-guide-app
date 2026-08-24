@@ -66,18 +66,13 @@ import java.util.concurrent.atomic.AtomicReference;
 public final class ShareBundleActivity extends AppCompatActivity {
 
     private static final String EXTRA_SELECTED_COUNT = "share_selected_count";
-    private static final String EXTRA_NEED_VLOG = "share_need_vlog";
     public static final String EXTRA_SHARE_URL = "share_url";
     public static final String EXTRA_PHOTO_COUNT = "share_photo_count";
-    public static final String EXTRA_VLOG_STATUS = "share_vlog_status";
     private static final int MAX_PHOTO_BYTES = 10 * 1024 * 1024;
 
-    public static Intent createIntent(@NonNull Context context,
-                                      int selectedCount,
-                                      boolean needVlog) {
+    public static Intent createIntent(@NonNull Context context, int selectedCount) {
         return new Intent(context, ShareBundleActivity.class)
-                .putExtra(EXTRA_SELECTED_COUNT, selectedCount)
-                .putExtra(EXTRA_NEED_VLOG, needVlog);
+                .putExtra(EXTRA_SELECTED_COUNT, selectedCount);
     }
 
     private final ExecutorService orchestrationExecutor =
@@ -102,7 +97,6 @@ public final class ShareBundleActivity extends AppCompatActivity {
     private LocalPhotoRepository photoRepository;
     private GallerySelectionStore selectionStore;
     private List<LocalPhoto> selectedPhotos = java.util.Collections.emptyList();
-    private boolean needVlog;
     private boolean uploading;
     private boolean completed;
     private int uploadPhotoCount;
@@ -117,7 +111,6 @@ public final class ShareBundleActivity extends AppCompatActivity {
         getWindow().setStatusBarColor(ContextCompat.getColor(this, R.color.qimu_app_bar));
         getWindow().setNavigationBarColor(ContextCompat.getColor(this, R.color.qimu_nav_background));
 
-        needVlog = getIntent().getBooleanExtra(EXTRA_NEED_VLOG, false);
         bindViews();
         photoRepository = new LocalPhotoRepository(this);
         selectionStore = new GallerySelectionStore(this);
@@ -180,8 +173,7 @@ public final class ShareBundleActivity extends AppCompatActivity {
 
     private void setSelectionSummary(int count) {
         TextView summary = findViewById(R.id.share_selection_summary);
-        summary.setText(getString(R.string.share_selection_summary,
-                count, needVlog ? "已开启" : "未开启"));
+        summary.setText(getString(R.string.share_selection_summary, count));
     }
 
     private void startShare() {
@@ -237,7 +229,7 @@ public final class ShareBundleActivity extends AppCompatActivity {
                 setUploading(true, "正在创建分享…", true, 0);
             });
             ShareBundleApiClient.CreateResult created = client.createBundle(
-                    phone.get(), preparedPhotos.size(), needVlog, venueId);
+                    phone.get(), preparedPhotos.size(), true, venueId);
             phone.set(null);
             runOnUiThread(() -> phoneInput.setText(""));
 
@@ -415,14 +407,13 @@ public final class ShareBundleActivity extends AppCompatActivity {
         }
         shareUrlText.setText(result.shareUrl);
         String vlogText = result.vlogEnabled
-                ? "Vlog 正在后台生成，扫码后页面会自动更新"
-                : "未生成 Vlog";
+                ? "验证后可选择视频边框、轮播效果和背景音乐"
+                : "当前分享未开启回忆视频";
         qrSummary.setText(getString(R.string.share_qr_summary,
                 phoneLast4, result.photoCount, vlogText));
         Intent resultIntent = new Intent()
                 .putExtra(EXTRA_SHARE_URL, result.shareUrl)
-                .putExtra(EXTRA_PHOTO_COUNT, result.photoCount)
-                .putExtra(EXTRA_VLOG_STATUS, result.vlogStatus);
+                .putExtra(EXTRA_PHOTO_COUNT, result.photoCount);
         setResult(Activity.RESULT_OK, resultIntent);
     }
 
