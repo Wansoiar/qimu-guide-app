@@ -175,11 +175,11 @@
     <string name="export_idle">等待导出</string>
     <string name="export_nothing_pending">眼镜上暂无待导出的照片</string>
     <string name="export_step_qr">分享本次导览</string>
-    <string name="export_qr_body">选择要分享的照片；游客扫码验证后可选择回忆视频模板。</string>
+    <string name="export_qr_body">选择要分享的照片，并决定是否生成回忆视频；开启后游客可在 H5 选择边框。</string>
     <string name="export_qr_pending">选择本机照片作为分享内容</string>
     <string name="export_view_photos">查看本机照片</string>
-    <string name="export_share_selection_hint">先选择照片，视频边框将在 H5 中选择</string>
-    <string name="export_share_selection_summary">已选 %1$d 张 · H5 可选视频模板</string>
+    <string name="export_share_selection_hint">选择照片，并决定是否生成回忆视频</string>
+    <string name="export_share_selection_summary">已选 %1$d 张 · 回忆视频 %2$s</string>
     <string name="export_share_selection_ready">分享内容已确认，请输入手机号并上传</string>
     <string name="export_share_select_first">选择分享照片</string>
     <string name="gallery_view_title">本机照片</string>
@@ -191,6 +191,10 @@
     <string name="gallery_select_none">全不选</string>
     <string name="gallery_confirm_share">确认分享内容</string>
     <string name="gallery_select_at_least_one">请至少选择 1 张照片</string>
+    <string name="gallery_vlog_title">同时生成回忆视频</string>
+    <string name="gallery_vlog_body">开启后提前生成轮播，游客扫码后选择视频边框</string>
+    <string name="vlog_enabled">已开启</string>
+    <string name="vlog_disabled">未开启</string>
     <string name="export_help"><b>使用说明：</b> 先导出眼镜原图，再生成分享二维码。导出时请保持眼镜靠近手机，并避免切换 Wi-Fi。</string>
     <string name="generate_qrcode">生成导览分享码</string>
     <string name="regenerate">再次生成</string>
@@ -206,7 +210,7 @@
     <string name="share_title">生成导览分享码</string>
     <string name="share_phone_explanation">游客扫码后需要输入手机号后 4 位验证。手机号只用于本次分享，不会保存在这台设备上。</string>
     <string name="share_phone_hint">游客手机号</string>
-    <string name="share_selection_summary">已选 %1$d 张照片 · 扫码后选择视频模板</string>
+    <string name="share_selection_summary">已选 %1$d 张照片 · 回忆视频 %2$s</string>
     <string name="share_start">上传并生成二维码</string>
     <string name="share_creating">正在创建分享…</string>
     <string name="share_qr_ready">分享码已生成</string>

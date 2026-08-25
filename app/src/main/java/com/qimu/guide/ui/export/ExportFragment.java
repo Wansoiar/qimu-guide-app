@@ -198,8 +198,10 @@ public class ExportFragment extends Fragment {
                         || result.getData() == null) return;
                 int photoCount = result.getData().getIntExtra(
                         ShareBundleActivity.EXTRA_PHOTO_COUNT, 0);
+                boolean vlogEnabled = result.getData().getBooleanExtra(
+                        ShareBundleActivity.EXTRA_VLOG_ENABLED, false);
                 tvQrStatus.setText("分享码已生成 · " + photoCount
-                        + " 张 · 扫码后可选视频模板");
+                        + " 张 · " + (vlogEnabled ? "已开启回忆视频" : "仅分享照片"));
                 Toast.makeText(requireContext(), "分享二维码已生成",
                         Toast.LENGTH_SHORT).show();
             });
@@ -210,12 +212,16 @@ public class ExportFragment extends Fragment {
                         || result.getData() == null) return;
                 int selectedCount = result.getData().getIntExtra(
                         LocalPhotosActivity.EXTRA_SELECTED_COUNT, 0);
+                boolean vlogEnabled = result.getData().getBooleanExtra(
+                        LocalPhotosActivity.EXTRA_VLOG_ENABLED, false);
                 if (selectedCount <= 0) return;
                 gallerySelectionStore.reload();
                 tvQrStatus.setText(getString(R.string.export_share_selection_summary,
-                        selectedCount));
+                        selectedCount,
+                        getString(vlogEnabled
+                                ? R.string.vlog_enabled : R.string.vlog_disabled)));
                 shareUploadLauncher.launch(ShareBundleActivity.createIntent(
-                        requireContext(), selectedCount));
+                        requireContext(), selectedCount, vlogEnabled));
             });
 
     private final BleService.BleListener bleListener = new BleService.BleListener() {
