@@ -21,16 +21,8 @@ public final class ApiConfig {
         return baseUrl() + "/sessions";
     }
 
-    public static String uploadAudio() {
-        return baseUrl() + "/v1/upload/audio";
-    }
-
     public static String uploadImage() {
         return baseUrl() + "/v1/upload/image";
-    }
-
-    public static String query() {
-        return baseUrl() + "/v1/query";
     }
 
     public static String rtcSession() {

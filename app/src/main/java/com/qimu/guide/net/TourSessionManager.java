@@ -46,7 +46,6 @@ public final class TourSessionManager {
                 .putBoolean(KEY_ACTIVE_MARKER, false)
                 .putBoolean(KEY_CLEANUP_WARNING, cleanupWarning)
                 .apply();
-        SessionContext.get().clear();
     }
 
     public void addListener(Listener listener) {
@@ -97,7 +96,6 @@ public final class TourSessionManager {
                 deviceId, System.currentTimeMillis(), serverBacked, demoMode);
         tutorialShown = false;
         cleanupWarning = false;
-        SessionContext.get().activate(sessionId, venueId);
         if (preferences != null) {
             preferences.edit()
                     .putBoolean(KEY_ACTIVE_MARKER, true)
@@ -120,7 +118,6 @@ public final class TourSessionManager {
         sessionRequestGeneration++;
         tutorialShown = false;
         cleanupWarning = !cleanupConfirmed;
-        SessionContext.get().clear();
         if (preferences != null) {
             preferences.edit()
                     .putBoolean(KEY_ACTIVE_MARKER, false)
