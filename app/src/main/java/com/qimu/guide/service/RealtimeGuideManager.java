@@ -90,11 +90,13 @@ public final class RealtimeGuideManager {
 
     private static final class PendingVisionRequest {
         final String commandId;
+        final int roundId;
         final long createdElapsedMs;
         int attempts;
 
-        PendingVisionRequest(String commandId) {
+        PendingVisionRequest(String commandId, int roundId) {
             this.commandId = commandId;
+            this.roundId = roundId;
             this.createdElapsedMs = SystemClock.elapsedRealtime();
         }
     }
@@ -168,6 +170,8 @@ public final class RealtimeGuideManager {
     private volatile int visionOperationId;
     private OperationCallback activeVisionCallback;
     private volatile String activeVisionCommandId;
+    // 当前识图任务对应的语音触发轮次（火山 roundId，0=手动拍照/未知）。
+    private volatile int activeVisionRoundId;
     private PendingVisionRequest pendingVisionRequest;
 
     private final BleService.BleListener bleListener = new BleService.BleListener() {
@@ -263,6 +267,11 @@ public final class RealtimeGuideManager {
 
         visionOperationId++;
         activeVisionCommandId = commandId;
+        activeVisionRoundId = 0;
+        if (commandId != null && pendingVisionRequest != null
+                && commandId.equals(pendingVisionRequest.commandId)) {
+            activeVisionRoundId = pendingVisionRequest.roundId;
+        }
         activeVisionCallback = null;
         apiClient.beginVisionCalls();
         publishVisionOperation(true, "正在调用眼镜拍照…");
@@ -300,6 +309,7 @@ public final class RealtimeGuideManager {
             pendingVisionRequest = null;
         }
         activeVisionCommandId = null;
+        activeVisionRoundId = 0;
         publishVisionOperation(false, message);
         if (callback != null) callback.onComplete(false, message);
         if (canRetry) {
@@ -741,7 +751,8 @@ public final class RealtimeGuideManager {
             TourSessionManager.TourSession tour = tourSession;
             String venueId = tour != null ? tour.venueId : null;
             GuideApiClient.ImageDescribeResult desc =
-                    apiClient.describeRtcImage(venueId, rtcSessionId, uploaded.url);
+                    apiClient.describeRtcImage(venueId, rtcSessionId, uploaded.url,
+                            isFcCommand(commandId) ? activeVisionRoundId : 0);
             String content = buildVisionReplyContent(desc);
 
             boolean ok;
@@ -801,6 +812,7 @@ public final class RealtimeGuideManager {
             String completedCommandId = activeVisionCommandId;
             activeVisionCallback = null;
             activeVisionCommandId = null;
+            activeVisionRoundId = 0;
             if (completedCommandId != null) {
                 PendingVisionRequest pending = pendingVisionRequest;
                 if (success) handledCommandIds.add(completedCommandId);
@@ -820,6 +832,7 @@ public final class RealtimeGuideManager {
         String commandId = activeVisionCommandId;
         activeVisionCallback = null;
         activeVisionCommandId = null;
+        activeVisionRoundId = 0;
         visionOperationId++;
         apiClient.cancelVisionCalls();
         if (commandId != null && pendingVisionRequest != null
@@ -1097,7 +1110,7 @@ public final class RealtimeGuideManager {
                 return;
             }
 
-            pendingVisionRequest = new PendingVisionRequest(commandId);
+            pendingVisionRequest = new PendingVisionRequest(commandId, 0);
             deliverPendingVisionRequest();
         } catch (Exception parseError) {
             Log.w(TAG, "忽略无法解析的 RTC 控制消息", parseError);
@@ -1116,7 +1129,7 @@ public final class RealtimeGuideManager {
      * 拍照+upload+describe-image 后走 func 回填（见 injectVisionImageOnMain 的 FC 分支）。
      */
     private void handleFunctionCall(RtcVoiceChatManager rtc, String senderUid,
-                                    String toolCallId, String functionName) {
+                                    String toolCallId, String functionName, int roundId) {
         if (!"take_photo".equals(functionName)) {
             Log.w(TAG, "收到未知 FC: " + functionName);
             return;
@@ -1134,7 +1147,7 @@ public final class RealtimeGuideManager {
                 ? currentSession.botUid : senderUid;
         String commandId = FC_COMMAND_PREFIX + toolCallId;
         Log.i(TAG, "FC take_photo → 触发拍照 commandId=" + commandId);
-        pendingVisionRequest = new PendingVisionRequest(commandId);
+        pendingVisionRequest = new PendingVisionRequest(commandId, roundId);
         deliverPendingVisionRequest();
     }
 
@@ -1277,8 +1290,10 @@ public final class RealtimeGuideManager {
             }
 
             @Override
-            public void onFunctionCall(String senderUid, String toolCallId, String functionName) {
-                postIfCurrent(() -> handleFunctionCall(expectedRtc, senderUid, toolCallId, functionName));
+            public void onFunctionCall(String senderUid, String toolCallId, String functionName,
+                                       int roundId) {
+                postIfCurrent(() -> handleFunctionCall(
+                        expectedRtc, senderUid, toolCallId, functionName, roundId));
             }
 
             @Override

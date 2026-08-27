@@ -60,7 +60,8 @@ public class RtcVoiceChatManager {
          * 火山 client-side Function Calling：模型下发工具调用指令（如 take_photo）。
          * 端侧执行后需调 {@link #sendFunctionResult} 把结果回填给模型继续讲解。
          */
-        default void onFunctionCall(String senderUid, String toolCallId, String functionName) { }
+        default void onFunctionCall(String senderUid, String toolCallId, String functionName,
+                                    int roundId) { }
         void onError(int code, String desc);
     }
 
@@ -84,6 +85,9 @@ public class RtcVoiceChatManager {
     private int nextBinarySubtitleSequence = 1_000_000;
     private int selfBinarySubtitleSequence = -1;
     private int agentBinarySubtitleSequence = -1;
+    // 最近一次游客语音分片携带的火山 roundId（0=未知）。FC take_photo 无 roundId 时兜底，
+    // 供 describe-image 精确关联「关键词+图片+识别+讲解」同一条语音回合。
+    private volatile int lastUserRoundId;
     // VoiceChat 可能在后续 subv 包里再次携带已经结束的字幕项。完整 JSON 相同就属于
     // 同一个服务端事件，必须幂等；否则 definite 后序号已重置，会被 UI 当成新消息。
     private static final int MAX_FINAL_SUBTITLE_FINGERPRINTS = 256;
@@ -481,6 +485,8 @@ public class RtcVoiceChatManager {
                     continue;
                 }
                 int sequence = resolveBinarySubtitleSequence(fromSelf, item, definite);
+                int itemRoundId = item.optInt("roundId", 0);
+                if (fromSelf && itemRoundId > 0) lastUserRoundId = itemRoundId;
                 current.onSubtitle(fromSelf, text, definite, sequence);
             }
         } catch (Exception error) {
@@ -507,9 +513,13 @@ public class RtcVoiceChatManager {
             String toolCallId = call.optString("id", "");
             org.json.JSONObject fn = call.optJSONObject("function");
             String name = fn != null ? fn.optString("name", "") : "";
-            Log.i(TAG, "FC tool 指令: name=" + name + " id=" + toolCallId);
+            // 触发轮次 roundId：优先取 tool 指令自带；缺失时兜底最近一次游客语音分片的 roundId。
+            int roundId = root.optInt("roundId", 0);
+            if (roundId <= 0) roundId = lastUserRoundId;
+            Log.i(TAG, "FC tool 指令: name=" + name + " id=" + toolCallId
+                    + " roundId=" + roundId);
             if (name.isEmpty() || toolCallId.isEmpty()) return;
-            current.onFunctionCall(uid, toolCallId, name);
+            current.onFunctionCall(uid, toolCallId, name, roundId);
         } catch (Exception e) {
             Log.w(TAG, "解析 FC tool 指令失败: " + payload, e);
         }
@@ -586,6 +596,7 @@ public class RtcVoiceChatManager {
         nextBinarySubtitleSequence = 1_000_000;
         selfBinarySubtitleSequence = -1;
         agentBinarySubtitleSequence = -1;
+        lastUserRoundId = 0;
         finalBinarySubtitleFingerprints.clear();
     }
 }
