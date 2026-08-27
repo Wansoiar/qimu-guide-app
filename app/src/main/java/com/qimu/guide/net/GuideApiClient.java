@@ -335,9 +335,11 @@ public class GuideApiClient {
      *
      * @param sessionId 当前 RTC 会话 id（/v1/rtc/session 返回的 session_id），
      *                  用于把识图结果挂到会话并落库；可空。
+     * @param roundId   触发拍照的语音轮次 roundId（火山 roundId）；语音触发拍照必传，
+     *                  手动拍照按钮（无语音）传 0，后端回退为独立照片回合。
      */
     public ImageDescribeResult describeRtcImage(String venueId, @Nullable String sessionId,
-                                                String imageUrl) {
+                                                String imageUrl, int roundId) {
         Call call = null;
         try {
             JSONObject body = new JSONObject();
@@ -346,6 +348,9 @@ public class GuideApiClient {
                 body.put("session_id", sessionId.trim());
             }
             body.put("image_url", imageUrl);
+            if (roundId > 0) {
+                body.put("round_id", roundId);
+            }
             Request request = withDialogueHeaders(new Request.Builder()
                     .url(ApiConfig.rtcSessionDescribeImage())
                     .header("X-Client-Type", "android")
