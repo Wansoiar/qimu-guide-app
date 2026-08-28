@@ -177,9 +177,11 @@ public class BleService {
     private static final int MAX_WIFI_BUSY_RETRIES = 2;
     // 官方策略：前 3 次保持 P2P GO，第 3 次失败后第 4 次才切 AP。
     private static final int MAX_WIFI_CONNECTION_ATTEMPTS = 4;
-    private static final String[] FORCED_AP_FIRMWARE_VERSIONS = {
+    /** Firmware revisions whose Wi-Fi file-transfer implementation requires AP mode. */
+    private static final String[] AP_REQUIRED_FIRMWARE_VERSIONS = {
             "MOY-A073-0.1.0", "MOY-A073-0.0.7", "MOY-A073-0.0.6", "MOY-A073-0.0.3",
-            "MOY-A253-0.0.8", "MOY-A253-0.0.5", "MOY-A253-0.0.4", "MOY-A253-0.0.3"
+            "MOY-A253-0.0.8", "MOY-A253-0.0.6", "MOY-A253-0.0.5", "MOY-A253-0.0.4",
+            "MOY-A253-0.0.3"
     };
 
     private static final int MEDIA_IDLE = 0;
@@ -943,8 +945,8 @@ public class BleService {
         lastMediaStageMessage = null;
         wifiConnectionAttempt = 1;
         wifiUseApMode = shouldUseApFirst(firmwareVersion);
-        // Vendor-forced firmware and real-device incompatible pairs use AP
-        // directly; all other combinations keep the official P2P-first flow.
+        // Select the transport from glasses firmware capability only. Phone
+        // manufacturer/model must not change product behavior.
         wifiConnectionAttemptLimit = wifiUseApMode ? 1 : MAX_WIFI_CONNECTION_ATTEMPTS;
         wifiSystemApprovalExpected = false;
         clearPendingApDiscovery();
@@ -2238,29 +2240,12 @@ public class BleService {
         }
     }
 
-    private boolean shouldForceApForFirmware(@Nullable String version) {
+    private boolean shouldUseApFirst(@Nullable String version) {
         if (TextUtils.isEmpty(version)) return false;
-        for (String forcedVersion : FORCED_AP_FIRMWARE_VERSIONS) {
+        for (String forcedVersion : AP_REQUIRED_FIRMWARE_VERSIONS) {
             if (forcedVersion.equals(version)) return true;
         }
         return false;
-    }
-
-    /**
-     * Keep the official firmware policy, plus one narrowly verified hardware
-     * compatibility shortcut. On JAD-AL00 + A253 0.0.6, three consecutive
-     * real-device runs discovered the peer but failed in GroupNegotiationState;
-     * the AP fallback then started in about 6 s and downloaded successfully.
-     */
-    private boolean shouldUseApFirst(@Nullable String version) {
-        return shouldForceApForFirmware(version)
-                || isKnownP2pIncompatiblePair(version);
-    }
-
-    private boolean isKnownP2pIncompatiblePair(@Nullable String version) {
-        return "HUAWEI".equalsIgnoreCase(Build.MANUFACTURER)
-                && "JAD-AL00".equalsIgnoreCase(Build.MODEL)
-                && "MOY-A253-0.0.6".equals(version);
     }
 
     /** Mirrors AllwinnerHeartRateManager.setAlive() from the vendor wrapper. */
