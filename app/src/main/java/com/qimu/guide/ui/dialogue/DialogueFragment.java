@@ -278,23 +278,23 @@ public class DialogueFragment extends Fragment {
 
         switch (state) {
             case READY:
-                dialogueButton.setText("开始对话");
+                dialogueButton.setText(R.string.dialogue_action_start);
                 dialogueButton.setEnabled(true);
                 break;
             case AUDIO_LINK_STARTING:
-                dialogueButton.setText("正在连接眼镜…");
+                dialogueButton.setText(R.string.dialogue_connecting);
                 dialogueButton.setEnabled(false);
                 break;
             case LISTENING:
-                dialogueButton.setText("暂停对话");
+                dialogueButton.setText(R.string.dialogue_action_pause);
                 dialogueButton.setEnabled(true);
                 break;
             case PAUSED:
-                dialogueButton.setText("继续对话");
+                dialogueButton.setText(R.string.dialogue_action_continue);
                 dialogueButton.setEnabled(true);
                 break;
             case ERROR:
-                dialogueButton.setText("重试连接");
+                dialogueButton.setText(R.string.dialogue_action_retry);
                 dialogueButton.setEnabled(true);
                 break;
             case RTC_CONNECTING:
@@ -302,19 +302,19 @@ public class DialogueFragment extends Fragment {
                 dialogueButton.setEnabled(false);
                 break;
             case STOPPING:
-                dialogueButton.setText("正在结束游览…");
+                dialogueButton.setText(R.string.dialogue_action_stopping);
                 dialogueButton.setEnabled(false);
                 break;
             case IDLE:
             default:
-                dialogueButton.setText("等待开始游览");
+                dialogueButton.setText(R.string.dialogue_action_waiting);
                 dialogueButton.setEnabled(false);
                 break;
         }
 
         boolean effectiveVisionBusy = visionBusy || guideManager.isVisionOperationInProgress();
         if (effectiveVisionBusy) {
-            dialogueButton.setText("识图中，请稍候");
+            dialogueButton.setText(R.string.dialogue_action_vision_busy);
             dialogueButton.setEnabled(false);
         }
 
@@ -324,7 +324,8 @@ public class DialogueFragment extends Fragment {
                 || state == RealtimeGuideManager.State.PAUSED
                 || state == RealtimeGuideManager.State.LISTENING);
         photoButton.setEnabled(photoAvailable);
-        photoButton.setText(effectiveVisionBusy ? "正在拍照…" : getString(R.string.photo_hint));
+        photoButton.setText(effectiveVisionBusy
+                ? R.string.dialogue_action_photo_busy : R.string.photo_hint);
     }
 
     /** 断开字幕合并锚点：下一条字幕将新建气泡，而不是追加进上方旧气泡。 */

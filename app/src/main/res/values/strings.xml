@@ -139,6 +139,14 @@
     <string name="dialogue_preparing">正在准备齐目 AI…</string>
     <string name="dialogue_connecting">连接中…</string>
     <string name="dialogue_not_ready">齐目 AI 尚未准备好，请稍候</string>
+    <string name="dialogue_action_start">开始对话</string>
+    <string name="dialogue_action_pause">暂停对话</string>
+    <string name="dialogue_action_continue">继续对话</string>
+    <string name="dialogue_action_retry">重试连接</string>
+    <string name="dialogue_action_stopping">结束中…</string>
+    <string name="dialogue_action_waiting">等待导览</string>
+    <string name="dialogue_action_vision_busy">识图中…</string>
+    <string name="dialogue_action_photo_busy">拍照中…</string>
     <string name="audio_permission_title">允许使用麦克风</string>
     <string name="audio_permission_rationale">开始对话需要麦克风权限，才能接收你通过眼镜提出的问题。只有在对话进行中才会收音，点击“暂停对话”后会停止收音。</string>
     <string name="audio_permission_continue">继续授权</string>
