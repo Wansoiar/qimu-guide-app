@@ -13,7 +13,9 @@ public class DialogueMessage {
         /** 用户语音 */
         VOICE,
         /** AI 回复 */
-        AI_REPLY
+        AI_REPLY,
+        /** 居中状态提示条（如拍照中/照片已收到） */
+        STATUS_HINT
     }
 
     public enum Status {

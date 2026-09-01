@@ -8,14 +8,23 @@
     android:paddingBottom="6dp">
 
     <LinearLayout
+        android:id="@+id/bubble_root"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
         android:background="@drawable/bubble_user"
-        android:maxWidth="300dp"
         android:orientation="vertical"
-        android:padding="9dp">
+        android:padding="@dimen/bubble_padding">
 
-        <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginStart="3dp" android:layout_marginBottom="7dp" android:text="@string/message_photo_label" android:textColor="@color/qimu_gold_dark" android:textSize="11sp" android:textStyle="bold" />
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginBottom="7dp"
+            android:letterSpacing="0.1"
+            android:text="@string/message_photo_label"
+            android:textColor="@color/qimu_gold"
+            android:textSize="12sp"
+            android:textStyle="bold" />
+
         <ImageView
             android:id="@+id/iv_photo"
             android:layout_width="228dp"
@@ -24,6 +33,13 @@
             android:clipToOutline="true"
             android:contentDescription="@string/message_photo_label"
             android:scaleType="centerCrop" />
-        <TextView android:id="@+id/tv_time" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginStart="3dp" android:layout_marginTop="6dp" android:textColor="@color/qimu_text_tertiary" android:textSize="11sp" />
+
+        <TextView
+            android:id="@+id/tv_time"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="6dp"
+            android:textColor="@color/qimu_text_tertiary"
+            android:textSize="11sp" />
     </LinearLayout>
 </LinearLayout>

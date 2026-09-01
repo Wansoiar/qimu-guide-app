@@ -32,7 +32,7 @@
             android:layout_weight="1"
             android:orientation="vertical">
 
-            <TextView
+            <com.qimu.guide.ui.widget.SerifTextView
                 android:id="@+id/gallery_title"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
@@ -113,7 +113,7 @@
                     app:tint="@color/qimu_gold_dark" />
             </FrameLayout>
 
-            <TextView
+            <com.qimu.guide.ui.widget.SerifTextView
                 android:id="@+id/gallery_empty_title"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
@@ -197,7 +197,7 @@
             android:id="@+id/gallery_confirm_selection"
             style="@style/Widget.Qimu.Button.Primary"
             android:layout_width="match_parent"
-            android:layout_height="50dp"
+            android:layout_height="48dp"
             android:enabled="false"
             android:text="@string/gallery_confirm_share" />
     </LinearLayout>

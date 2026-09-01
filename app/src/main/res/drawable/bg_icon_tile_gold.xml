@@ -1,5 +1,10 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!-- 图标金块：米金渐变 + 1dp 描金线，圆角 10 -->
 <shape xmlns:android="http://schemas.android.com/apk/res/android" android:shape="rectangle">
-    <solid android:color="@color/qimu_icon_bg_gold" />
-    <corners android:radius="14dp" />
+    <gradient
+        android:startColor="@color/qimu_icon_bg_gold"
+        android:endColor="#DFC9A4"
+        android:angle="270" />
+    <corners android:radius="@dimen/radius_tile" />
+    <stroke android:width="1dp" android:color="@color/qimu_outline_gold" />
 </shape>

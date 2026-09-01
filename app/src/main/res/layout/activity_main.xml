@@ -17,19 +17,11 @@
         android:paddingStart="12dp"
         android:paddingEnd="20dp">
 
-        <FrameLayout
+        <View
             android:layout_width="40dp"
             android:layout_height="40dp"
-            android:background="@drawable/bg_brand_badge"
-            android:padding="8dp">
-
-            <ImageView
-                android:layout_width="match_parent"
-                android:layout_height="match_parent"
-                android:contentDescription="@string/app_name"
-                android:src="@drawable/ic_glasses_24"
-                app:tint="@color/qimu_gold" />
-        </FrameLayout>
+            android:background="@drawable/bg_logo_placeholder"
+            android:contentDescription="@string/app_name" />
 
         <LinearLayout
             android:layout_width="0dp"
@@ -38,11 +30,13 @@
             android:layout_weight="1"
             android:orientation="vertical">
 
-            <TextView
+            <com.qimu.guide.ui.widget.SerifTextView
                 android:id="@+id/tv_header_title"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:text="@string/app_name"
+                android:ellipsize="end"
+                android:maxLines="1"
+                android:text="@string/brand_title_no_venue"
                 android:textAppearance="@style/TextAppearance.Qimu.Brand" />
 
             <LinearLayout
@@ -54,8 +48,8 @@
 
                 <View
                     android:id="@+id/header_status_dot"
-                    android:layout_width="6dp"
-                    android:layout_height="6dp"
+                    android:layout_width="7dp"
+                    android:layout_height="7dp"
                     android:background="@drawable/dot_status_disconnected" />
 
                 <TextView
@@ -65,7 +59,7 @@
                     android:layout_marginStart="6dp"
                     android:text="@string/brand_status_offline"
                     android:textColor="@color/qimu_text_secondary"
-                    android:textSize="12sp" />
+                    android:textSize="11sp" />
             </LinearLayout>
         </LinearLayout>
     </LinearLayout>

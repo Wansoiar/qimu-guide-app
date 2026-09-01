@@ -3,6 +3,8 @@
     <string name="app_name">齐目导览</string>
     <string name="brand_status_online">设备在线</string>
     <string name="brand_status_offline">等待连接</string>
+    <string name="brand_title_venue">齐目·%1$s</string>
+    <string name="brand_title_no_venue">齐目·未设置场馆</string>
     <string name="open_operator_config">打开运营配置</string>
     <string name="close_operator_config">关闭运营配置</string>
     <string name="operator_config_title">运营配置</string>
@@ -45,7 +47,6 @@
     <string name="provisioning_glasses_connected">眼镜已连接</string>
     <string name="provisioning_no_glasses">尚未获取眼镜 ID</string>
     <string name="provisioning_glasses_value">%1$s · %2$s</string>
-    <string name="provisioning_scan_result">%1$s\n%2$s · RSSI %3$d</string>
     <string name="provisioning_username">运营账号</string>
     <string name="provisioning_password">运营密码</string>
     <string name="provisioning_mock_credentials">Mock 联调账号：operator / 123456。</string>
@@ -81,7 +82,7 @@
     <string name="scan_and_connect">扫描附近眼镜</string>
     <string name="cancel_scan">停止扫描</string>
     <string name="re_scan">重新扫描</string>
-    <string name="connect_hint">蓝牙连接仅用于眼镜控制与实时对话</string>
+    <string name="connect_hint">点击列表眼镜开始连接</string>
     <string name="no_device_found">未发现设备，请确认眼镜已开机</string>
     <string name="connection_timeout">连接超时，请靠近眼镜重试</string>
     <string name="connection_failed">连接失败，请重启眼镜后再试</string>
@@ -165,11 +166,10 @@
     <string name="not_connected">未连接</string>
     <string name="disconnected_hint">眼镜连接已断开，请重新连接</string>
     <string name="message_ai_label">齐目 AI</string>
-    <string name="message_user_label">我的提问</string>
+    <string name="message_user_label">我</string>
     <string name="message_photo_label">眼镜拍摄</string>
 
     <string name="export">导出</string>
-    <string name="export_title">导出与分享</string>
     <string name="export_description">将眼镜照片导出到本机，再生成本次导览分享码</string>
     <string name="export_session_title">本次导览</string>
     <string name="export_session_ready">设备在线 · 可开始导出</string>

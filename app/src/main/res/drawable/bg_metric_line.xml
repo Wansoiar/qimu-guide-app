@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 指标块左侧金线：2dp 竖向渐变 -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android" android:shape="rectangle">
+    <size android:width="2dp" android:height="40dp" />
+    <gradient
+        android:startColor="#00C9973B"
+        android:centerColor="@color/qimu_gold_light"
+        android:endColor="#00C9973B"
+        android:angle="270" />
+    <corners android:radius="1dp" />
+</shape>

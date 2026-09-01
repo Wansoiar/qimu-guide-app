@@ -1,0 +1,678 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>齐目导览 · 设计规范配置器 v5</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;500;700&family=Noto+Serif+SC:wght@400;500;600;700;900&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --font-serif:"Noto Serif SC","Songti SC","STSong",serif;
+    --font-sans:"Noto Sans SC","PingFang SC","Microsoft YaHei",sans-serif;
+  }
+
+  /* ===== 基准 = B·徽派框景（轻）· 已按 App 真实结构重排 ===== */
+  body{
+    --bg:#F6F0E4; --bg2:#F1E7D7; --page-bg:#F6F0E4;
+    --surface:#FFFEF9; --card:#FFFEF9; --card2:#F2E9D9; --card-soft:#F1EADA;
+    --text:#1E1208; --text2:#7A6248; --text3:#9A8872;
+    --gold:#A8701E; --gold2:#C9973B; --goldline:#D9BF98; --brown:#6B4928; --brown-dark:#52351D;
+    --seal:#8C3B2A;
+    --border:#D8CCBC; --border-strong:#B9A67F;
+    --r-lg:14px; --r-md:11px; --r-sm:6px;
+    --shadow-soft:0 1px 2px rgba(47,31,13,.05),0 6px 16px rgba(47,31,13,.06),0 18px 36px rgba(47,31,13,.05);
+    --card-pad:16px;
+    --header-bg:#F7F2E7; --header-color:#1E1208; --header-line:#E3D9C9;
+    --title-font:var(--font-serif); --title-w:700; --title-ls:.06em;
+    --body-font:var(--font-sans); --ui-font:var(--font-sans);
+    --primary-bg:#6B4928; --primary-color:#F4E9D2; --primary-border:1px solid var(--goldline);
+    --nav-bg:#FCFAF4; --spacing:24px;
+    --bubble-ai:#FAF6EC; --bubble-user:#F2E9D9;
+    background:var(--page-bg);color:var(--text);
+    font-family:var(--body-font);
+  }
+
+  *{box-sizing:border-box;margin:0;padding:0}
+  .page{max-width:1260px;margin:0 auto;padding:36px 24px 80px}
+  .page-head h1{font-family:var(--title-font);font-weight:700;letter-spacing:.06em;font-size:28px;color:var(--text)}
+  .page-head p{margin-top:10px;color:var(--text2);font-size:14px;line-height:1.8;max-width:880px}
+  .hint{display:inline-block;margin-top:12px;font-size:12px;color:var(--text3);letter-spacing:.05em}
+
+  .page-tabs{display:flex;gap:10px;margin:26px 0 14px}
+  .ptab{font-family:var(--ui-font);font-size:14px;letter-spacing:.1em;padding:10px 22px;border-radius:10px;cursor:pointer;background:var(--card);color:var(--text2);border:1px solid var(--border);transition:all .2s ease}
+  .ptab:hover{border-color:var(--gold);color:var(--gold)}
+  .ptab.sel{background:var(--brown);color:#F4E9D2;border-color:var(--brown);box-shadow:0 4px 12px rgba(0,0,0,.14)}
+
+  .stage{display:flex;gap:36px;align-items:flex-start;flex-wrap:wrap}
+
+  /* ===== 手机 ===== */
+  .phone{width:384px;flex:0 0 384px;background:#191410;border-radius:44px;padding:12px;box-shadow:0 30px 60px rgba(0,0,0,.35)}
+  .screen{position:relative;height:812px;border-radius:34px;overflow:hidden;display:flex;flex-direction:column}
+  .sbg{position:absolute;inset:0;z-index:0}
+  .sbg.dialogue{background-color:#F6F0E4}
+  .sbg.dialogue::before{content:"";position:absolute;inset:0;background:url('bg-dialogue.jpg') center/cover;opacity:.2}
+  .sbg.device{background:url('bg-device.jpg') center/cover}
+  .sbg.export{background:url('bg-export.jpg') center/cover}
+  .sv{position:relative;z-index:1;display:flex;flex-direction:column;flex:1;min-height:0}
+
+  /* 固定顶部（与 App 一致：徽章 + 标题 + 状态） */
+  .statusbar{height:32px;display:flex;align-items:center;justify-content:space-between;padding:0 22px;font-family:var(--ui-font);font-size:12px;color:var(--text2)}
+  .header{display:flex;align-items:center;gap:10px;padding:12px 16px;background:var(--header-bg);border-bottom:1px solid var(--header-line);transition:all .3s ease;position:relative}
+  .badge{width:40px;height:40px;border-radius:50%;background:#E9DAC3;border:1px solid var(--goldline);display:flex;align-items:center;justify-content:center;font-size:20px;color:var(--brown);box-shadow:inset 0 0 0 3px rgba(255,255,255,.45),0 2px 6px rgba(47,31,13,.12)}
+  .h-title{font-family:var(--title-font);font-weight:700;font-size:18px;letter-spacing:.1em;color:var(--header-color)}
+  .h-status{display:flex;align-items:center;gap:6px;margin-top:3px;font-family:var(--ui-font);font-size:11px;color:var(--text2);letter-spacing:.04em}
+  .dot{width:7px;height:7px;border-radius:50%;background:#5F7D55;box-shadow:0 0 0 3px rgba(95,125,85,.16)}
+
+  .content{flex:1;overflow-y:auto;padding:var(--spacing) 18px 16px;display:flex;flex-direction:column;gap:13px}
+  .pageview{display:none;flex-direction:column}
+  .pageview.sel{display:flex}
+
+  /* ===== 卡片基础（描边/阴影由“卡片组合”方案控制） ===== */
+  .card{background:var(--card);border:1px solid var(--border);box-shadow:0 1px 2px rgba(47,31,13,.05);border-radius:var(--r-lg);padding:var(--card-pad);position:relative;transition:all .3s ease}
+  .card.accent,.card.soft{background:var(--card2)}
+  .card .row{display:flex;align-items:center;gap:9px}
+  .kicker{font-family:var(--ui-font);font-size:12px;letter-spacing:.16em;color:var(--text3)}
+  .card .main{font-family:var(--title-font);font-weight:600;font-size:15px;color:var(--text);margin-top:7px;line-height:1.6}
+  .hint2{font-family:var(--ui-font);font-size:13px;color:var(--text2);line-height:1.75}
+
+  /* 卡片组合 M1：常规卡细描边 · 强调/提示/指标柔影无框 · 气泡细描边 */
+  .card.accent,.card.soft{border:none;box-shadow:var(--shadow-soft)}
+  .metric{background:var(--card2);border:none;box-shadow:0 1px 3px rgba(47,31,13,.05)}
+  body.k-mix-2 .card{border:none;box-shadow:var(--shadow-soft)}
+  body.k-mix-2 .card.accent,body.k-mix-2 .card.soft{border:1px solid var(--border);box-shadow:0 1px 2px rgba(47,31,13,.05)}
+  body.k-mix-3 .card,body.k-mix-3 .card.accent,body.k-mix-3 .card.soft{border:1px solid var(--border);box-shadow:none}
+  body.k-mix-4 .card,body.k-mix-4 .card.accent,body.k-mix-4 .card.soft{border:none;box-shadow:var(--shadow-soft)}
+
+  /* 对话页 */
+  .sess{display:flex;align-items:center;gap:12px}
+  .sess-ic{width:42px;height:42px;border-radius:var(--r-md);background:linear-gradient(145deg,#E9DAC3,#DFC9A4);border:1px solid var(--goldline);display:flex;align-items:center;justify-content:center;font-size:19px;color:var(--brown);box-shadow:inset 0 1px 0 rgba(255,255,255,.5),0 3px 8px rgba(47,31,13,.10)}
+  .sess .t{font-family:var(--title-font);font-weight:700;font-size:15px;color:var(--text)}
+  .sess .s{font-family:var(--ui-font);font-size:12px;color:var(--text2);margin-top:2px}
+  .sess .st{display:flex;align-items:center;gap:6px;margin-left:auto;font-family:var(--ui-font);font-size:12px;color:var(--gold);letter-spacing:.06em;background:rgba(168,112,30,.08);border:1px solid rgba(168,112,30,.28);border-radius:999px;padding:4px 11px}
+  .chat{display:flex;flex-direction:column;gap:12px;margin-top:2px}
+  .bubble{display:block}
+  .bubble .bd{max-width:100%;background:var(--bubble-ai);border:1px solid var(--border);border-radius:var(--r-lg);padding:12px;box-shadow:0 1px 2px rgba(47,31,13,.04)}
+  .bubble .who{font-family:var(--ui-font);font-size:12px;letter-spacing:.1em;color:var(--gold);margin-bottom:5px;font-weight:700}
+  .bubble .tx{font-size:14px;line-height:1.75;color:var(--text)}
+  .bubble .tm{margin-top:6px;font-family:var(--ui-font);font-size:11px;color:var(--text3)}
+  .bubble.self .bd{margin-left:auto;max-width:86%;width:fit-content;background:var(--bubble-user);border-radius:var(--r-lg)}
+  .bubble.self .who{text-align:left}
+
+  /* 展品缩略图（照片占位） */
+  .thumb{width:66px;height:66px;flex:0 0 66px;border-radius:var(--r-md);background:linear-gradient(150deg,#7C5A34,#4A3520);border:1px solid rgba(0,0,0,.18);box-shadow:0 4px 12px rgba(47,31,13,.22),inset 0 0 0 3px rgba(255,255,255,.08);display:flex;align-items:center;justify-content:center;position:relative;overflow:hidden}
+  .thumb::after{content:"鼎";font-family:var(--font-serif);font-size:26px;font-weight:700;color:rgba(247,239,226,.9);letter-spacing:.1em}
+
+  /* 对话页底部操作栏 */
+  .bottompanel{background:var(--nav-bg);border-top:1px solid var(--border);padding:10px 16px 12px}
+  .bp-status{display:flex;align-items:center;gap:8px;font-family:var(--ui-font);font-size:12px;color:var(--text2);letter-spacing:.04em;margin-bottom:9px}
+  .bp-status .dot{width:6px;height:6px}
+  .bp-btns{display:flex;gap:8px}
+  .btn{flex:1;text-align:center;font-family:var(--ui-font);font-size:13px;letter-spacing:.08em;padding:12px 0;border-radius:var(--r-lg);transition:all .25s ease}
+  .btn.primary{background:var(--primary-bg);color:var(--primary-color);border:var(--primary-border);box-shadow:inset 0 1px 0 rgba(255,255,255,.18),0 2px 4px rgba(47,31,13,.16),0 8px 18px rgba(47,31,13,.14)}
+  .btn.outline{background:var(--surface);color:var(--brown);border:1px solid var(--border);box-shadow:0 1px 3px rgba(47,31,13,.06)}
+  .btn.soft{background:var(--card2);color:var(--brown-dark);border:1px solid var(--goldline);box-shadow:0 1px 3px rgba(47,31,13,.06)}
+  .btn.primary:hover,.btn.outline:hover,.btn.soft:hover{filter:brightness(1.06)}
+
+  /* 设备页 */
+  .dev-head{display:flex;align-items:center;gap:12px}
+  .itile{width:48px;height:48px;border-radius:var(--r-md);background:linear-gradient(145deg,#E9DAC3,#DFC9A4);border:1px solid #D9BF98;display:flex;align-items:center;justify-content:center;font-size:21px;color:var(--brown)}
+  .dev-head .nm{font-family:var(--title-font);font-weight:700;font-size:15px;color:var(--text)}
+  .dev-head .id{font-family:var(--ui-font);font-size:11px;color:var(--text3);margin-top:3px}
+  .metrics{display:flex;gap:8px;margin-top:14px}
+  .metric{flex:1;background:var(--card-soft);border-radius:var(--r-md);padding:11px 8px;text-align:center;position:relative;overflow:hidden}
+  /* 指标块方案 */
+  body.k-met-2 .metric{border:1px solid var(--border);box-shadow:0 1px 2px rgba(47,31,13,.05)}
+  body.k-met-3 .metric::before,body.k-met-4 .metric::before{content:"";position:absolute;border-radius:1px;background:linear-gradient(180deg,transparent,var(--gold2),transparent);opacity:.55}
+  body.k-met-3 .metric::before{left:0;top:26%;bottom:26%;width:2px}
+  body.k-met-4 .metric::before{left:26%;right:26%;top:0;height:2px;background:linear-gradient(90deg,transparent,var(--gold2),transparent)}
+  /* 气泡方案 */
+  body.k-bub-2 .bubble .bd{background:var(--surface)}
+  body.k-bub-2 .bubble.self .bd{background:var(--card-soft)}
+  body.k-bub-3 .bubble .bd,body.k-bub-3 .bubble.self .bd{border:none;box-shadow:0 1px 2px rgba(47,31,13,.05),0 8px 18px rgba(47,31,13,.07)}
+  body.k-bub-3 .bubble .bd{background:var(--surface)}
+  body.k-bub-3 .bubble.self .bd{background:var(--card-soft)}
+  body.k-bub-4 .bubble .bd,body.k-bub-4 .bubble.self .bd{border:1px solid var(--goldline)}
+  body.k-bub-5 .bubble .bd,body.k-bub-5 .bubble.self .bd{border:1px solid var(--border-strong);box-shadow:none}
+  body.k-bub-5 .bubble.self .bd{background:var(--card-soft)}
+
+  .metric .v{font-family:var(--title-font);font-weight:700;font-size:18px;color:var(--text)}
+  .metric .k{font-family:var(--ui-font);font-size:11px;letter-spacing:.12em;color:var(--text3);margin-top:3px}
+  .acc-cap{font-family:var(--ui-font);font-size:12px;letter-spacing:.16em;color:var(--text3)}
+  .acc-title{font-family:var(--title-font);font-weight:700;font-size:16px;color:var(--text);margin-top:8px}
+  .acc-hint{font-family:var(--ui-font);font-size:13px;color:var(--text2);line-height:1.75;margin-top:6px}
+
+  /* 导出页 */
+  .pagetitle{font-family:var(--title-font);font-weight:700;font-size:24px;color:var(--text);letter-spacing:.06em;position:relative}
+  .statusline{display:flex;align-items:center;gap:8px;margin-top:7px;font-family:var(--ui-font);font-size:12px;color:var(--text2)}
+  .secrow{display:flex;align-items:center;justify-content:space-between;gap:8px}
+  .sectitle{font-family:var(--title-font);font-weight:700;font-size:15px;color:var(--text)}
+  .btn-mini{font-family:var(--ui-font);font-size:12px;color:var(--text2);background:var(--surface);border:1px solid var(--border);border-radius:var(--r-md);padding:7px 13px;letter-spacing:.06em;box-shadow:0 1px 3px rgba(47,31,13,.05);cursor:pointer}
+  .btn-mini:hover{color:var(--gold);border-color:var(--goldline)}
+  .steps{font-family:var(--ui-font);font-size:13px;color:var(--text2);line-height:2;margin-top:9px}
+
+  /* 底部导航（与 App 一致：3 tab） */
+  .bottomnav{display:flex;background:var(--nav-bg);border-top:1px solid var(--border);padding:8px 0 10px}
+  .navitem{flex:1;display:flex;flex-direction:column;align-items:center;gap:4px;font-family:var(--ui-font);font-size:11px;letter-spacing:.08em;color:var(--text3);position:relative}
+  .navitem .ic{font-size:19px;line-height:1;font-weight:400}
+  .navitem.on{color:var(--gold);font-weight:700}
+  .navitem.on .ic{transform:translateY(-1px)}
+  body.k-nav-1 .bottomnav{border-top:none}
+  body.k-nav-3 .bottomnav{position:relative}
+  body.k-nav-3 .bottomnav::before{content:"";position:absolute;left:0;right:0;top:-1px;height:2px;background:linear-gradient(90deg,transparent,#C9973B,transparent)}
+
+  /* ===== 标题方案 ===== */
+  body.k-title-2 .pagetitle{padding-bottom:11px}
+  body.k-title-2 .pagetitle::after{content:"";position:absolute;left:0;bottom:0;width:104px;height:2px;border-radius:1px;background:linear-gradient(90deg,var(--gold2),transparent)}
+  body.k-title-3 .pagetitle{display:inline-flex;align-items:center;gap:10px}
+  body.k-title-3 .pagetitle::before{content:"齐";width:26px;height:26px;border-radius:4px;background:var(--seal);color:#F7EFE2;font-size:13px;font-family:var(--font-serif);font-weight:700;display:inline-flex;align-items:center;justify-content:center;box-shadow:0 2px 5px rgba(0,0,0,.16)}
+  body.k-title-4 .pagetitle{padding-left:13px}
+  body.k-title-4 .pagetitle::before{content:"";position:absolute;left:0;top:3px;bottom:3px;width:4px;border-radius:2px;background:linear-gradient(180deg,var(--gold2),var(--gold))}
+  /* 按钮方案 */
+  body.k-btn-2 .btn.primary{background:var(--brown-dark);border:1.5px solid var(--goldline)}
+  body.k-btn-3 .btn.primary{background:linear-gradient(135deg,#C9973B,#A8701E);color:#3F2D1B;border:none}
+  body.k-btn-4 .btn.primary{background:transparent;color:var(--brown);border:1.5px solid var(--brown);box-shadow:none}
+  /* 顶栏方案 */
+  body.k-header-2{--header-bg:#6B4928;--header-color:#F4E9D2;--header-line:#8A6A45}
+  body.k-header-2 .h-status{color:#E6D9BC}
+  body.k-header-3{--header-bg:#3F2D1B;--header-color:#F1E5CB;--header-line:#5C4A33}
+  body.k-header-3 .h-status{color:#D9C9AC}
+
+  /* ===== 右侧面板 ===== */
+  .panel{flex:1;min-width:340px;display:flex;flex-direction:column;gap:16px}
+  .panel-head{display:flex;align-items:baseline;justify-content:space-between;gap:10px;flex-wrap:wrap}
+  .panel-head h2{font-family:var(--title-font);font-weight:700;font-size:18px}
+  .panel-head .reset{font-family:var(--ui-font);font-size:12px;color:var(--text3);background:none;border:1px solid var(--border);border-radius:8px;padding:5px 12px;cursor:pointer}
+  .panel-head .reset:hover{color:var(--gold);border-color:var(--gold)}
+  .group{font-family:var(--ui-font);font-size:12px;letter-spacing:.2em;color:var(--text3);margin:8px 2px 0}
+  .ctl{background:var(--surface);border:1px solid var(--border);border-radius:14px;box-shadow:0 2px 10px rgba(47,31,13,.05);padding:14px 16px}
+  .ctl .lab{font-family:var(--ui-font);font-size:11px;letter-spacing:.14em;color:var(--text3);margin-bottom:10px}
+  .opts{display:flex;gap:8px;flex-wrap:wrap}
+  .opt{font-family:var(--ui-font);font-size:13px;color:var(--text2);padding:7px 14px;border-radius:9px;cursor:pointer;background:var(--card);border:1px solid var(--border);transition:all .18s ease}
+  .opt:hover{border-color:var(--gold);color:var(--gold)}
+  .opt.sel{background:var(--brown);color:#F4E9D2;border-color:var(--brown)}
+  .box{background:var(--surface);border:1px solid var(--border);border-radius:14px;box-shadow:0 2px 10px rgba(47,31,13,.05);padding:14px 16px}
+  .box .head{display:flex;align-items:center;justify-content:space-between;margin-bottom:10px}
+  .box .lab{font-family:var(--ui-font);font-size:11px;letter-spacing:.14em;color:var(--text3)}
+  .spec-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+  .spec-col .sub{font-family:var(--ui-font);font-size:10px;letter-spacing:.16em;color:var(--text3);margin-bottom:8px}
+  .swatches{display:flex;gap:6px;flex-wrap:wrap}
+  .sw{width:26px;height:26px;border-radius:7px;border:1px solid rgba(0,0,0,.08)}
+  .type-row{display:flex;justify-content:space-between;align-items:baseline;padding:3px 0;border-bottom:1px dashed var(--border)}
+  .type-row .t{font-size:12px;color:var(--text2)}
+  .type-row .s{font-family:var(--ui-font);font-size:10px;color:var(--text3)}
+  .sp-chips{display:flex;gap:5px;flex-wrap:wrap}
+  .sp{height:14px;background:var(--gold);opacity:.75;border-radius:3px}
+  .copy{font-family:var(--ui-font);font-size:12px;color:#F4E9D2;background:var(--brown);border:none;border-radius:8px;padding:6px 14px;cursor:pointer}
+  .copy:hover{filter:brightness(1.1)}
+  pre{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;line-height:1.7;color:var(--text2);background:var(--card2);border-radius:10px;padding:14px;max-height:380px;overflow:auto;white-space:pre-wrap;word-break:break-all}
+  .note{margin-top:10px;font-family:var(--ui-font);font-size:12px;color:var(--text3);line-height:1.8}
+  @media (max-width:900px){ .stage{flex-direction:column} .phone{width:100%;flex:none} }
+</style>
+</head>
+<body>
+<div class="page">
+
+  <header class="page-head">
+    <h1>齐目导览 · 设计规范配置器</h1>
+    <p>已按 App 真实结构重排：固定顶部（徽章 + 标题 + 状态）、底部「设备 / 对话 / 导出」三 Tab、对话页底部操作栏与气泡样式均与线上一致。右侧继续点选调参，底部 JSON 即最终规范。</p>
+    <span class="hint">提示：页面没更新请硬刷新（Cmd+Shift+R）。选择自动保存。</span>
+  </header>
+
+  <nav class="page-tabs">
+    <button class="ptab sel" data-page="dialogue">① 对话页</button>
+    <button class="ptab" data-page="device">② 设备页</button>
+    <button class="ptab" data-page="export">③ 导出页</button>
+  </nav>
+
+  <main class="stage">
+
+    <div class="phone">
+      <div class="screen">
+        <div class="sbg dialogue" id="sbg"></div>
+        <div class="sv">
+          <div class="statusbar"><span>9:41</span><span>●</span></div>
+          <div class="header">
+            <div class="badge">⌐</div>
+            <div>
+              <div class="h-title">齐目导览</div>
+              <div class="h-status"><span class="dot"></span>设备在线</div>
+            </div>
+          </div>
+
+          <!-- 对话页 -->
+          <div class="content pageview sel" id="pv-dialogue">
+            <div class="card">
+              <div class="sess">
+                <div class="sess-ic">♪</div>
+                <div>
+                  <div class="t">齐目 AI 导览</div>
+                  <div class="s">语音讲解 · 拍照识别已就绪</div>
+                </div>
+                <div class="st"><span class="dot"></span>对话中</div>
+              </div>
+            </div>
+            <div class="chat">
+              <div class="bubble">
+                <div class="bd">
+                  <div class="who">齐目 AI</div>
+                  <div class="tx">您好，我是义净寺导览助手。想了解哪件展品，或者直接问我「这尊鼎是做什么的」。</div>
+                  <div class="tm">14:02</div>
+                </div>
+              </div>
+              <div class="bubble self">
+                <div class="bd">
+                  <div class="who">我</div>
+                  <div class="tx">这个鼎是做什么用的？</div>
+                  <div class="tm">14:03</div>
+                </div>
+              </div>
+              <div class="bubble">
+                <div class="bd">
+                  <div class="who">齐目 AI</div>
+                  <div class="tx">这是一件商代晚期的青铜方鼎，主要用于祭祀与宴飨，器身饕餮纹具有镇慑之意。</div>
+                  <div class="tm">14:03</div>
+                </div>
+              </div>
+            </div>
+            <div class="card" style="display:flex;gap:12px;align-items:flex-start">
+              <div class="thumb"></div>
+              <div style="flex:1">
+                <div style="display:flex;align-items:center;gap:8px">
+                  <span style="font-family:var(--title-font);font-weight:700;font-size:15px;color:var(--text)">青铜方鼎</span>
+                  <span style="font-family:var(--ui-font);font-size:10px;letter-spacing:.1em;color:var(--gold);border:1px solid var(--gold);border-radius:var(--r-sm);padding:2px 7px">商代晚期</span>
+                </div>
+                <p style="font-size:12px;line-height:1.75;color:var(--text2);margin-top:6px">已识别展品，正在讲解…</p>
+              </div>
+            </div>
+          </div>
+
+          <!-- 对话页底部操作栏 -->
+          <div class="bottompanel" id="bp-dialogue">
+            <div class="bp-status"><span class="dot"></span>齐目 AI 已就绪，点击拍照提问或开始对话</div>
+            <div class="bp-btns">
+              <div class="btn outline">📷 拍照提问</div>
+              <div class="btn soft">♪ 开始对话</div>
+            </div>
+          </div>
+
+          <!-- 设备页 -->
+          <div class="content pageview" id="pv-device">
+            <div class="card">
+              <div class="dev-head">
+                <div class="itile">⌐</div>
+                <div>
+                  <div class="nm">齐目眼镜 · QM-2408</div>
+                  <div class="id">SN QM2408-0177 · BLE 已连接</div>
+                </div>
+              </div>
+              <div class="metrics">
+                <div class="metric"><div class="v">86%</div><div class="k">电量</div></div>
+                <div class="metric"><div class="v">2.3.1</div><div class="k">固件版本</div></div>
+              </div>
+              <div class="metrics">
+                <div class="metric"><div class="v">12</div><div class="k">待导出照片</div></div>
+                <div class="metric"><div class="v">01:42</div><div class="k">在线时长</div></div>
+              </div>
+            </div>
+            <div class="card accent">
+              <div class="acc-cap">下次导览场馆</div>
+              <div class="acc-title">义净寺 · 大雄宝殿</div>
+              <div class="acc-hint">游客扫码或管理员确认后开始本次导览，结束后请到导出页保存照片。</div>
+              <div class="btnrow" style="display:flex;margin-top:13px"><div class="btn primary">开始导览</div></div>
+            </div>
+            <div class="card soft">
+              <div class="row"><span style="color:var(--gold);font-size:15px">ⓘ</span><span class="kicker">使用提示</span></div>
+              <div class="hint2" style="margin-top:8px">长按眼镜左键可快速拍照；归还前请先导出照片，结束游览会清空眼镜端媒体。</div>
+            </div>
+          </div>
+
+          <!-- 导出页 -->
+          <div class="content pageview" id="pv-export">
+            <div class="pagetitle" id="pageTitle">导出照片</div>
+            <div class="statusline"><span class="dot"></span>设备已连接 · 会话就绪</div>
+            <div class="card">
+              <div class="secrow">
+                <span class="sectitle">照片</span>
+                <button class="btn-mini">↻ 刷新</button>
+              </div>
+              <div class="metrics">
+                <div class="metric"><div class="v">12</div><div class="k">待导出</div></div>
+                <div class="metric"><div class="v">8</div><div class="k">已保存</div></div>
+              </div>
+            </div>
+            <div class="card accent">
+              <div class="acc-cap">归还流程</div>
+              <div class="steps">① 检查眼镜端待导出照片<br>② 导出并保存到本地相册<br>③ 结束游览并清理设备</div>
+              <div class="btnrow" style="display:flex;margin-top:13px"><div class="btn primary">结束游览并归还</div></div>
+            </div>
+            <div class="card soft">
+              <div class="row"><span style="color:var(--gold);font-size:15px">ⓘ</span><span class="kicker">提示</span></div>
+              <div class="hint2" style="margin-top:8px">结束游览会清空眼镜端媒体，请确认照片已全部导出。</div>
+            </div>
+          </div>
+
+          <!-- 底部导航（与 App 一致） -->
+          <div class="bottomnav">
+            <div class="navitem" data-nav="device"><span class="ic">⚙</span>设备</div>
+            <div class="navitem on" data-nav="dialogue"><span class="ic">◉</span>对话</div>
+            <div class="navitem" data-nav="export"><span class="ic">↩</span>导出</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <aside class="panel">
+      <div class="panel-head">
+        <h2>设计配置</h2>
+        <button class="reset" id="resetBtn">恢复默认</button>
+      </div>
+      <div id="controls"></div>
+
+      <div class="box">
+        <div class="head"><span class="lab">实时规范速览</span></div>
+        <div class="spec-grid">
+          <div class="spec-col"><div class="sub">色板</div><div class="swatches" id="swatches"></div></div>
+          <div class="spec-col"><div class="sub">字级</div><div id="typescale"></div></div>
+        </div>
+        <div class="spec-col" style="margin-top:12px"><div class="sub">间距刻度</div><div class="sp-chips" id="spacing"></div></div>
+      </div>
+
+      <div class="box">
+        <div class="head">
+          <span class="lab">设计规范 JSON（复制给我）</span>
+          <button class="copy" id="copyBtn">复制 JSON</button>
+        </div>
+        <pre id="jsonOut"></pre>
+        <p class="note">背景图为设计师给定（对话页 20% 蒙层）；JSON 含三页背景规格与全部组件方案。</p>
+      </div>
+    </aside>
+
+  </main>
+</div>
+
+<script>const CONTROLS = [
+  /* ===== 全局维度 ===== */
+  {key:'radius', group:'全局维度', label:'圆角档位',
+    options:[
+      {label:'10 / 8 / 4', vars:{'--r-lg':'10px','--r-md':'8px','--r-sm':'4px'}, json:{card:10,tile:8,chip:4}},
+      {label:'12 / 10 / 6', vars:{'--r-lg':'12px','--r-md':'10px','--r-sm':'6px'}, json:{card:12,tile:10,chip:6}},
+      {label:'14 / 11 / 6', vars:{'--r-lg':'14px','--r-md':'11px','--r-sm':'6px'}, json:{card:14,tile:11,chip:6}},
+      {label:'16 / 13 / 8', vars:{'--r-lg':'16px','--r-md':'13px','--r-sm':'8px'}, json:{card:16,tile:13,chip:8}},
+      {label:'18 / 14 / 10', vars:{'--r-lg':'18px','--r-md':'14px','--r-sm':'10px'}, json:{card:18,tile:14,chip:10}},
+    ], def:1},
+  {key:'font', group:null, label:'字体',
+    options:[
+      {label:'标题宋体 · 正文黑体', vars:{'--title-font':'var(--font-serif)','--body-font':'var(--font-sans)','--ui-font':'var(--font-sans)','--title-w':'700'}, json:{title:'serif',body:'sans',titleWeight:700}},
+      {label:'全宋体（书卷）', vars:{'--title-font':'var(--font-serif)','--body-font':'var(--font-serif)','--ui-font':'var(--font-serif)','--title-w':'700'}, json:{title:'serif',body:'serif',titleWeight:700}},
+      {label:'全黑体（现代）', vars:{'--title-font':'var(--font-sans)','--body-font':'var(--font-sans)','--ui-font':'var(--font-sans)','--title-w':'700'}, json:{title:'sans',body:'sans',titleWeight:700}},
+    ], def:0},
+  {key:'space', group:null, label:'页面留白（内容左右）',
+    options:[
+      {label:'紧凑 16', vars:{'--spacing':'16px'}, json:16},
+      {label:'标准 20', vars:{'--spacing':'20px'}, json:20},
+      {label:'标准 24', vars:{'--spacing':'24px'}, json:24},
+      {label:'宽松 32', vars:{'--spacing':'32px'}, json:32},
+    ], def:1},
+  {key:'cardpad', group:null, label:'卡片内边距',
+    options:[
+      {label:'紧凑 14', vars:{'--card-pad':'14px'}, json:14},
+      {label:'标准 16', vars:{'--card-pad':'16px'}, json:16},
+      {label:'宽松 18', vars:{'--card-pad':'18px'}, json:18},
+    ], def:1},
+  {key:'accent', group:null, label:'鎏金浓度',
+    options:[
+      {label:'标准金', vars:{'--gold':'#A8701E','--gold2':'#C9973B'}, json:{gold:'#A8701E',goldLight:'#C9973B'}},
+      {label:'亮金', vars:{'--gold':'#C9973B','--gold2':'#D9B36A'}, json:{gold:'#C9973B',goldLight:'#D9B36A'}},
+      {label:'暗金', vars:{'--gold':'#89570D','--gold2':'#A8701E'}, json:{gold:'#89570D',goldLight:'#A8701E'}},
+    ], def:0},
+
+  /* ===== 组件方案 ===== */
+  {key:'header', group:'组件方案', label:'顶部方案（标题+状态）',
+    options:[
+      {label:'浅色宣纸（现 App）', cls:'', vars:{'--header-bg':'#F7F2E7','--header-color':'#1E1208','--header-line':'#E3D9C9'}, json:{name:'浅色宣纸',bg:'#F7F2E7',color:'#1E1208'}},
+      {label:'檀棕匾额', cls:'k-header-2', vars:{'--header-bg':'#6B4928','--header-color':'#F4E9D2','--header-line':'#8A6A45'}, json:{name:'檀棕匾额',bg:'#6B4928',color:'#F4E9D2'}},
+      {label:'深褐匾额', cls:'k-header-3', vars:{'--header-bg':'#3F2D1B','--header-color':'#F1E5CB','--header-line':'#5C4A33'}, json:{name:'深褐匾额',bg:'#3F2D1B',color:'#F1E5CB'}},
+    ], def:0},
+  {key:'title', group:null, label:'标题方案（页面大标题）',
+    options:[
+      {label:'纯文字', cls:'', vars:{}, json:{name:'纯文字',style:'plain'}},
+      {label:'下划金线', cls:'k-title-2', vars:{}, json:{name:'下划金线',style:'underline-gold'}},
+      {label:'印章点缀', cls:'k-title-3', vars:{}, json:{name:'印章点缀',style:'seal-mark'}},
+      {label:'左侧金条', cls:'k-title-4', vars:{}, json:{name:'左侧金条',style:'gold-bar'}},
+    ], def:1},
+  {key:'button', group:null, label:'主按钮方案',
+    options:[
+      {label:'实心檀棕', cls:'', vars:{'--primary-bg':'#6B4928','--primary-color':'#F4E9D2','--primary-border':'1px solid #C9973B'}, json:{name:'实心檀棕',bg:'#6B4928',color:'#F4E9D2',border:'1px #C9973B'}},
+      {label:'深褐描金', cls:'k-btn-2', vars:{'--primary-bg':'#3F2D1B','--primary-color':'#F1E5CB','--primary-border':'1.5px solid #D9BF98'}, json:{name:'深褐描金',bg:'#3F2D1B',color:'#F1E5CB',border:'1.5px #D9BF98'}},
+      {label:'鎏金渐变', cls:'k-btn-3', vars:{'--primary-bg':'#C9973B','--primary-color':'#3F2D1B','--primary-border':'none'}, json:{name:'鎏金渐变',bg:'linear-gradient(#C9973B,#A8701E)',color:'#3F2D1B',border:'none'}},
+      {label:'描边文字', cls:'k-btn-4', vars:{'--primary-bg':'transparent','--primary-color':'#6B4928','--primary-border':'1.5px solid #6B4928'}, json:{name:'描边文字',bg:'transparent',color:'#6B4928',border:'1.5px #6B4928'}},
+    ], def:0},
+  {key:'mix', group:null, label:'卡片组合（描边/柔影错落）',
+    options:[
+      {label:'主卡描边 · 强调柔影', cls:'', vars:{}, json:{name:'主卡描边·强调柔影',regular:'border',accent:'soft-shadow'}},
+      {label:'主卡柔影 · 强调描边', cls:'k-mix-2', vars:{}, json:{name:'主卡柔影·强调描边',regular:'soft-shadow',accent:'border'}},
+      {label:'全部细描边', cls:'k-mix-3', vars:{}, json:{name:'全部细描边',regular:'border',accent:'border'}},
+      {label:'全部柔影无框', cls:'k-mix-4', vars:{}, json:{name:'全部柔影无框',regular:'soft-shadow',accent:'soft-shadow'}},
+    ], def:1},
+  {key:'bubble', group:null, label:'对话框样式（气泡）',
+    options:[
+      {label:'宣纸描边', cls:'', vars:{}, json:{name:'宣纸描边',ai:'#FAF6EC',user:'#F2E9D9',border:'1px #D8CCBC',shadow:'none'}},
+      {label:'白底描边', cls:'k-bub-2', vars:{}, json:{name:'白底描边',ai:'#FFFEF9',user:'#F1EADA',border:'1px #D8CCBC',shadow:'none'}},
+      {label:'柔影无框', cls:'k-bub-3', vars:{}, json:{name:'柔影无框',ai:'#FFFEF9',user:'#F1EADA',border:'none',shadow:'soft'}},
+      {label:'描金细边', cls:'k-bub-4', vars:{}, json:{name:'描金细边',ai:'#FAF6EC',user:'#F2E9D9',border:'1px #D9BF98',shadow:'none'}},
+      {label:'墨线工笔', cls:'k-bub-5', vars:{}, json:{name:'墨线工笔',ai:'#FAF6EC',user:'#F1EADA',border:'1px #B9A67F',shadow:'none'}},
+    ], def:0},
+  {key:'met', group:null, label:'小模块样式（指标块）',
+    options:[
+      {label:'纯色柔块', cls:'', vars:{}, json:{name:'纯色柔块',fill:'#F1EADA',border:'none',accent:'none'}},
+      {label:'细描边块', cls:'k-met-2', vars:{}, json:{name:'细描边块',fill:'#F1EADA',border:'1px #D8CCBC',accent:'none'}},
+      {label:'左侧金线', cls:'k-met-3', vars:{}, json:{name:'左侧金线',fill:'#F1EADA',border:'none',accent:'left-gold-line'}},
+      {label:'顶部金线', cls:'k-met-4', vars:{}, json:{name:'顶部金线',fill:'#F1EADA',border:'none',accent:'top-gold-line'}},
+    ], def:2},
+  {key:'nav', group:null, label:'底部导航方案',
+    options:[
+      {label:'无分隔线', cls:'k-nav-1', vars:{}, json:{name:'无分隔线',divider:'none'}},
+      {label:'细线分隔', cls:'', vars:{}, json:{name:'细线分隔',divider:'1px #D8C9AE'}},
+      {label:'金线分隔', cls:'k-nav-3', vars:{}, json:{name:'金线分隔',divider:'gold-gradient'}},
+    ], def:1},
+];
+
+const STORE_KEY = 'qimu-design-config-v5';
+const selected = {};
+
+const PAGES = {
+  dialogue: {nav:'dialogue'},
+  device:   {nav:'device'},
+  export:   {nav:'export'},
+};
+
+function defaultSelection(){
+  const s = {}; CONTROLS.forEach(c => s[c.key] = c.def); return s;
+}
+
+function buildControls(){
+  const wrap = document.getElementById('controls');
+  wrap.innerHTML = '';
+  let lastGroup = null;
+  CONTROLS.forEach(c => {
+    if (c.group && c.group !== lastGroup) {
+      const g = document.createElement('div');
+      g.className = 'group';
+      g.textContent = '— ' + c.group + ' —';
+      wrap.appendChild(g);
+      lastGroup = c.group;
+    }
+    const box = document.createElement('div');
+    box.className = 'ctl';
+    box.innerHTML = '<div class="lab">' + c.label + '</div><div class="opts"></div>';
+    c.options.forEach((opt, i) => {
+      const b = document.createElement('button');
+      b.className = 'opt';
+      b.textContent = opt.label;
+      b.addEventListener('click', () => { selected[c.key] = i; render(); });
+      box.querySelector('.opts').appendChild(b);
+    });
+    wrap.appendChild(box);
+  });
+}
+
+function applyVars(){
+  const st = document.body.style;
+  CONTROLS.forEach(c => {
+    Object.entries(c.options[selected[c.key]].vars || {}).forEach(([k, v]) => st.setProperty(k, v));
+  });
+}
+
+function applyClasses(){
+  const pool = ['k-mix-2','k-mix-3','k-mix-4','k-bub-2','k-bub-3','k-bub-4','k-bub-5','k-met-2','k-met-3','k-met-4','k-title-2','k-title-3','k-title-4','k-btn-2','k-btn-3','k-btn-4','k-header-2','k-header-3','k-nav-1','k-nav-3'];
+  pool.forEach(cl => document.body.classList.remove(cl));
+  CONTROLS.forEach(c => {
+    const cls = c.options[selected[c.key]].cls;
+    if (cls) document.body.classList.add(cls);
+  });
+}
+
+function switchPage(page){
+  document.querySelectorAll('.ptab').forEach(t => t.classList.toggle('sel', t.dataset.page === page));
+  document.querySelectorAll('.pageview').forEach(p => p.classList.toggle('sel', p.id === 'pv-' + page));
+  document.querySelectorAll('.navitem').forEach(n => n.classList.toggle('on', n.dataset.nav === page));
+  document.getElementById('sbg').className = 'sbg ' + page;
+  document.getElementById('bp-dialogue').style.display = page === 'dialogue' ? '' : 'none';
+}
+
+function pick(){
+  const cs = {};
+  CONTROLS.forEach(c => cs[c.key] = c.options[selected[c.key]].json);
+  return cs;
+}
+
+function buildSpec(){
+  const cs = pick();
+  return {
+    style: 'B · 徽派框景（自定义微调）',
+    source: {colorsXml:'app/src/main/res/values/colors.xml', stringsXml:'app/src/main/res/values/strings.xml'},
+    selected: {
+      radius: cs.radius, font: cs.font, pageSpacing: cs.space, cardPadding: cs.cardpad,
+      accent: cs.accent, header: cs.header, pageTitle: cs.title,
+      primaryButton: cs.button, cardMix: cs.mix, bubble: cs.bubble, metric: cs.met, bottomNav: cs.nav,
+    },
+    spec: {
+      pageBackground: [
+        {page:'对话页', image:'qimu_dialogue_page_background.png', alpha:0.2, baseColor:'#F6F0E4'},
+        {page:'设备页', image:'qimu_device_page_background.jpg', alpha:1.0},
+        {page:'导出页', image:'qimu_cloud_pattern.jpg', alpha:1.0},
+      ],
+      layout: {topBar:'徽章(40dp 圆形金底) + 品牌标题 + 状态点/文案', bottomNav:'设备 / 对话 / 导出 三 Tab'},
+      colors: {
+        text: {primary:'#1E1208', secondary:'#7A6248', tertiary:'#9A8872'},
+        brand: {gold:cs.accent.gold, goldLight:cs.accent.goldLight, brown:'#6B4928', brownDark:'#52351D', seal:'#8C3B2A'},
+        surfaces: {page:'#F6F0E4', card:'#FFFEF9', cardAccent:'#F2E9D9', cardSoft:'#F1EADA', metricTile:'#F1EADA', iconTile:'#E9DAC3', iconBg:'#ECE4D4', nav:'#FCFAF4', header:'#F7F2E7', bubbleAI:'#FAF6EC', bubbleUser:'#F2E9D9'},
+        lines: {outline:'#D8CCBC', outlineGold:'#D9BF98', borderStrong:'#B9A67F'},
+        status: {connected:'#5F7D55', connecting:'#6578D6', warning:'#A86C16', error:'#9C4B40'},
+      },
+      typeScale: [
+        {name:'Brand/Header', size:18, weight:700, font:cs.font.title, usage:'顶部品牌标题'},
+        {name:'PageTitle', size:24, weight:700, font:cs.font.title, usage:'页面大标题'},
+        {name:'SectionTitle', size:15, weight:700, font:cs.font.title, usage:'卡片/区块标题'},
+        {name:'Body', size:14, weight:400, font:cs.font.body, usage:'正文/气泡'},
+        {name:'Caption', size:12, weight:400, font:cs.font.body, usage:'辅助说明'},
+        {name:'Label', size:10, weight:400, font:cs.font.body, usage:'标签/角标'},
+      ],
+      spacingScale: [4, 8, 12, 16, 20, 24, 32],
+      radius: cs.radius,
+      components: {
+        header: cs.header,
+        pageTitle: cs.pageTitle,
+        card: cs.mix,
+        chatBubble: {radius:cs.radius.card, padding:12, avatar:'none（已移除）', aiWidth:'100% 全宽', userWidth:'fit-content（内容撑开，上限 86%）右对齐', ...cs.bubble},
+        metricTile: {radius:cs.radius.tile, ...cs.met},
+        iconTile: {radius:cs.radius.tile, fill:'#E9DAC3', ring:'1px #D9BF98'},
+        buttonPrimary: cs.button,
+        buttonOutline: {radius:cs.radius.card, border:'1px #B9A67F', text:'#6B4928'},
+        buttonSoft: {radius:cs.radius.card, fill:'#E9DAC3', text:'#3F2D1B'},
+        bottomNav: cs.nav,
+        pageSpacing: cs.space,
+      },
+    },
+  };
+}
+
+function renderSwatches(){
+  const cs = pick();
+  const colors = [
+    ['#1E1208','文字主'], ['#7A6248','文字次'], ['#9A8872','文字弱'],
+    [cs.accent.gold,'鎏金'], [cs.accent.goldLight,'亮金'], ['#6B4928','檀棕'],
+    ['#FFFEF9','卡片'], ['#F2E9D9','卡片强调'], ['#F1EADA','卡片柔'],
+    ['#E9DAC3','图标金底'], ['#ECE4D4','图标底'], ['#FAF6EC','AI气泡'],
+    ['#5F7D55','成功'], ['#A86C16','警告'], ['#9C4B40','错误'],
+  ];
+  document.getElementById('swatches').innerHTML = colors.map(c =>
+    '<span class="sw" style="background:' + c[0] + '" title="' + c[1] + ' ' + c[0] + '"></span>'
+  ).join('');
+}
+
+function renderTypeScale(){
+  const cs = pick();
+  const rows = [['Header','18·700'],['PageTitle','24·700'],['Section','15·700'],['Body','14'],['Caption','12'],['Label','10']];
+  document.getElementById('typescale').innerHTML = rows.map(r =>
+    '<div class="type-row"><span class="t">' + r[0] + '</span><span class="s">' + r[1] + ' · ' + cs.font.body + '</span></div>'
+  ).join('');
+}
+
+function renderSpacing(){
+  document.getElementById('spacing').innerHTML = [4,8,12,16,20,24,32].map(v =>
+    '<span class="sp" style="width:' + v + 'px" title="' + v + 'dp"></span>'
+  ).join('');
+}
+
+function render(){
+  applyVars();
+  applyClasses();
+  document.querySelectorAll('.ctl').forEach((box, ci) => {
+    box.querySelectorAll('.opt').forEach((b, oi) => {
+      b.classList.toggle('sel', oi === selected[CONTROLS[ci].key]);
+    });
+  });
+  renderSwatches();
+  renderTypeScale();
+  renderSpacing();
+  document.getElementById('jsonOut').textContent = JSON.stringify(buildSpec(), null, 2);
+  localStorage.setItem(STORE_KEY, JSON.stringify(selected));
+}
+
+function init(){
+  let saved = null;
+  try { saved = JSON.parse(localStorage.getItem(STORE_KEY)); } catch(e){}
+  CONTROLS.forEach(c => selected[c.key] = (saved && typeof saved[c.key] === 'number') ? saved[c.key] : c.def);
+  buildControls();
+  document.querySelectorAll('.ptab').forEach(t =>
+    t.addEventListener('click', () => switchPage(t.dataset.page)));
+  switchPage('dialogue');
+  render();
+}
+
+document.getElementById('resetBtn').addEventListener('click', () => {
+  CONTROLS.forEach(c => selected[c.key] = defaultSelection()[c.key]);
+  render();
+});
+
+document.getElementById('copyBtn').addEventListener('click', async () => {
+  const text = document.getElementById('jsonOut').textContent;
+  try {
+    await navigator.clipboard.writeText(text);
+    const b = document.getElementById('copyBtn');
+    b.textContent = '已复制 ✓';
+    setTimeout(() => b.textContent = '复制 JSON', 1500);
+  } catch(e){
+    const ta = document.createElement('textarea');
+    ta.value = text; document.body.appendChild(ta); ta.select();
+    document.execCommand('copy'); ta.remove();
+    alert('已复制');
+  }
+});
+
+init();</script>
+</body>
+</html>

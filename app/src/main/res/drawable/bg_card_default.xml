@@ -1,6 +1,39 @@
 <?xml version="1.0" encoding="utf-8"?>
-<shape xmlns:android="http://schemas.android.com/apk/res/android" android:shape="rectangle">
-    <solid android:color="@color/qimu_card" />
-    <corners android:radius="18dp" />
-    <stroke android:width="1dp" android:color="@color/qimu_outline" />
-</shape>
+<!-- 主卡：米白柔影无框，圆角 12；内置暖棕柔影，模拟 web 多层柔和投影 -->
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- 外圈柔光：大而淡 -->
+    <item
+        android:height="24dp"
+        android:gravity="bottom">
+        <shape android:shape="rectangle">
+            <corners android:radius="@dimen/radius_card" />
+            <gradient
+                android:startColor="#0E2F1F0D"
+                android:endColor="#002F1F0D"
+                android:angle="270" />
+        </shape>
+    </item>
+    <!-- 近缘阴影：小而深 -->
+    <item
+        android:height="10dp"
+        android:gravity="bottom">
+        <shape android:shape="rectangle">
+            <corners android:radius="@dimen/radius_card" />
+            <gradient
+                android:startColor="#142F1F0D"
+                android:endColor="#002F1F0D"
+                android:angle="270" />
+        </shape>
+    </item>
+    <!-- 卡片表面 -->
+    <item
+        android:left="1dp"
+        android:top="0dp"
+        android:right="1dp"
+        android:bottom="4dp">
+        <shape android:shape="rectangle">
+            <solid android:color="@color/qimu_surface" />
+            <corners android:radius="@dimen/radius_card" />
+        </shape>
+    </item>
+</layer-list>

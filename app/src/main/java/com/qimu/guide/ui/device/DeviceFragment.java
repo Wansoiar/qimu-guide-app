@@ -15,7 +15,6 @@ import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.Button;
-import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.TextView;
 import android.widget.Toast;
@@ -65,7 +64,6 @@ public class DeviceFragment extends Fragment {
     private View layoutDisconnected, layoutConnected;
     private TextView tvScanStatus, tvDeviceName, tvDeviceId, tvBattery, tvFirmware;
     private TextView tvBleStatus, tvAudioStatus, tvDeviceReady;
-    private ImageView ivBleStatus, ivAudioStatus;
     private View btnScan;
     private View layoutTourStart, layoutTourActive, layoutCleanupWarning;
     private Button btnStartTour;
@@ -164,8 +162,6 @@ public class DeviceFragment extends Fragment {
         tvBleStatus = v.findViewById(R.id.tv_ble_status);
         tvAudioStatus = v.findViewById(R.id.tv_audio_status);
         tvDeviceReady = v.findViewById(R.id.tv_device_ready);
-        ivBleStatus = v.findViewById(R.id.iv_ble_status);
-        ivAudioStatus = v.findViewById(R.id.iv_audio_status);
         recyclerDevices = v.findViewById(R.id.recycler_devices);
         btnScan = v.findViewById(R.id.btn_scan);
         layoutTourStart = v.findViewById(R.id.layout_tour_start);
@@ -675,44 +671,35 @@ public class DeviceFragment extends Fragment {
     }
 
     private void updateBleConnectionStatus(int state) {
-        if (tvBleStatus == null || ivBleStatus == null || !isAdded()) return;
+        if (tvBleStatus == null || !isAdded()) return;
         if (state == CRPBleConnectionStateListener.STATE_CONNECTED) {
-            renderConnectionStatus(ivBleStatus, tvBleStatus, R.drawable.ic_link_20,
-                    R.string.connection_connected, R.color.qimu_connected);
+            renderConnectionStatus(tvBleStatus, R.string.connection_connected, R.color.qimu_text_primary);
         } else if (state == CRPBleConnectionStateListener.STATE_CONNECTING
                 || state == CRPBleConnectionStateListener.STATE_DISCONNECTING
                 || bleService.isReconnecting()) {
-            renderConnectionStatus(ivBleStatus, tvBleStatus, R.drawable.ic_link_20,
-                    bleService.isReconnecting()
+            renderConnectionStatus(tvBleStatus, bleService.isReconnecting()
                             ? R.string.connection_reconnecting
                             : R.string.connection_connecting,
                     R.color.qimu_connecting);
         } else {
-            renderConnectionStatus(ivBleStatus, tvBleStatus, R.drawable.ic_link_20,
-                    R.string.connection_disconnected, R.color.qimu_error);
+            renderConnectionStatus(tvBleStatus, R.string.connection_disconnected, R.color.qimu_error);
         }
     }
 
     private void updateAudioConnectionUI(int state) {
-        if (tvAudioStatus == null || ivAudioStatus == null || !isAdded()) return;
+        if (tvAudioStatus == null || !isAdded()) return;
         if (state == BleService.AUDIO_STATE_CONNECTED) {
-            renderConnectionStatus(ivAudioStatus, tvAudioStatus, R.drawable.ic_headset_20,
-                    R.string.connection_connected, R.color.qimu_connected);
+            renderConnectionStatus(tvAudioStatus, R.string.connection_connected, R.color.qimu_text_primary);
         } else if (state == BleService.AUDIO_STATE_CONNECTING) {
-            renderConnectionStatus(ivAudioStatus, tvAudioStatus, R.drawable.ic_headset_20,
-                    R.string.connection_connecting, R.color.qimu_connecting);
+            renderConnectionStatus(tvAudioStatus, R.string.connection_connecting, R.color.qimu_connecting);
         } else {
-            renderConnectionStatus(ivAudioStatus, tvAudioStatus, R.drawable.ic_headset_off_20,
-                    R.string.connection_disconnected, R.color.qimu_error);
+            renderConnectionStatus(tvAudioStatus, R.string.connection_disconnected, R.color.qimu_error);
         }
         updateDeviceReadyMessage();
     }
 
-    private void renderConnectionStatus(ImageView icon, TextView label,
-                                        int iconRes, int textRes, int colorRes) {
+    private void renderConnectionStatus(TextView label, int textRes, int colorRes) {
         int color = ContextCompat.getColor(requireContext(), colorRes);
-        icon.setImageResource(iconRes);
-        icon.setColorFilter(color);
         label.setText(textRes);
         label.setTextColor(color);
     }
