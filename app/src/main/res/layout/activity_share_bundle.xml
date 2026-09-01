@@ -41,12 +41,6 @@
                 android:textSize="22sp" />
         </LinearLayout>
 
-        <View
-            android:layout_width="@dimen/title_underline_width"
-            android:layout_height="@dimen/title_underline_height"
-            android:layout_marginTop="6dp"
-            android:background="@drawable/bg_title_underline" />
-
         <LinearLayout
             android:id="@+id/share_form"
             android:layout_width="match_parent"

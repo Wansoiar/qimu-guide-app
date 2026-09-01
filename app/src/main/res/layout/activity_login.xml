@@ -41,12 +41,6 @@
                 android:text="@string/login_title"
                 android:textAppearance="@style/TextAppearance.Qimu.PageTitle" />
 
-            <View
-                android:layout_width="@dimen/title_underline_width"
-                android:layout_height="@dimen/title_underline_height"
-                android:layout_marginTop="6dp"
-                android:background="@drawable/bg_title_underline" />
-
             <TextView
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"

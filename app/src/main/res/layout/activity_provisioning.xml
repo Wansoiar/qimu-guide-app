@@ -11,29 +11,15 @@
         android:layout_height="wrap_content"
         android:orientation="vertical"
         android:paddingStart="@dimen/page_margin"
-        android:paddingTop="40dp"
+        android:paddingTop="24dp"
         android:paddingEnd="@dimen/page_margin"
         android:paddingBottom="36dp">
-
-        <TextView
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="@string/provisioning_badge"
-            android:textAppearance="@style/TextAppearance.Qimu.Kicker"
-            android:textColor="@color/qimu_gold_dark" />
 
         <com.qimu.guide.ui.widget.SerifTextView
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginTop="10dp"
             android:text="@string/provisioning_title"
             android:textAppearance="@style/TextAppearance.Qimu.PageTitle" />
-
-        <View
-            android:layout_width="@dimen/title_underline_width"
-            android:layout_height="@dimen/title_underline_height"
-            android:layout_marginTop="6dp"
-            android:background="@drawable/bg_title_underline" />
 
         <TextView
             android:layout_width="match_parent"
@@ -244,9 +230,8 @@
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:layout_marginTop="14dp"
-                android:hint="@string/provisioning_phone_serial_label"
-                app:counterEnabled="true"
-                app:counterMaxLength="64">
+                android:layout_marginBottom="8dp"
+                android:hint="@string/provisioning_phone_serial_label">
 
                 <com.google.android.material.textfield.TextInputEditText
                     android:id="@+id/edit_provisioning_phone_serial"
@@ -257,15 +242,6 @@
                     android:singleLine="true" />
             </com.google.android.material.textfield.TextInputLayout>
 
-            <TextView
-                android:id="@+id/tv_provisioning_phone_serial_status"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="10dp"
-                android:letterSpacing="0.04"
-                android:text="@string/provisioning_phone_serial_unverified"
-                android:textColor="@color/qimu_text_tertiary"
-                android:textSize="12sp" />
         </LinearLayout>
 
         <LinearLayout
@@ -273,7 +249,7 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="16dp"
-            android:background="@drawable/bg_card_accent"
+            android:background="@drawable/bg_card_default"
             android:orientation="vertical"
             android:padding="@dimen/card_padding"
             android:visibility="gone">

@@ -191,7 +191,7 @@
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:layout_marginTop="16dp"
-                android:background="@drawable/bg_card_soft"
+                android:background="@drawable/bg_card_accent"
                 android:orientation="vertical"
                 android:padding="@dimen/card_padding"
                 android:visibility="gone">
@@ -199,29 +199,30 @@
                 <com.qimu.guide.ui.widget.SerifTextView
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:letterSpacing="0.05"
+                    android:letterSpacing="0.06"
                     android:text="@string/mock_order_title"
                     android:textAppearance="@style/TextAppearance.Qimu.SectionTitle"
-                    android:textColor="@color/qimu_text_primary" />
+                    android:textSize="15sp" />
 
                 <TextView
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:layout_marginTop="5dp"
-                    android:fontFamily="monospace"
+                    android:layout_marginTop="14dp"
+                    android:fontFamily="sans-serif"
+                    android:lineSpacingExtra="2dp"
                     android:text="@string/mock_order_value"
                     android:textColor="@color/qimu_gold_dark"
-                    android:textSize="24sp"
+                    android:textSize="16sp"
                     android:textStyle="bold" />
 
                 <TextView
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:layout_marginTop="5dp"
+                    android:layout_marginTop="8dp"
                     android:lineSpacingExtra="2dp"
                     android:text="@string/mock_order_hint"
                     android:textColor="@color/qimu_text_secondary"
-                    android:textSize="12sp" />
+                    android:textSize="11sp" />
             </LinearLayout>
 
             <com.google.android.material.button.MaterialButton

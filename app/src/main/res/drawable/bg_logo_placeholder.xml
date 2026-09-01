@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 顶栏 Logo 占位：圆角方块，尺寸与旧徽章一致，待正式 Logo 替换 -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android" android:shape="rectangle">
+    <solid android:color="@color/qimu_gold_light" />
+    <corners android:radius="10dp" />
+</shape>

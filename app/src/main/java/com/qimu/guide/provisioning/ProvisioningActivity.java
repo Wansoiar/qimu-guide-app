@@ -13,6 +13,7 @@ import android.text.TextUtils;
 import android.text.TextWatcher;
 import android.text.style.ForegroundColorSpan;
 import android.text.style.RelativeSizeSpan;
+import android.view.LayoutInflater;
 import android.view.View;
 import android.widget.LinearLayout;
 import android.widget.RadioButton;
@@ -58,7 +59,6 @@ public final class ProvisioningActivity extends AppCompatActivity {
     private TextView tvConnectionStatus;
     private TextView tvConnectedGlasses;
     private TextView tvScanStatus;
-    private TextView tvPhoneSerialStatus;
     private TextView tvVenuesStatus;
     private TextView tvStepCircleConnect;
     private TextView tvStepCircleSerial;
@@ -130,7 +130,6 @@ public final class ProvisioningActivity extends AppCompatActivity {
         tvConnectionStatus = findViewById(R.id.tv_provisioning_connection_status);
         tvConnectedGlasses = findViewById(R.id.tv_provisioning_glasses);
         tvScanStatus = findViewById(R.id.tv_provisioning_scan_status);
-        tvPhoneSerialStatus = findViewById(R.id.tv_provisioning_phone_serial_status);
         tvVenuesStatus = findViewById(R.id.tv_provisioning_venues_status);
         tvStepCircleConnect = findViewById(R.id.tv_step_circle_connect);
         tvStepCircleSerial = findViewById(R.id.tv_step_circle_serial);
@@ -174,7 +173,7 @@ public final class ProvisioningActivity extends AppCompatActivity {
                     editable.replace(0, editable.length(), normalized);
                     editing = false;
                 }
-                updateSerialStatus();
+                updateStepControls();
             }
         });
     }
@@ -250,22 +249,26 @@ public final class ProvisioningActivity extends AppCompatActivity {
         }
         if (TextUtils.isEmpty(address) || scanRowsByAddress.containsKey(address)) return;
         String displayName = TextUtils.isEmpty(name) ? getString(R.string.unknown_device) : name;
-        MaterialButton row = new MaterialButton(this, null,
-                com.google.android.material.R.attr.materialButtonOutlinedStyle);
-        row.setAllCaps(false);
-        row.setText(getString(R.string.provisioning_scan_result,
-                displayName, MockProvisioningApi.normalizeMac(address), result.getRssi()));
+        View row = LayoutInflater.from(this)
+                .inflate(R.layout.item_provisioning_device, scanResults, false);
+        TextView tvName = row.findViewById(R.id.tv_provisioning_device_name);
+        TextView tvMac = row.findViewById(R.id.tv_provisioning_device_mac);
+        tvName.setText(displayName);
+        tvMac.setText(MockProvisioningApi.normalizeMac(address));
         row.setOnClickListener(view -> {
             stopScan();
-            tvScanStatus.setText(R.string.state_connecting);
+            // 连接中不展示扫描按钮下方的提示文案
+            tvScanStatus.setVisibility(View.GONE);
             bleService.connect(address);
         });
         LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
         params.topMargin = dp(8);
+        params.bottomMargin = dp(8);
         scanResults.addView(row, params);
         scanRowsByAddress.put(address, row);
-        tvScanStatus.setText(getString(R.string.devices_found, scanRowsByAddress.size()));
+        tvScanStatus.setVisibility(View.VISIBLE);
+        tvScanStatus.setText(getString(R.string.devices_found_scanning, scanRowsByAddress.size()));
     }
 
     private void stopScan() {
@@ -279,7 +282,7 @@ public final class ProvisioningActivity extends AppCompatActivity {
         scanButton.setText(R.string.scan_and_connect);
         if (error != null) tvScanStatus.setText(error);
         else if (scanRowsByAddress.isEmpty()) tvScanStatus.setText(R.string.no_device_found);
-        else tvScanStatus.setText(getString(R.string.devices_found, scanRowsByAddress.size()));
+        else tvScanStatus.setText(R.string.connect_hint);
     }
 
     private void renderConnectionState(int state) {
@@ -292,15 +295,22 @@ public final class ProvisioningActivity extends AppCompatActivity {
             tvConnectedGlasses.setText(getString(R.string.provisioning_glasses_value,
                     safe(bleService.getDeviceName(), getString(R.string.unknown_device)),
                     MockProvisioningApi.normalizeMac(bleService.getConnectedAddress())));
-            tvScanStatus.setText(R.string.state_connected);
+            // 连接成功后不再展示扫描提示条（与上方状态重复），并从扫描列表移除该设备。
+            tvScanStatus.setVisibility(View.GONE);
+            String connectedAddress = bleService.getConnectedAddress();
+            if (connectedAddress != null) {
+                View row = scanRowsByAddress.remove(connectedAddress);
+                if (row != null) scanResults.removeView(row);
+            }
         } else if (state == CRPBleConnectionStateListener.STATE_CONNECTING) {
             tvConnectionStatus.setText(R.string.state_connecting);
             tvConnectionStatus.setTextColor(getColorCompat(R.color.qimu_connecting));
-            tvScanStatus.setText(R.string.state_connecting);
+            tvScanStatus.setVisibility(View.GONE);
         } else {
             tvConnectionStatus.setText(R.string.provisioning_connect_first);
             tvConnectionStatus.setTextColor(getColorCompat(R.color.qimu_error));
             tvConnectedGlasses.setText(R.string.provisioning_no_glasses);
+            tvScanStatus.setVisibility(View.VISIBLE);
             tvScanStatus.setText(R.string.connect_hint);
         }
         updateStepControls();
@@ -327,7 +337,7 @@ public final class ProvisioningActivity extends AppCompatActivity {
             circle.setBackgroundResource(R.drawable.bg_step_circle_done);
             circle.setTextColor(getColorCompat(R.color.qimu_gold_dark));
             label.setTextColor(getColorCompat(R.color.qimu_gold_dark));
-            label.setTypeface(null, Typeface.BOLD);
+            label.setTypeface(null, Typeface.NORMAL);
         } else if (step == currentStep) {
             circle.setBackgroundResource(R.drawable.bg_step_circle_current);
             circle.setTextColor(getColorCompat(R.color.qimu_surface));
@@ -507,21 +517,6 @@ public final class ProvisioningActivity extends AppCompatActivity {
                                 Toast.LENGTH_LONG).show();
                     }
                 });
-    }
-
-    private void updateSerialStatus() {
-        String serial = textOf(phoneSerialInput);
-        if (serial.isEmpty()) {
-            tvPhoneSerialStatus.setText(R.string.provisioning_phone_serial_unverified);
-            tvPhoneSerialStatus.setTextColor(getColorCompat(R.color.qimu_text_tertiary));
-        } else if (MockProvisioningApi.isValidPhoneSerial(serial)) {
-            tvPhoneSerialStatus.setText(R.string.provisioning_phone_serial_valid);
-            tvPhoneSerialStatus.setTextColor(getColorCompat(R.color.qimu_connected));
-        } else {
-            tvPhoneSerialStatus.setText(R.string.provisioning_phone_serial_invalid);
-            tvPhoneSerialStatus.setTextColor(getColorCompat(R.color.qimu_error));
-        }
-        updateStepControls();
     }
 
     /** 防呆输入：去空格、转大写、过滤非法字符，限制长度。 */

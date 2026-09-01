@@ -17,19 +17,11 @@
         android:paddingStart="12dp"
         android:paddingEnd="20dp">
 
-        <FrameLayout
+        <View
             android:layout_width="40dp"
             android:layout_height="40dp"
-            android:background="@drawable/bg_brand_badge"
-            android:padding="8dp">
-
-            <ImageView
-                android:layout_width="match_parent"
-                android:layout_height="match_parent"
-                android:contentDescription="@string/app_name"
-                android:src="@drawable/ic_glasses_24"
-                app:tint="@color/qimu_gold" />
-        </FrameLayout>
+            android:background="@drawable/bg_logo_placeholder"
+            android:contentDescription="@string/app_name" />
 
         <LinearLayout
             android:layout_width="0dp"
