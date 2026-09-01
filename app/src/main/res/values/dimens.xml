@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- 圆角规范：卡片 12 / 次级块 10 / 标签 6 -->
+    <dimen name="radius_card">12dp</dimen>
+    <dimen name="radius_tile">10dp</dimen>
+    <dimen name="radius_chip">6dp</dimen>
+
+    <!-- 间距规范：刻度 4/8/12/16/20/24/32 -->
+    <dimen name="space_4">4dp</dimen>
+    <dimen name="space_8">8dp</dimen>
+    <dimen name="space_12">12dp</dimen>
+    <dimen name="space_16">16dp</dimen>
+    <dimen name="space_20">20dp</dimen>
+    <dimen name="space_24">24dp</dimen>
+    <dimen name="space_32">32dp</dimen>
+    <dimen name="card_padding">16dp</dimen>
+    <dimen name="page_margin">20dp</dimen>
+    <dimen name="bubble_padding">12dp</dimen>
+
+    <!-- 大标题下划金线 -->
+    <dimen name="title_underline_width">104dp</dimen>
+    <dimen name="title_underline_height">2dp</dimen>
+</resources>

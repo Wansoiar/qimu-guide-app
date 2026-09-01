@@ -65,8 +65,6 @@ public class DialogueFragment extends Fragment {
     private MaterialButton dialogueButton;
     private MaterialButton photoButton;
     private TextView rtcStatusText;
-    private TextView rtcSessionBody;
-    private View rtcCardStatusDot;
     private View rtcControlStatusDot;
     private boolean startGuidanceAfterAudioPermission;
     private boolean waitingForAudioPermissionSettings;
@@ -167,8 +165,6 @@ public class DialogueFragment extends Fragment {
         dialogueButton = view.findViewById(R.id.btn_push_text);
         photoButton = view.findViewById(R.id.btn_take_photo);
         rtcStatusText = view.findViewById(R.id.tv_rtc_status);
-        rtcSessionBody = view.findViewById(R.id.tv_rtc_session_body);
-        rtcCardStatusDot = view.findViewById(R.id.rtc_card_status_dot);
         rtcControlStatusDot = view.findViewById(R.id.rtc_control_status_dot);
 
         dialogueButton.setOnClickListener(clicked -> handleDialogueButton());
@@ -265,7 +261,6 @@ public class DialogueFragment extends Fragment {
         String safeMessage = message == null || message.trim().isEmpty()
                 ? getString(R.string.dialogue_preparing) : message;
         rtcStatusText.setText(safeMessage);
-        rtcSessionBody.setText(safeMessage);
 
         boolean roomOnline = state == RealtimeGuideManager.State.READY
                 || state == RealtimeGuideManager.State.AUDIO_LINK_STARTING
@@ -273,7 +268,6 @@ public class DialogueFragment extends Fragment {
                 || state == RealtimeGuideManager.State.PAUSED;
         int dot = roomOnline ? R.drawable.dot_status_connected
                 : R.drawable.dot_status_disconnected;
-        rtcCardStatusDot.setBackgroundResource(dot);
         rtcControlStatusDot.setBackgroundResource(dot);
 
         switch (state) {
@@ -402,8 +396,8 @@ public class DialogueFragment extends Fragment {
         // 旧 AI 气泡、被追加到照片上方，造成“讲解跑到照片前”的乱序。
         resetVolcSubtitleBubble();
         appendMessageDirect(new DialogueMessage(
-                DialogueMessage.Type.AI_REPLY,
-                "正在拍照…",
+                DialogueMessage.Type.STATUS_HINT,
+                "正在拍照",
                 System.currentTimeMillis()));
         renderState(guideManager.getState(), "正在准备眼镜拍照…");
 
@@ -463,8 +457,8 @@ public class DialogueFragment extends Fragment {
         photo.setImageFile(imageFile);
         appendMessageDirect(photo);
         appendMessageDirect(new DialogueMessage(
-                DialogueMessage.Type.AI_REPLY,
-                "照片已收到，正在交给 AI 导览员讲解…",
+                DialogueMessage.Type.STATUS_HINT,
+                "照片已收到，正在交给 AI 导览员讲解",
                 System.currentTimeMillis()));
         // 让紧随其后的识图讲解字幕独立成条，排在照片/状态提示之后，不被合并进上方气泡。
         resetVolcSubtitleBubble();
@@ -606,8 +600,6 @@ public class DialogueFragment extends Fragment {
         dialogueButton = null;
         photoButton = null;
         rtcStatusText = null;
-        rtcSessionBody = null;
-        rtcCardStatusDot = null;
         rtcControlStatusDot = null;
         recyclerMessages = null;
         messageAdapter = null;

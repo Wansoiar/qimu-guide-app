@@ -20,10 +20,10 @@
             android:id="@+id/layout_cleanup_warning"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginTop="14dp"
+            android:layout_marginTop="12dp"
             android:background="@drawable/bg_card_soft"
             android:orientation="vertical"
-            android:padding="14dp"
+            android:padding="@dimen/card_padding"
             android:visibility="gone">
 
             <TextView
@@ -38,7 +38,7 @@
                 android:id="@+id/btn_confirm_cleanup"
                 style="@style/Widget.Qimu.Button.Outline"
                 android:layout_width="match_parent"
-                android:layout_height="44dp"
+                android:layout_height="48dp"
                 android:layout_marginTop="10dp"
                 android:text="管理员确认已清理" />
         </LinearLayout>
@@ -47,7 +47,7 @@
             android:id="@+id/layout_connected"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginTop="20dp"
+            android:layout_marginTop="16dp"
             android:background="@drawable/bg_card_default"
             android:orientation="vertical"
             android:padding="16dp"
@@ -80,7 +80,7 @@
                     android:layout_weight="1"
                     android:orientation="vertical">
 
-                    <TextView
+                    <com.qimu.guide.ui.widget.SerifTextView
                         android:id="@+id/tv_device_name"
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
@@ -106,8 +106,7 @@
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:layout_marginTop="16dp"
-                android:orientation="horizontal"
-                android:weightSum="2">
+                android:orientation="horizontal">
 
                 <LinearLayout
                     android:layout_width="0dp"
@@ -116,33 +115,35 @@
                     android:layout_weight="1"
                     android:background="@drawable/bg_metric_tile"
                     android:gravity="center_vertical"
-                    android:minHeight="60dp"
+                    android:minHeight="64dp"
                     android:orientation="horizontal"
-                    android:padding="11dp">
+                    android:paddingTop="12dp"
+                    android:paddingBottom="12dp"
+                    android:paddingStart="0dp"
+                    android:paddingEnd="12dp">
 
-                    <ImageView
-                        android:id="@+id/iv_ble_status"
-                        android:layout_width="20dp"
-                        android:layout_height="20dp"
-                        android:contentDescription="@string/ble_connection"
-                        android:src="@drawable/ic_link_20"
-                        app:tint="@color/qimu_connecting" />
+                    <View
+                        android:layout_width="2dp"
+                        android:layout_height="40dp"
+                        android:layout_gravity="start|center_vertical"
+                        android:background="@drawable/bg_metric_line" />
 
                     <LinearLayout
                         android:layout_width="0dp"
                         android:layout_height="wrap_content"
-                        android:layout_marginStart="8dp"
+                        android:layout_marginStart="10dp"
                         android:layout_weight="1"
                         android:orientation="vertical">
 
                         <TextView
                             android:layout_width="wrap_content"
                             android:layout_height="wrap_content"
+                            android:letterSpacing="0.12"
                             android:text="@string/ble_connection"
                             android:textColor="@color/qimu_text_tertiary"
                             android:textSize="11sp" />
 
-                        <TextView
+                        <com.qimu.guide.ui.widget.SerifTextView
                             android:id="@+id/tv_ble_status"
                             android:layout_width="match_parent"
                             android:layout_height="wrap_content"
@@ -151,7 +152,7 @@
                             android:maxLines="1"
                             android:text="@string/connection_connecting"
                             android:textColor="@color/qimu_connecting"
-                            android:textSize="13sp"
+                            android:textSize="15sp"
                             android:textStyle="bold" />
                     </LinearLayout>
                 </LinearLayout>
@@ -163,33 +164,35 @@
                     android:layout_weight="1"
                     android:background="@drawable/bg_metric_tile"
                     android:gravity="center_vertical"
-                    android:minHeight="60dp"
+                    android:minHeight="64dp"
                     android:orientation="horizontal"
-                    android:padding="11dp">
+                    android:paddingTop="12dp"
+                    android:paddingBottom="12dp"
+                    android:paddingStart="0dp"
+                    android:paddingEnd="12dp">
 
-                    <ImageView
-                        android:id="@+id/iv_audio_status"
-                        android:layout_width="20dp"
-                        android:layout_height="20dp"
-                        android:contentDescription="@string/audio_connection"
-                        android:src="@drawable/ic_headset_off_20"
-                        app:tint="@color/qimu_error" />
+                    <View
+                        android:layout_width="2dp"
+                        android:layout_height="40dp"
+                        android:layout_gravity="start|center_vertical"
+                        android:background="@drawable/bg_metric_line" />
 
                     <LinearLayout
                         android:layout_width="0dp"
                         android:layout_height="wrap_content"
-                        android:layout_marginStart="8dp"
+                        android:layout_marginStart="10dp"
                         android:layout_weight="1"
                         android:orientation="vertical">
 
                         <TextView
                             android:layout_width="wrap_content"
                             android:layout_height="wrap_content"
+                            android:letterSpacing="0.12"
                             android:text="@string/audio_connection"
                             android:textColor="@color/qimu_text_tertiary"
                             android:textSize="11sp" />
 
-                        <TextView
+                        <com.qimu.guide.ui.widget.SerifTextView
                             android:id="@+id/tv_audio_status"
                             android:layout_width="match_parent"
                             android:layout_height="wrap_content"
@@ -198,46 +201,116 @@
                             android:maxLines="1"
                             android:text="@string/connection_disconnected"
                             android:textColor="@color/qimu_error"
-                            android:textSize="13sp"
+                            android:textSize="15sp"
                             android:textStyle="bold" />
                     </LinearLayout>
                 </LinearLayout>
             </LinearLayout>
 
-            <View
-                android:layout_width="match_parent"
-                android:layout_height="1dp"
-                android:layout_marginTop="14dp"
-                android:layout_marginBottom="14dp"
-                android:background="@color/qimu_outline" />
-
             <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:orientation="horizontal"
-                android:weightSum="2">
+                android:layout_marginTop="8dp"
+                android:orientation="horizontal">
 
                 <LinearLayout
                     android:layout_width="0dp"
                     android:layout_height="wrap_content"
+                    android:layout_marginEnd="4dp"
                     android:layout_weight="1"
-                    android:gravity="center"
-                    android:orientation="vertical">
-                    <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="@string/battery" android:textColor="@color/qimu_text_tertiary" android:textSize="12sp" />
-                    <TextView android:id="@+id/tv_battery" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginTop="3dp" android:text="—" android:textColor="@color/qimu_text_primary" android:textSize="17sp" android:textStyle="bold" />
+                    android:background="@drawable/bg_metric_tile"
+                    android:gravity="center_vertical"
+                    android:minHeight="64dp"
+                    android:orientation="horizontal"
+                    android:paddingTop="12dp"
+                    android:paddingBottom="12dp"
+                    android:paddingStart="0dp"
+                    android:paddingEnd="12dp">
+
+                    <View
+                        android:layout_width="2dp"
+                        android:layout_height="40dp"
+                        android:layout_gravity="start|center_vertical"
+                        android:background="@drawable/bg_metric_line" />
+
+                    <LinearLayout
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_marginStart="10dp"
+                        android:layout_weight="1"
+                        android:orientation="vertical">
+
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:letterSpacing="0.12"
+                            android:text="@string/battery"
+                            android:textColor="@color/qimu_text_tertiary"
+                            android:textSize="11sp" />
+
+                        <com.qimu.guide.ui.widget.SerifTextView
+                            android:id="@+id/tv_battery"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:layout_marginTop="2dp"
+                            android:ellipsize="end"
+                            android:maxLines="1"
+                            android:text="—"
+                            android:textColor="@color/qimu_text_primary"
+                            android:textSize="16sp"
+                            android:textStyle="bold" />
+                    </LinearLayout>
                 </LinearLayout>
 
                 <LinearLayout
                     android:layout_width="0dp"
                     android:layout_height="wrap_content"
+                    android:layout_marginStart="4dp"
                     android:layout_weight="1"
-                    android:gravity="center"
-                    android:orientation="vertical">
-                    <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="@string/firmware_version" android:textColor="@color/qimu_text_tertiary" android:textSize="12sp" />
-                    <TextView android:id="@+id/tv_firmware" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginTop="3dp" android:ellipsize="end" android:maxLines="1" android:text="—" android:textColor="@color/qimu_text_primary" android:textSize="15sp" android:textStyle="bold" />
+                    android:background="@drawable/bg_metric_tile"
+                    android:gravity="center_vertical"
+                    android:minHeight="64dp"
+                    android:orientation="horizontal"
+                    android:paddingTop="12dp"
+                    android:paddingBottom="12dp"
+                    android:paddingStart="0dp"
+                    android:paddingEnd="12dp">
+
+                    <View
+                        android:layout_width="2dp"
+                        android:layout_height="40dp"
+                        android:layout_gravity="start|center_vertical"
+                        android:background="@drawable/bg_metric_line" />
+
+                    <LinearLayout
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_marginStart="10dp"
+                        android:layout_weight="1"
+                        android:orientation="vertical">
+
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:letterSpacing="0.12"
+                            android:text="@string/firmware_version"
+                            android:textColor="@color/qimu_text_tertiary"
+                            android:textSize="11sp" />
+
+                        <com.qimu.guide.ui.widget.SerifTextView
+                            android:id="@+id/tv_firmware"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:layout_marginTop="2dp"
+                            android:ellipsize="end"
+                            android:maxLines="1"
+                            android:text="—"
+                            android:textColor="@color/qimu_text_primary"
+                            android:textSize="16sp"
+                            android:textStyle="bold" />
+                    </LinearLayout>
                 </LinearLayout>
             </LinearLayout>
-
             <TextView
                 android:id="@+id/tv_device_ready"
                 android:layout_width="match_parent"
@@ -258,7 +331,7 @@
                 style="@style/Widget.Qimu.Button.Outline"
                 android:layout_width="match_parent"
                 android:layout_height="48dp"
-                android:layout_marginTop="14dp"
+                android:layout_marginTop="12dp"
                 android:text="@string/disconnect_device" />
         </LinearLayout>
 
@@ -266,7 +339,7 @@
             android:id="@+id/layout_disconnected"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginTop="20dp"
+            android:layout_marginTop="16dp"
             android:orientation="vertical">
 
             <LinearLayout
@@ -296,7 +369,7 @@
                         android:layout_marginStart="12dp"
                         android:layout_weight="1"
                         android:orientation="vertical">
-                        <TextView android:layout_width="match_parent" android:layout_height="wrap_content" android:text="@string/device_connect_title" android:textAppearance="@style/TextAppearance.Qimu.SectionTitle" />
+                        <com.qimu.guide.ui.widget.SerifTextView android:layout_width="match_parent" android:layout_height="wrap_content" android:text="@string/device_connect_title" android:textAppearance="@style/TextAppearance.Qimu.SectionTitle" />
                         <TextView android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="3dp" android:lineSpacingExtra="2dp" android:text="@string/device_connect_body" android:textColor="@color/qimu_text_secondary" android:textSize="13sp" />
                     </LinearLayout>
                 </LinearLayout>
@@ -318,7 +391,7 @@
                     android:id="@+id/btn_scan"
                     style="@style/Widget.Qimu.Button.Primary"
                     android:layout_width="match_parent"
-                    android:layout_height="52dp"
+                    android:layout_height="48dp"
                     android:layout_marginTop="14dp"
                     android:text="@string/scan_and_connect" />
             </LinearLayout>
@@ -334,11 +407,11 @@
             <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="14dp"
+                android:layout_marginTop="12dp"
                 android:background="@drawable/bg_card_soft"
                 android:gravity="center_vertical"
                 android:orientation="horizontal"
-                android:padding="14dp">
+                android:padding="@dimen/card_padding">
 
                 <ImageView
                     android:layout_width="20dp"
@@ -353,8 +426,8 @@
                     android:layout_marginStart="10dp"
                     android:layout_weight="1"
                     android:orientation="vertical">
-                    <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="@string/device_tips_title" android:textColor="@color/qimu_text_primary" android:textSize="14sp" android:textStyle="bold" />
-                    <TextView android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="3dp" android:lineSpacingExtra="2dp" android:text="@string/device_tips_body" android:textColor="@color/qimu_text_secondary" android:textSize="12sp" />
+                    <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:letterSpacing="0.16" android:text="@string/device_tips_title" android:textColor="@color/qimu_text_primary" android:textSize="12sp" />
+                    <TextView android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="6dp" android:lineSpacingExtra="2dp" android:text="@string/device_tips_body" android:textColor="@color/qimu_text_secondary" android:textSize="13sp" />
                 </LinearLayout>
             </LinearLayout>
         </LinearLayout>
@@ -363,7 +436,7 @@
             android:id="@+id/layout_tour_start"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginTop="14dp"
+            android:layout_marginTop="12dp"
             android:background="@drawable/bg_card_accent"
             android:orientation="vertical"
             android:padding="16dp">
@@ -372,22 +445,22 @@
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:text="@string/venue_configured_for_next_tour"
-                android:textColor="@color/qimu_text_tertiary"
-                android:textSize="12sp" />
+                android:textAppearance="@style/TextAppearance.Qimu.Kicker" />
 
-            <TextView
+            <com.qimu.guide.ui.widget.SerifTextView
                 android:id="@+id/tv_default_venue"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="3dp"
+                android:layout_marginTop="4dp"
                 android:text="@string/operator_venue_section"
-                android:textAppearance="@style/TextAppearance.Qimu.SectionTitle" />
+                android:textAppearance="@style/TextAppearance.Qimu.SectionTitle"
+                android:textSize="16sp" />
 
             <TextView
                 android:id="@+id/tv_tour_start_hint"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="5dp"
+                android:layout_marginTop="8dp"
                 android:text="@string/venue_session_hint"
                 android:textColor="@color/qimu_text_secondary"
                 android:textSize="13sp" />
@@ -396,8 +469,8 @@
                 android:id="@+id/btn_start_tour"
                 style="@style/Widget.Qimu.Button.Primary"
                 android:layout_width="match_parent"
-                android:layout_height="52dp"
-                android:layout_marginTop="14dp"
+                android:layout_height="48dp"
+                android:layout_marginTop="16dp"
                 android:text="@string/start_tour" />
         </LinearLayout>
 
@@ -405,25 +478,38 @@
             android:id="@+id/layout_tour_active"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginTop="14dp"
+            android:layout_marginTop="12dp"
             android:background="@drawable/bg_card_accent"
             android:orientation="vertical"
             android:padding="16dp"
             android:visibility="gone">
 
-            <TextView
+            <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:text="导览进行中"
-                android:textColor="@color/qimu_connected"
-                android:textSize="15sp"
-                android:textStyle="bold" />
+                android:gravity="center_vertical"
+                android:orientation="horizontal">
+
+                <View
+                    android:layout_width="7dp"
+                    android:layout_height="7dp"
+                    android:background="@drawable/dot_status_connected" />
+
+                <com.qimu.guide.ui.widget.SerifTextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="8dp"
+                    android:text="导览进行中"
+                    android:textColor="@color/qimu_connected"
+                    android:textSize="15sp"
+                    android:textStyle="bold" />
+            </LinearLayout>
 
             <TextView
                 android:id="@+id/tv_active_tour"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="4dp"
+                android:layout_marginTop="8dp"
                 android:textColor="@color/qimu_text_secondary"
                 android:textSize="13sp" />
 

@@ -82,6 +82,7 @@ public class ExportFragment extends Fragment {
     private TextView tvLocalCount;
     private TextView tvExportStatus;
     private TextView tvQrStatus;
+    private View layoutExportDeviceState;
     private View exportStatusDot;
     private View btnRefreshMedia;
     private View btnExportPhotos;
@@ -337,6 +338,7 @@ public class ExportFragment extends Fragment {
         tvLocalCount = view.findViewById(R.id.tv_local_count);
         tvExportStatus = view.findViewById(R.id.tv_export_status);
         tvQrStatus = view.findViewById(R.id.tv_qr_status);
+        layoutExportDeviceState = view.findViewById(R.id.layout_export_device_state);
         exportStatusDot = view.findViewById(R.id.export_status_dot);
         exportProgress = view.findViewById(R.id.export_progress);
         btnRefreshMedia = view.findViewById(R.id.btn_refresh_media);
@@ -725,13 +727,13 @@ public class ExportFragment extends Fragment {
         connected = bleService.isConnected()
                 || bleService.getConnectionState() == CRPBleConnectionStateListener.STATE_CONNECTED;
         requireActivity().runOnUiThread(() -> {
-            if (!isAdded() || tvDeviceState == null) return;
-            if (tourSessionManager != null && !tourSessionManager.isActive()) {
-                tvDeviceState.setText("尚未开始导览 · 可查看本机照片");
+            if (!isAdded() || tvDeviceState == null || layoutExportDeviceState == null) return;
+            // 在线状态已在顶栏展示，这里仅在设备离线时提示，避免信息重复。
+            if (connected) {
+                layoutExportDeviceState.setVisibility(View.GONE);
             } else {
-                tvDeviceState.setText(connected
-                        ? R.string.export_session_ready
-                        : R.string.export_session_offline);
+                layoutExportDeviceState.setVisibility(View.VISIBLE);
+                tvDeviceState.setText(R.string.export_session_offline);
             }
             exportStatusDot.setBackgroundResource(connected
                     ? R.drawable.dot_status_connected

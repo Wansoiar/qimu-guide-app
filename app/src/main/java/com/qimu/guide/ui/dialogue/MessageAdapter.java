@@ -20,6 +20,7 @@ public class MessageAdapter extends RecyclerView.Adapter<RecyclerView.ViewHolder
     private static final int TYPE_PHOTO = 0;
     private static final int TYPE_VOICE = 1;
     private static final int TYPE_AI_REPLY = 2;
+    private static final int TYPE_STATUS_HINT = 3;
 
     private final List<DialogueMessage> messages;
 
@@ -33,6 +34,7 @@ public class MessageAdapter extends RecyclerView.Adapter<RecyclerView.ViewHolder
             case PHOTO: return TYPE_PHOTO;
             case VOICE: return TYPE_VOICE;
             case AI_REPLY: return TYPE_AI_REPLY;
+            case STATUS_HINT: return TYPE_STATUS_HINT;
             default: return TYPE_AI_REPLY;
         }
     }
@@ -42,11 +44,34 @@ public class MessageAdapter extends RecyclerView.Adapter<RecyclerView.ViewHolder
     public RecyclerView.ViewHolder onCreateViewHolder(@NonNull ViewGroup parent, int viewType) {
         LayoutInflater inflater = LayoutInflater.from(parent.getContext());
         if (viewType == TYPE_PHOTO) {
-            return new PhotoViewHolder(inflater.inflate(R.layout.item_message_photo, parent, false));
+            View v = inflater.inflate(R.layout.item_message_photo, parent, false);
+            applyBubbleMaxWidth(v);
+            return new PhotoViewHolder(v);
         } else if (viewType == TYPE_VOICE) {
-            return new VoiceViewHolder(inflater.inflate(R.layout.item_message_voice, parent, false));
+            View v = inflater.inflate(R.layout.item_message_voice, parent, false);
+            applyBubbleMaxWidth(v);
+            return new VoiceViewHolder(v);
+        } else if (viewType == TYPE_STATUS_HINT) {
+            return new StatusViewHolder(
+                    inflater.inflate(R.layout.item_message_status, parent, false));
         } else {
             return new AiViewHolder(inflater.inflate(R.layout.item_message_ai, parent, false));
+        }
+    }
+
+    /** 用户气泡：内容撑开，宽度上限为内容区 86%（左右各 20dp 留白）。 */
+    private void applyBubbleMaxWidth(View itemView) {
+        float density = itemView.getResources().getDisplayMetrics().density;
+        int contentWidth = itemView.getResources().getDisplayMetrics().widthPixels
+                - (int) (40 * density);
+        int maxWidth = (int) (contentWidth * 0.86f);
+        TextView tvText = itemView.findViewById(R.id.tv_text);
+        if (tvText != null) {
+            tvText.setMaxWidth(maxWidth);
+        }
+        ImageView ivPhoto = itemView.findViewById(R.id.iv_photo);
+        if (ivPhoto != null) {
+            ivPhoto.setMaxWidth(maxWidth);
         }
     }
 
@@ -72,6 +97,9 @@ public class MessageAdapter extends RecyclerView.Adapter<RecyclerView.ViewHolder
             AiViewHolder h = (AiViewHolder) holder;
             h.tvText.setText(msg.getText());
             h.tvTime.setText(time);
+        } else if (holder instanceof StatusViewHolder) {
+            StatusViewHolder h = (StatusViewHolder) holder;
+            h.tvStatus.setText(msg.getText());
         }
     }
 
@@ -103,6 +131,14 @@ public class MessageAdapter extends RecyclerView.Adapter<RecyclerView.ViewHolder
             super(v);
             tvText = v.findViewById(R.id.tv_text);
             tvTime = v.findViewById(R.id.tv_time);
+        }
+    }
+
+    static class StatusViewHolder extends RecyclerView.ViewHolder {
+        TextView tvStatus;
+        StatusViewHolder(View v) {
+            super(v);
+            tvStatus = v.findViewById(R.id.tv_status);
         }
     }
 }

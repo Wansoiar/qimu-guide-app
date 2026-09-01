@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <selector xmlns:android="http://schemas.android.com/apk/res/android">
     <item android:color="@color/qimu_disabled_fg" android:state_enabled="false" />
-    <item android:color="@color/qimu_cream" />
+    <item android:color="@color/qimu_gold" android:state_pressed="true" />
+    <item android:color="@color/qimu_text_secondary" />
 </selector>

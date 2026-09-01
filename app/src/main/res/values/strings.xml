@@ -3,6 +3,8 @@
     <string name="app_name">齐目导览</string>
     <string name="brand_status_online">设备在线</string>
     <string name="brand_status_offline">等待连接</string>
+    <string name="brand_title_venue">齐目·%1$s</string>
+    <string name="brand_title_no_venue">齐目·未设置场馆</string>
     <string name="open_operator_config">打开运营配置</string>
     <string name="close_operator_config">关闭运营配置</string>
     <string name="operator_config_title">运营配置</string>
@@ -165,7 +167,7 @@
     <string name="not_connected">未连接</string>
     <string name="disconnected_hint">眼镜连接已断开，请重新连接</string>
     <string name="message_ai_label">齐目 AI</string>
-    <string name="message_user_label">我的提问</string>
+    <string name="message_user_label">我</string>
     <string name="message_photo_label">眼镜拍摄</string>
 
     <string name="export">导出</string>

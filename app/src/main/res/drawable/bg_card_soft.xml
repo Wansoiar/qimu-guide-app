@@ -1,6 +1,28 @@
 <?xml version="1.0" encoding="utf-8"?>
-<shape xmlns:android="http://schemas.android.com/apk/res/android" android:shape="rectangle">
-    <solid android:color="@color/qimu_card_soft" />
-    <corners android:radius="16dp" />
-    <stroke android:width="1dp" android:color="@color/qimu_outline_gold" />
-</shape>
+<!-- 提示卡：同强调卡（米色 + 细描边），圆角 12；内置轻影 -->
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <item
+        android:height="8dp"
+        android:gravity="bottom">
+        <shape android:shape="rectangle">
+            <corners android:radius="@dimen/radius_card" />
+            <gradient
+                android:startColor="#0C2F1F0D"
+                android:endColor="#002F1F0D"
+                android:angle="270" />
+        </shape>
+    </item>
+    <item
+        android:left="1dp"
+        android:top="0dp"
+        android:right="1dp"
+        android:bottom="2dp">
+        <shape android:shape="rectangle">
+            <solid android:color="@color/qimu_card_accent" />
+            <corners android:radius="@dimen/radius_card" />
+            <stroke
+                android:width="1dp"
+                android:color="@color/qimu_outline" />
+        </shape>
+    </item>
+</layer-list>

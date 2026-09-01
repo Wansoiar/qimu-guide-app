@@ -4,6 +4,7 @@
     <color name="qimu_text_secondary">#7A6248</color>
     <color name="qimu_text_tertiary">#9A8872</color>
     <color name="qimu_gold">#A8701E</color>
+    <color name="qimu_gold_light">#C9973B</color>
     <color name="qimu_gold_dark">#89570D</color>
     <color name="qimu_brown">#6B4928</color>
     <color name="qimu_brown_dark">#52351D</color>
@@ -16,6 +17,10 @@
     <color name="qimu_card_soft">#F1EADA</color>
     <color name="qimu_outline">#D8CCBC</color>
     <color name="qimu_outline_gold">#D9BF98</color>
+    <color name="qimu_outline_strong">#B9A67F</color>
+    <color name="qimu_seal">#8C3B2A</color>
+    <color name="qimu_header_line">#E3D9C9</color>
+    <color name="qimu_cream">#F4E9D2</color>
     <color name="qimu_icon_bg">#ECE4D4</color>
     <color name="qimu_icon_bg_gold">#E9DAC3</color>
     <color name="qimu_nav_background">#FCFAF4</color>

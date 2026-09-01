@@ -19,49 +19,6 @@
         android:layout_height="match_parent"
         android:orientation="vertical">
 
-    <LinearLayout
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:layout_marginStart="20dp"
-        android:layout_marginTop="16dp"
-        android:layout_marginEnd="20dp"
-        android:background="@drawable/bg_card_accent"
-        android:gravity="center_vertical"
-        android:orientation="horizontal"
-        android:padding="13dp">
-
-        <FrameLayout
-            android:layout_width="42dp"
-            android:layout_height="42dp"
-            android:background="@drawable/bg_icon_tile_gold"
-            android:padding="9dp">
-            <ImageView android:layout_width="match_parent" android:layout_height="match_parent" android:contentDescription="@string/dialogue_session_title" android:src="@drawable/ic_voice_20" app:tint="@color/qimu_gold_dark" />
-        </FrameLayout>
-
-        <LinearLayout
-            android:layout_width="0dp"
-            android:layout_height="wrap_content"
-            android:layout_marginStart="11dp"
-            android:layout_weight="1"
-            android:orientation="vertical">
-            <TextView android:layout_width="match_parent" android:layout_height="wrap_content" android:text="@string/dialogue_session_title" android:textColor="@color/qimu_text_primary" android:textSize="15sp" android:textStyle="bold" />
-            <TextView
-                android:id="@+id/tv_rtc_session_body"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="2dp"
-                android:text="@string/dialogue_session_body"
-                android:textColor="@color/qimu_text_secondary"
-                android:textSize="12sp" />
-        </LinearLayout>
-
-        <View
-            android:id="@+id/rtc_card_status_dot"
-            android:layout_width="7dp"
-            android:layout_height="7dp"
-            android:background="@drawable/dot_status_disconnected" />
-    </LinearLayout>
-
     <androidx.recyclerview.widget.RecyclerView
         android:id="@+id/recycler_messages"
         android:layout_width="match_parent"
@@ -69,7 +26,7 @@
         android:layout_weight="1"
         android:clipToPadding="false"
         android:paddingStart="20dp"
-        android:paddingTop="10dp"
+        android:paddingTop="16dp"
         android:paddingEnd="20dp"
         android:paddingBottom="12dp" />
 

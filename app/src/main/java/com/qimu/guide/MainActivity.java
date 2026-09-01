@@ -97,6 +97,7 @@ public class MainActivity extends AppCompatActivity implements TourSessionManage
         bottomNav = findViewById(R.id.bottom_navigation);
         tvHeaderStatus = findViewById(R.id.tv_header_status);
         headerStatusDot = findViewById(R.id.header_status_dot);
+        bindVenueTitle();
         bindTitleOperatorEntry();
         bottomNav.setOnItemSelectedListener(item -> {
             int id = item.getItemId();
@@ -127,6 +128,21 @@ public class MainActivity extends AppCompatActivity implements TourSessionManage
         invalidateTabs();
         TourSessionManager.TourSession activeSession = tourSessionManager.current();
         if (activeSession != null) realtimeGuideManager.startForTour(activeSession);
+    }
+
+    /** 顶栏标题：齐目·当前场馆名；未设置场馆时显示占位。 */
+    private void bindVenueTitle() {
+        TextView title = findViewById(R.id.tv_header_title);
+        String venueName = "";
+        if (provisioningStore != null && provisioningStore.snapshot() != null
+                && provisioningStore.snapshot().venue != null) {
+            venueName = provisioningStore.snapshot().venue.name;
+        }
+        if (venueName == null || venueName.isEmpty()) {
+            title.setText(R.string.brand_title_no_venue);
+        } else {
+            title.setText(getString(R.string.brand_title_venue, venueName));
+        }
     }
 
     /** 连点标题 5 次（800ms 窗口内）开调试预览；长按标题 3 秒进入运营配置。 */
@@ -336,4 +352,5 @@ public class MainActivity extends AppCompatActivity implements TourSessionManage
         if (bleService != null) bleService.removeListener(bleListener);
         if (tourSessionManager != null) tourSessionManager.removeListener(this);
     }
+
 }

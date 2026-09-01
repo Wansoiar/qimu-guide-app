@@ -1,5 +1,33 @@
 <?xml version="1.0" encoding="utf-8"?>
-<shape xmlns:android="http://schemas.android.com/apk/res/android" android:shape="oval">
-    <solid android:color="@color/qimu_icon_bg_gold" />
-    <stroke android:width="1dp" android:color="@color/qimu_outline_gold" />
-</shape>
+<!-- 品牌徽章：金底圆形 + 描金线 + 内环高光 + 暖棕轻影 -->
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <item
+        android:height="6dp"
+        android:gravity="bottom">
+        <shape android:shape="oval">
+            <gradient
+                android:startColor="#1F2F1F0D"
+                android:endColor="#002F1F0D"
+                android:angle="270" />
+        </shape>
+    </item>
+    <item>
+        <shape android:shape="oval">
+            <solid android:color="@color/qimu_icon_bg_gold" />
+            <stroke
+                android:width="1dp"
+                android:color="@color/qimu_outline_gold" />
+        </shape>
+    </item>
+    <item
+        android:left="3dp"
+        android:top="3dp"
+        android:right="3dp"
+        android:bottom="3dp">
+        <shape android:shape="oval">
+            <stroke
+                android:width="1dp"
+                android:color="#73FFFFFF" />
+        </shape>
+    </item>
+</layer-list>
