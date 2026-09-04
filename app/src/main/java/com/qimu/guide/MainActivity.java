@@ -26,6 +26,7 @@ import com.qimu.guide.provisioning.OperatorSessionStore;
 import com.qimu.guide.provisioning.ProvisioningStore;
 import com.qimu.guide.service.BleService;
 import com.qimu.guide.service.RealtimeGuideManager;
+import com.qimu.guide.service.TourExitWatchdogService;
 import com.qimu.guide.ui.device.DeviceFragment;
 import com.qimu.guide.ui.dialogue.DialogueFragment;
 import com.qimu.guide.ui.export.ExportFragment;
@@ -127,7 +128,10 @@ public class MainActivity extends AppCompatActivity implements TourSessionManage
         }
         invalidateTabs();
         TourSessionManager.TourSession activeSession = tourSessionManager.current();
-        if (activeSession != null) realtimeGuideManager.startForTour(activeSession);
+        if (activeSession != null) {
+            realtimeGuideManager.startForTour(activeSession);
+            TourExitWatchdogService.start();
+        }
     }
 
     /** 顶栏标题：齐目·当前场馆名；未设置场馆时显示占位。 */
@@ -318,8 +322,10 @@ public class MainActivity extends AppCompatActivity implements TourSessionManage
             TourSessionManager.TourSession session = tourSessionManager.current();
             if (active && session != null) {
                 realtimeGuideManager.startForTour(session);
+                TourExitWatchdogService.start();
             } else if (!active) {
                 realtimeGuideManager.stopForTour(null);
+                TourExitWatchdogService.stop();
             }
             invalidateTabs();
             removeSessionFragments();
@@ -351,6 +357,12 @@ public class MainActivity extends AppCompatActivity implements TourSessionManage
         operatorEntryHandler.removeCallbacks(operatorEntryRunnable);
         if (bleService != null) bleService.removeListener(bleListener);
         if (tourSessionManager != null) tourSessionManager.removeListener(this);
+        // 用户正常退出 App（返回键/finish）前结束当前导览会话并关闭 RTC 房间。
+        // 从最近任务划掉 App 由 TourExitWatchdogService.onTaskRemoved 处理。
+        // 旋转等配置变更触发重建时不结束会话；后台被系统杀死由下次启动的会话标记兜底。
+        if (isFinishing()) {
+            QimuApplication.endActiveTourBeforeExit(false);
+        }
     }
 
 }
