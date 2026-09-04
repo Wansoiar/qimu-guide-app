@@ -22,7 +22,7 @@
             android:id="@+id/layout_export_device_state"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginTop="8dp"
+            android:layout_marginBottom="16dp"
             android:gravity="center_vertical"
             android:orientation="horizontal">
 
@@ -30,14 +30,17 @@
                 android:id="@+id/export_status_dot"
                 android:layout_width="7dp"
                 android:layout_height="7dp"
+                android:layout_gravity="center_vertical"
                 android:background="@drawable/dot_status_connected" />
 
             <TextView
                 android:id="@+id/tv_export_device_state"
                 android:layout_width="0dp"
                 android:layout_height="wrap_content"
+                android:layout_gravity="center_vertical"
                 android:layout_marginStart="7dp"
                 android:layout_weight="1"
+                android:includeFontPadding="false"
                 android:maxLines="1"
                 android:text="@string/export_session_ready"
                 android:textColor="@color/qimu_text_secondary"
