@@ -28,8 +28,10 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.CopyOnWriteArraySet;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 
 /**
  * 一次游览范围内的实时 AI 导览总控。
@@ -49,6 +51,8 @@ public final class RealtimeGuideManager {
     private static final long VISION_COMMAND_TTL_MS = 30_000L;
     private static final long MEDIA_AUDIO_RELEASE_GRACE_MS = 1_000L;
     private static final long SUBTITLE_CROSS_CHANNEL_DEDUP_MS = 1_500L;
+    // 崩溃兜底时等待后端停止请求发出/确认的最长时间，避免拖慢系统杀进程。
+    private static final long EXIT_STOP_GRACE_MS = 1_500L;
 
     public enum State {
         IDLE,
@@ -143,10 +147,10 @@ public final class RealtimeGuideManager {
     private volatile RtcVoiceChatManager rtc;
 
     private volatile int generation;
-    private String tourSessionId;
+    private volatile String tourSessionId;
     private String transcriptTourSessionId;
     private TourSessionManager.TourSession tourSession;
-    private GuideApiClient.RtcSessionInfo rtcSession;
+    private volatile GuideApiClient.RtcSessionInfo rtcSession;
     private boolean bleListenerRegistered;
     // 仅在主线程读写。RTC 进房和 VoiceChat Agent 进房是两个独立事件，
     // 二者都完成后才允许打开眼镜 PCM，避免用户第一句话发进“空房”。
@@ -867,23 +871,65 @@ public final class RealtimeGuideManager {
     }
 
     private void stopServerSessionAsync(GuideApiClient.RtcSessionInfo session) {
+        stopExecutor.execute(() -> retryStopServerSession(session));
+    }
+
+    /**
+     * 进程崩溃/被系统杀死前的兜底（尽力而为）：主线程 Looper 可能已不可用，
+     * 无法走 {@link #stopForTour(String)} 的主线程队列，这里直接在调用线程读取当前
+     * RTC 会话并发起后端停止，至多等待 {@link #EXIT_STOP_GRACE_MS}。
+     * 只负责通知后端关闭 VoiceChat Agent，不做本地 UI/设备收尾（进程即将消亡）。
+     */
+    public void stopRtcSessionForExit(@Nullable String expectedTourSessionId) {
+        GuideApiClient.RtcSessionInfo toStop;
+        try {
+            GuideApiClient.RtcSessionInfo current = rtcSession;
+            if (current == null) return;
+            String activeTourId = tourSessionId;
+            if (expectedTourSessionId != null && activeTourId != null
+                    && !expectedTourSessionId.equals(activeTourId)) {
+                return;
+            }
+            toStop = current;
+        } catch (RuntimeException e) {
+            Log.w(TAG, "读取退出前的 RTC 会话失败", e);
+            return;
+        }
+
+        final CountDownLatch done = new CountDownLatch(1);
         stopExecutor.execute(() -> {
-            for (int attempt = 1; attempt <= 3; attempt++) {
-                if (apiClient.stopRtcSession(session.roomId, session.taskId)) {
-                    return;
-                }
-                if (attempt < 3) {
-                    try {
-                        Thread.sleep(250L * attempt);
-                    } catch (InterruptedException interrupted) {
-                        Thread.currentThread().interrupt();
-                        break;
-                    }
+            try {
+                retryStopServerSession(toStop);
+            } finally {
+                done.countDown();
+            }
+        });
+        try {
+            if (!done.await(EXIT_STOP_GRACE_MS, TimeUnit.MILLISECONDS)) {
+                Log.w(TAG, "退出兜底超时，后端停止请求仍在进行: room="
+                        + toStop.roomId + " task=" + toStop.taskId);
+            }
+        } catch (InterruptedException interrupted) {
+            Thread.currentThread().interrupt();
+        }
+    }
+
+    private void retryStopServerSession(GuideApiClient.RtcSessionInfo session) {
+        for (int attempt = 1; attempt <= 3; attempt++) {
+            if (apiClient.stopRtcSession(session.roomId, session.taskId)) {
+                return;
+            }
+            if (attempt < 3) {
+                try {
+                    Thread.sleep(250L * attempt);
+                } catch (InterruptedException interrupted) {
+                    Thread.currentThread().interrupt();
+                    break;
                 }
             }
-            Log.e(TAG, "后端 VoiceChat 停止未确认，等待服务端 IdleTimeout 兜底: room="
-                    + session.roomId + " task=" + session.taskId);
-        });
+        }
+        Log.e(TAG, "后端 VoiceChat 停止未确认，等待服务端 IdleTimeout 兜底: room="
+                + session.roomId + " task=" + session.taskId);
     }
 
     /** 不可恢复错误不属于“暂停”：立即释放坏房间与 Agent，避免空转计费。 */

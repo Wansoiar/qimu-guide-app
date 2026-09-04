@@ -46,6 +46,10 @@
         android:supportsRtl="true"
         android:theme="@style/AppTheme">
 
+        <service
+            android:name=".service.TourExitWatchdogService"
+            android:exported="false" />
+
         <activity
             android:name=".ui.gallery.PhotoPreviewActivity"
             android:exported="false" />
