@@ -101,6 +101,12 @@
     <string name="disconnect_device">断开设备</string>
     <string name="start_tour">开始导览</string>
     <string name="must_start_tour_first">请先在设备页开始导览</string>
+    <string name="privacy_consent_checkbox">阅读并同意《用户隐私政策》</string>
+    <string name="privacy_policy_link">《用户隐私政策》</string>
+    <string name="privacy_policy_title">齐目导览用户隐私政策</string>
+    <string name="privacy_policy_close">关闭</string>
+    <string name="privacy_policy_load_failed">隐私政策暂时无法加载，请联系现场服务人员</string>
+    <string name="privacy_consent_required">请先阅读并勾选同意《用户隐私政策》</string>
     <string name="venue_configured_for_next_tour">当前场馆</string>
     <string name="venue_session_hint">连接眼镜后输入租赁订单号，开始本次独立导览会话。</string>
     <string name="venue_mock_session_hint">可直接使用体验订单 123456；连接眼镜后也可输入真实订单号。</string>
