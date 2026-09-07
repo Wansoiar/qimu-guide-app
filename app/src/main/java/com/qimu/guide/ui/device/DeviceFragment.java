@@ -9,13 +9,19 @@ import android.os.Handler;
 import android.os.Looper;
 import android.provider.Settings;
 import android.text.Editable;
+import android.text.SpannableString;
+import android.text.Spanned;
 import android.text.TextUtils;
 import android.text.TextWatcher;
+import android.text.method.LinkMovementMethod;
+import android.text.style.ClickableSpan;
+import android.text.TextPaint;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.Button;
 import android.widget.LinearLayout;
+import android.widget.ScrollView;
 import android.widget.TextView;
 import android.widget.Toast;
 
@@ -34,6 +40,7 @@ import com.moyoung.glasses.scan.CRPScanRecordParser;
 import com.moyoung.glasses.scan.bean.CRPScanRecordInfo;
 import com.google.android.material.textfield.TextInputEditText;
 import com.google.android.material.textfield.TextInputLayout;
+import com.google.android.material.checkbox.MaterialCheckBox;
 import com.qimu.guide.BuildConfig;
 import com.qimu.guide.R;
 import com.qimu.guide.config.OperatorConfigStore;
@@ -42,6 +49,9 @@ import com.qimu.guide.net.TourSessionManager;
 import com.qimu.guide.service.BleService;
 import com.qimu.guide.service.TourReturnCoordinator;
 
+import java.io.BufferedReader;
+import java.io.IOException;
+import java.io.InputStreamReader;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
@@ -271,6 +281,52 @@ public class DeviceFragment extends Fragment {
             inputLayout.setHelperText(getString(R.string.mock_order_helper));
         }
 
+        LinearLayout consentRow = new LinearLayout(requireContext());
+        consentRow.setOrientation(LinearLayout.HORIZONTAL);
+        consentRow.setGravity(android.view.Gravity.CENTER_VERTICAL);
+        LinearLayout.LayoutParams consentRowParams = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        consentRowParams.topMargin = Math.round(10 * getResources().getDisplayMetrics().density);
+        content.addView(consentRow, consentRowParams);
+
+        MaterialCheckBox consentCheckbox = new MaterialCheckBox(requireContext());
+        consentCheckbox.setChecked(false);
+        consentCheckbox.setContentDescription(getString(R.string.privacy_consent_checkbox));
+        consentCheckbox.setMinHeight(Math.round(
+                48 * getResources().getDisplayMetrics().density));
+        consentRow.addView(consentCheckbox, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+
+        TextView consentText = new TextView(requireContext());
+        String consentLabel = getString(R.string.privacy_consent_checkbox);
+        String policyLabel = getString(R.string.privacy_policy_link);
+        int policyStart = consentLabel.indexOf(policyLabel);
+        SpannableString consentSpannable = new SpannableString(consentLabel);
+        if (policyStart >= 0) {
+            consentSpannable.setSpan(new ClickableSpan() {
+                @Override public void onClick(@NonNull View widget) {
+                    showPrivacyPolicyDialog();
+                }
+
+                @Override public void updateDrawState(@NonNull TextPaint drawState) {
+                    super.updateDrawState(drawState);
+                    drawState.setColor(ContextCompat.getColor(
+                            requireContext(), R.color.qimu_gold_dark));
+                    drawState.setUnderlineText(false);
+                }
+            }, policyStart, policyStart + policyLabel.length(),
+                    Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+        }
+        consentText.setText(consentSpannable);
+        consentText.setTextColor(ContextCompat.getColor(
+                requireContext(), R.color.qimu_text_primary));
+        consentText.setTextSize(13);
+        consentText.setGravity(android.view.Gravity.CENTER_VERTICAL);
+        consentText.setMovementMethod(LinkMovementMethod.getInstance());
+        consentText.setHighlightColor(android.graphics.Color.TRANSPARENT);
+        consentRow.addView(consentText, new LinearLayout.LayoutParams(
+                0, Math.round(48 * getResources().getDisplayMetrics().density), 1));
+
         orderDialog = new AlertDialog.Builder(requireContext())
                 .setTitle(R.string.order_dialog_title)
                 .setView(content)
@@ -281,33 +337,51 @@ public class DeviceFragment extends Fragment {
         orderDialog.setCanceledOnTouchOutside(false);
         orderDialog.setOnShowListener(ignored -> {
             Button confirm = orderDialog.getButton(AlertDialog.BUTTON_POSITIVE);
-            confirm.setEnabled(input.getText() != null
-                    && !TextUtils.isEmpty(input.getText().toString().trim()));
+            Runnable updateConfirmState = () -> confirm.setEnabled(
+                    input.getText() != null
+                            && !TextUtils.isEmpty(input.getText().toString().trim())
+                            && consentCheckbox.isChecked());
+            updateConfirmState.run();
             input.addTextChangedListener(new TextWatcher() {
                 @Override public void beforeTextChanged(CharSequence s, int start, int count, int after) { }
                 @Override public void onTextChanged(CharSequence s, int start, int before, int count) {
-                    confirm.setEnabled(!TextUtils.isEmpty(s == null ? "" : s.toString().trim()));
+                    updateConfirmState.run();
                     inputLayout.setError(null);
                 }
                 @Override public void afterTextChanged(Editable s) { }
             });
+            consentCheckbox.setOnCheckedChangeListener((button, checked) ->
+                    updateConfirmState.run());
             confirm.setOnClickListener(view -> {
                 String orderNo = input.getText() == null ? "" : input.getText().toString().trim();
                 if (orderNo.isEmpty()) {
                     inputLayout.setError("请输入订单号");
                     return;
                 }
+                if (!consentCheckbox.isChecked()) {
+                    Toast.makeText(requireContext(), R.string.privacy_consent_required,
+                            Toast.LENGTH_SHORT).show();
+                    return;
+                }
                 confirm.setEnabled(false);
                 confirm.setText(R.string.order_creating_session);
                 orderDialog.getButton(AlertDialog.BUTTON_NEGATIVE).setEnabled(false);
-                createTourSession(orderNo, inputLayout, confirm);
+                createTourSession(orderNo, consentCheckbox.isChecked(), inputLayout, confirm);
             });
             input.requestFocus();
         });
         orderDialog.show();
     }
 
-    private void createTourSession(String orderNo, TextInputLayout inputLayout, Button confirm) {
+    private void createTourSession(String orderNo, boolean privacyConsent,
+                                   TextInputLayout inputLayout, Button confirm) {
+        if (!privacyConsent) {
+            confirm.setText(R.string.order_confirm_start);
+            confirm.setEnabled(true);
+            Toast.makeText(requireContext(), R.string.privacy_consent_required,
+                    Toast.LENGTH_SHORT).show();
+            return;
+        }
         final int requestGeneration = tourSessionManager.beginSessionRequest();
         if (requestGeneration < 0) {
             confirm.setText(R.string.order_confirm_start);
@@ -433,6 +507,44 @@ public class DeviceFragment extends Fragment {
             btnStartTour.setText(R.string.start_tour);
             btnStartTour.setEnabled(!tourSessionManager.hasCleanupWarning());
         }
+    }
+
+    private void showPrivacyPolicyDialog() {
+        if (!isAdded()) return;
+        final String policyText;
+        try (BufferedReader reader = new BufferedReader(new InputStreamReader(
+                getResources().openRawResource(R.raw.user_privacy_policy)))) {
+            StringBuilder content = new StringBuilder();
+            String line;
+            while ((line = reader.readLine()) != null) {
+                if (content.length() > 0) content.append('\n');
+                content.append(line);
+            }
+            policyText = content.toString();
+        } catch (IOException | RuntimeException error) {
+            Toast.makeText(requireContext(), R.string.privacy_policy_load_failed,
+                    Toast.LENGTH_LONG).show();
+            return;
+        }
+
+        int padding = Math.round(20 * getResources().getDisplayMetrics().density);
+        TextView policyView = new TextView(requireContext());
+        policyView.setText(policyText);
+        policyView.setTextColor(ContextCompat.getColor(requireContext(), R.color.qimu_text_primary));
+        policyView.setTextSize(14);
+        policyView.setLineSpacing(0, 1.25f);
+        policyView.setPadding(padding, padding, padding, padding);
+        policyView.setTextIsSelectable(true);
+
+        ScrollView scrollView = new ScrollView(requireContext());
+        scrollView.addView(policyView, new ScrollView.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+
+        new AlertDialog.Builder(requireContext())
+                .setTitle(R.string.privacy_policy_title)
+                .setView(scrollView)
+                .setPositiveButton(R.string.privacy_policy_close, null)
+                .show();
     }
 
     private void checkPermissionsAndScan() {
