@@ -164,11 +164,6 @@ public final class RealtimeGuideManager {
     // 让“重试连接”的延迟重建可被结束游览或后续重试失效，避免旧 runnable
     // 在房间已经关闭后再次启动 Agent。
     private int rtcRetryAttempt;
-    // 断线重连复用同一次借阅：后端 rtc/session 返回的 session_id。同一 Tour 期间
-    // 记住它，重连时回传后端 → 后端复用同一条 session 行 + 停旧 task 起新 task
-    // （一次借阅贯穿，见 04-Session 改造方案 P0）。切换/结束 Tour 时清空。
-    private String backendRtcSessionId;
-    // 自动重连计数：RTC 断开（AI 退/重连超时）后自动重连，超上限才进 ERROR 让用户手动重试。
     private int rtcAutoReconnectAttempt;
     private volatile boolean visionOperationInProgress;
     private volatile int visionOperationId;
@@ -246,10 +241,6 @@ public final class RealtimeGuideManager {
 
     public boolean hasPendingVisionRequest() {
         return pendingVisionRequest != null;
-    }
-
-    public void retryPendingVisionRequest() {
-        mainHandler.post(this::deliverPendingVisionRequest);
     }
 
     /** 在真正占用眼镜 AIRecognition 前预留整条识图链路。仅主线程调用。 */
@@ -369,17 +360,16 @@ public final class RealtimeGuideManager {
                 recentSubtitlesByContent.clear();
             }
             handledCommandIds.clear();
-            // 换了不同的 Tour（新借阅）：清后端 session 复用指针 + 自动重连计数，
-            // 避免新借阅误用上一次借阅的后端 session_id。
-            backendRtcSessionId = null;
+            // 换了不同的 Tour（新借阅）：重置自动重连计数，避免新借阅沿用上一段计数上限。
             rtcAutoReconnectAttempt = 0;
         }
         registerBleListener();
         updateState(State.RTC_CONNECTING, "正在准备齐目 AI…");
 
-        // 断线重连复用同一次借阅：若本 Tour 已在后端建过 rtc session，回传其 id
-        // 让后端复用同一条 session 行（停旧 task 起新 task）；首次为 null 由后端新建。
-        final String reuseSessionId = backendRtcSessionId;
+        // 全链路只有一个 session_id（rentals/start 返回，见 04-Session 改造方案）：
+        // 带着它调 /v1/rtc/session，由后端把两步映射到 session 表同一条数据。
+        // 断线重连复用同一次借阅也靠它（同 session_id → 后端停旧 task 起新 task）。
+        final String reuseSessionId = session.sessionId;
         final String[] devIds = deviceIdsForSession();
         ioExecutor.execute(() -> {
             GuideApiClient.RtcSessionInfo created =
@@ -405,10 +395,6 @@ public final class RealtimeGuideManager {
         }
 
         rtcSession = created;
-        // 记住后端 session_id，供本次借阅内断线重连复用（后端据此复用同一 session 行）。
-        if (created.sessionId != null && !created.sessionId.isEmpty()) {
-            backendRtcSessionId = created.sessionId;
-        }
         RtcVoiceChatManager manager = new RtcVoiceChatManager(QimuApplication.getAppContext());
         rtc = manager;
         updateState(State.RTC_CONNECTING,
@@ -681,9 +667,8 @@ public final class RealtimeGuideManager {
                 recentSubtitlesByContent.clear();
             }
             handledCommandIds.clear();
-            // 真正结束游览才清后端 session 复用指针；publishStopping=false 是重连前的
-            // 临时释放，必须保留 backendRtcSessionId 供随后重连复用同一 session。
-            backendRtcSessionId = null;
+            // 真正结束游览才重置自动重连计数；publishStopping=false 是重连前的临时释放，
+            // 计数保留（继续用同一段借阅，算进已有次数）。
             rtcAutoReconnectAttempt = 0;
         }
         if (currentSession != null) stopServerSessionAsync(currentSession);
@@ -953,8 +938,8 @@ public final class RealtimeGuideManager {
         Log.w(TAG, "RTC 断开，自动重连 " + rtcAutoReconnectAttempt + "/" + RTC_AUTO_RECONNECT_MAX
                 + "：" + message);
 
-        // 释放当前 RTC（停旧 SDK 引擎），但保持 RTC_CONNECTING、保留 backendRtcSessionId，
-        // 让随后的 startForTourOnMain 复用同一后端 session。后端会停旧 task 起新 task。
+        // 释放当前 RTC（停旧 SDK 引擎），但保持 RTC_CONNECTING；随后的 startForTourReconnect
+        // 用同一导览 session_id 调 /v1/rtc/session，后端据此停旧 task 起新 task。
         ++generation;
         audioStartAttempt++;
         rtcReadyAttempt++;
@@ -996,7 +981,7 @@ public final class RealtimeGuideManager {
         rtcReadyAttempt++;
         registerBleListener();
         updateState(State.RTC_CONNECTING, "正在自动重连齐目 AI…");
-        final String reuseSessionId = backendRtcSessionId;
+        final String reuseSessionId = session.sessionId;
         final String[] devIds = deviceIdsForSession();
         ioExecutor.execute(() -> {
             GuideApiClient.RtcSessionInfo created =

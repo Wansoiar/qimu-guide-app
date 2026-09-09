@@ -63,7 +63,7 @@ public class RtcTestActivity extends AppCompatActivity {
         btnStop.setOnClickListener(v -> stopChat());
         btnMute.setOnClickListener(v -> {
             muted = !muted;
-            rtc.setMuted(muted);
+            rtc.setInputEnabled(!muted);
             btnMute.setText(muted ? "取消静音" : "静音");
         });
     }
@@ -96,7 +96,8 @@ public class RtcTestActivity extends AppCompatActivity {
         btnStart.setEnabled(false);
         io.execute(() -> {
             // venue_id 传 null（默认馆 / 通用讲解员）；后续可从选馆页传入
-            GuideApiClient.RtcSessionInfo s = api.createRtcSession(null);
+            GuideApiClient.RtcSessionInfo s =
+                    api.createRtcSession(null, null, null, null);
             runOnUiThread(() -> {
                 if (s == null) {
                     setStatus("创建会话失败（看后端日志）");

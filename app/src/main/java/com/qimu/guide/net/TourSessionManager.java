@@ -86,14 +86,12 @@ public final class TourSessionManager {
     }
 
     public synchronized boolean beginSession(int requestGeneration,
-                                             String sessionId, String orderNo,
-                                             String venueId, String venueName,
-                                             String deviceId, boolean serverBacked,
-                                             boolean demoMode) {
+                                             String sessionId, String phoneNumber,
+                                             String venueId, String venueName) {
         if (!isSessionRequestCurrent(requestGeneration)) return false;
         sessionRequestGeneration++;
-        session = new TourSession(sessionId, orderNo, venueId, venueName,
-                deviceId, System.currentTimeMillis(), serverBacked, demoMode);
+        session = new TourSession(sessionId, phoneNumber, venueId, venueName,
+                System.currentTimeMillis());
         tutorialShown = false;
         cleanupWarning = false;
         if (preferences != null) {
@@ -150,25 +148,21 @@ public final class TourSessionManager {
 
     public static final class TourSession {
         public final String sessionId;
-        public final String orderNo;
+        public final String phoneNumber;
         public final String venueId;
         public final String venueName;
-        public final String deviceId;
         public final long startedAt;
-        public final boolean serverBacked;
-        public final boolean demoMode;
+        // 学会话全部走服务端 rentals/start + rtc/session，mock 由后端决定，App 恒为服务端会话。
+        public final boolean serverBacked = true;
+        public final boolean demoMode = false;
 
-        TourSession(String sessionId, String orderNo, String venueId, String venueName,
-                    String deviceId, long startedAt, boolean serverBacked,
-                    boolean demoMode) {
+        TourSession(String sessionId, String phoneNumber, String venueId, String venueName,
+                    long startedAt) {
             this.sessionId = sessionId;
-            this.orderNo = orderNo;
+            this.phoneNumber = phoneNumber;
             this.venueId = venueId;
             this.venueName = venueName;
-            this.deviceId = deviceId;
             this.startedAt = startedAt;
-            this.serverBacked = serverBacked;
-            this.demoMode = demoMode;
         }
     }
 }

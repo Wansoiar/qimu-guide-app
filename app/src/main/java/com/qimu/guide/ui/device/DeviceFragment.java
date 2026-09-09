@@ -7,7 +7,6 @@ import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
-import android.provider.Settings;
 import android.text.Editable;
 import android.text.SpannableString;
 import android.text.Spanned;
@@ -46,8 +45,11 @@ import com.qimu.guide.R;
 import com.qimu.guide.config.OperatorConfigStore;
 import com.qimu.guide.net.TourSessionApiClient;
 import com.qimu.guide.net.TourSessionManager;
+import com.qimu.guide.provisioning.ProvisioningApi;
+import com.qimu.guide.provisioning.ProvisioningStore;
 import com.qimu.guide.service.BleService;
 import com.qimu.guide.service.TourReturnCoordinator;
+import com.qimu.guide.ui.widget.SerifTextView;
 
 import java.io.BufferedReader;
 import java.io.IOException;
@@ -58,7 +60,6 @@ import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.UUID;
 import java.util.concurrent.atomic.AtomicInteger;
 
 public class DeviceFragment extends Fragment {
@@ -66,7 +67,6 @@ public class DeviceFragment extends Fragment {
     private static final long SCAN_TIMEOUT_MS = 15000;
     private static final long SCAN_LIST_UPDATE_DELAY_MS = 400;
     private static final long START_RECONNECT_TIMEOUT_MS = 15000;
-    private static final String MOCK_ORDER_NO = "123456";
     private BleService bleService;
     private TourSessionManager tourSessionManager;
     private OperatorConfigStore operatorConfigStore;
@@ -77,7 +77,7 @@ public class DeviceFragment extends Fragment {
     private View btnScan;
     private View layoutTourStart, layoutTourActive, layoutCleanupWarning;
     private Button btnStartTour;
-    private TextView tvActiveTour, tvDefaultVenue, tvTourStartHint;
+    private TextView tvDefaultVenue, tvTourStartHint;
     private RecyclerView recyclerDevices;
 
     private final List<ScanResultItem> deviceList = new ArrayList<>();
@@ -117,7 +117,7 @@ public class DeviceFragment extends Fragment {
                     && waitingToStartAfterReconnect) {
                 waitingToStartAfterReconnect = false;
                 mainHandler.removeCallbacks(startReconnectTimeout);
-                if (isAdded()) requireActivity().runOnUiThread(DeviceFragment.this::showOrderDialog);
+                if (isAdded()) requireActivity().runOnUiThread(DeviceFragment.this::showStartDialog);
             }
         }
         @Override public void onAudioConnectionStateChanged(int state) {
@@ -178,7 +178,6 @@ public class DeviceFragment extends Fragment {
         layoutTourActive = v.findViewById(R.id.layout_tour_active);
         layoutCleanupWarning = v.findViewById(R.id.layout_cleanup_warning);
         btnStartTour = v.findViewById(R.id.btn_start_tour);
-        tvActiveTour = v.findViewById(R.id.tv_active_tour);
         tvDefaultVenue = v.findViewById(R.id.tv_default_venue);
         tvTourStartHint = v.findViewById(R.id.tv_tour_start_hint);
 
@@ -236,7 +235,7 @@ public class DeviceFragment extends Fragment {
         if (bleService.isConnected()
                 || bleService.getConnectionState() == CRPBleConnectionStateListener.STATE_CONNECTED
                 || BuildConfig.DEBUG) {
-            showOrderDialog();
+            showStartDialog();
             return;
         }
 
@@ -248,7 +247,7 @@ public class DeviceFragment extends Fragment {
         Toast.makeText(requireContext(), "正在连接眼镜，请保持设备靠近", Toast.LENGTH_SHORT).show();
     }
 
-    private void showOrderDialog() {
+    private void showStartDialog() {
         if (!isAdded() || tourSessionManager.isActive()) return;
         if (orderDialog != null && orderDialog.isShowing()) return;
 
@@ -257,15 +256,27 @@ public class DeviceFragment extends Fragment {
         content.setOrientation(LinearLayout.VERTICAL);
         content.setPadding(horizontalPadding, 0, horizontalPadding, 0);
 
+        // 标题用宋体并作为内容首行，替代 Material 框架标题区（框架标题顶部留白过大）。
+        SerifTextView titleView = new SerifTextView(requireContext());
+        titleView.setText(R.string.start_tour);
+        titleView.setTextColor(ContextCompat.getColor(requireContext(), R.color.qimu_text_primary));
+        titleView.setTextSize(20);
+        LinearLayout.LayoutParams titleParams = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        titleParams.topMargin = Math.round(16 * getResources().getDisplayMetrics().density);
+        content.addView(titleView, titleParams);
+
         TextView hint = new TextView(requireContext());
-        hint.setText(R.string.order_dialog_hint);
+        hint.setText(R.string.start_dialog_hint);
         hint.setTextColor(ContextCompat.getColor(requireContext(), R.color.qimu_text_secondary));
         hint.setTextSize(14);
-        content.addView(hint, new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        LinearLayout.LayoutParams hintParams = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        hintParams.topMargin = Math.round(12 * getResources().getDisplayMetrics().density);
+        content.addView(hint, hintParams);
 
         TextInputLayout inputLayout = new TextInputLayout(requireContext());
-        inputLayout.setHint(R.string.order_number);
+        inputLayout.setHint(R.string.tourist_phone);
         LinearLayout.LayoutParams inputParams = new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
         inputParams.topMargin = Math.round(12 * getResources().getDisplayMetrics().density);
@@ -273,17 +284,13 @@ public class DeviceFragment extends Fragment {
 
         TextInputEditText input = new TextInputEditText(inputLayout.getContext());
         input.setSingleLine(true);
+        input.setInputType(android.text.InputType.TYPE_CLASS_PHONE);
         inputLayout.addView(input, new TextInputLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
-        if (BuildConfig.DEBUG) {
-            input.setText(MOCK_ORDER_NO);
-            input.setSelection(MOCK_ORDER_NO.length());
-            inputLayout.setHelperText(getString(R.string.mock_order_helper));
-        }
 
         LinearLayout consentRow = new LinearLayout(requireContext());
         consentRow.setOrientation(LinearLayout.HORIZONTAL);
-        consentRow.setGravity(android.view.Gravity.CENTER_VERTICAL);
+        consentRow.setGravity(android.view.Gravity.START | android.view.Gravity.CENTER_VERTICAL);
         LinearLayout.LayoutParams consentRowParams = new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
         consentRowParams.topMargin = Math.round(10 * getResources().getDisplayMetrics().density);
@@ -294,6 +301,10 @@ public class DeviceFragment extends Fragment {
         consentCheckbox.setContentDescription(getString(R.string.privacy_consent_checkbox));
         consentCheckbox.setMinHeight(Math.round(
                 48 * getResources().getDisplayMetrics().density));
+        // MaterialCheckBox 自带前导 minWidth/内边距，清零让勾选框与手机号输入框左缘对齐。
+        consentCheckbox.setMinWidth(0);
+        consentCheckbox.setMinimumWidth(0);
+        consentCheckbox.setPadding(0, 0, 0, 0);
         consentRow.addView(consentCheckbox, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
 
@@ -321,17 +332,16 @@ public class DeviceFragment extends Fragment {
         consentText.setTextColor(ContextCompat.getColor(
                 requireContext(), R.color.qimu_text_primary));
         consentText.setTextSize(13);
-        consentText.setGravity(android.view.Gravity.CENTER_VERTICAL);
+        consentText.setGravity(android.view.Gravity.START | android.view.Gravity.CENTER_VERTICAL);
         consentText.setMovementMethod(LinkMovementMethod.getInstance());
         consentText.setHighlightColor(android.graphics.Color.TRANSPARENT);
         consentRow.addView(consentText, new LinearLayout.LayoutParams(
                 0, Math.round(48 * getResources().getDisplayMetrics().density), 1));
 
         orderDialog = new AlertDialog.Builder(requireContext())
-                .setTitle(R.string.order_dialog_title)
                 .setView(content)
                 .setNegativeButton(R.string.cancel, null)
-                .setPositiveButton(R.string.order_confirm_start, null)
+                .setPositiveButton(R.string.start_confirm, null)
                 .create();
         orderDialog.setCancelable(false);
         orderDialog.setCanceledOnTouchOutside(false);
@@ -353,9 +363,9 @@ public class DeviceFragment extends Fragment {
             consentCheckbox.setOnCheckedChangeListener((button, checked) ->
                     updateConfirmState.run());
             confirm.setOnClickListener(view -> {
-                String orderNo = input.getText() == null ? "" : input.getText().toString().trim();
-                if (orderNo.isEmpty()) {
-                    inputLayout.setError("请输入订单号");
+                String phone = input.getText() == null ? "" : input.getText().toString().trim();
+                if (phone.isEmpty()) {
+                    inputLayout.setError(getString(R.string.tourist_phone_required));
                     return;
                 }
                 if (!consentCheckbox.isChecked()) {
@@ -364,19 +374,19 @@ public class DeviceFragment extends Fragment {
                     return;
                 }
                 confirm.setEnabled(false);
-                confirm.setText(R.string.order_creating_session);
+                confirm.setText(R.string.start_creating_session);
                 orderDialog.getButton(AlertDialog.BUTTON_NEGATIVE).setEnabled(false);
-                createTourSession(orderNo, consentCheckbox.isChecked(), inputLayout, confirm);
+                startTour(phone, consentCheckbox.isChecked(), inputLayout, confirm);
             });
             input.requestFocus();
         });
         orderDialog.show();
     }
 
-    private void createTourSession(String orderNo, boolean privacyConsent,
-                                   TextInputLayout inputLayout, Button confirm) {
+    private void startTour(String phone, boolean privacyConsent,
+                           TextInputLayout inputLayout, Button confirm) {
         if (!privacyConsent) {
-            confirm.setText(R.string.order_confirm_start);
+            confirm.setText(R.string.start_confirm);
             confirm.setEnabled(true);
             Toast.makeText(requireContext(), R.string.privacy_consent_required,
                     Toast.LENGTH_SHORT).show();
@@ -384,43 +394,44 @@ public class DeviceFragment extends Fragment {
         }
         final int requestGeneration = tourSessionManager.beginSessionRequest();
         if (requestGeneration < 0) {
-            confirm.setText(R.string.order_confirm_start);
+            confirm.setText(R.string.start_confirm);
             confirm.setEnabled(true);
             Toast.makeText(requireContext(),
                     "当前无法开始新导览，请先处理现有会话或清理告警",
                     Toast.LENGTH_LONG).show();
             return;
         }
-        String deviceId = Settings.Secure.getString(
-                requireContext().getContentResolver(), Settings.Secure.ANDROID_ID);
-        if (TextUtils.isEmpty(deviceId)) deviceId = "android-unknown";
-        final String finalDeviceId = deviceId;
         final OperatorConfigStore.Venue venue = operatorConfigStore.defaultVenue();
-
-        if (BuildConfig.DEBUG && MOCK_ORDER_NO.equals(orderNo)) {
-            // 本地 Demo 仍使用标准 UUID，避免它流入要求 UUID 格式的线上接口时触发 422。
-            postSessionCreated(requestGeneration, UUID.randomUUID().toString(), orderNo,
-                    finalDeviceId, venue, false, true,
-                    getString(R.string.mock_session_notice));
+        // 设备标识从初始化内存取（眼镜 MAC + 手机 device_id），不再取 ANDROID_ID。
+        ProvisioningApi.ProvisioningSnapshot provisioned =
+                ProvisioningStore.get(requireContext()).snapshot();
+        if (provisioned == null) {
+            confirm.setText(R.string.start_confirm);
+            confirm.setEnabled(true);
+            Toast.makeText(requireContext(), "设备尚未完成初始化，请先完成设备初始化",
+                    Toast.LENGTH_LONG).show();
             return;
         }
+        String glassesId = provisioned.glassesId == null ? "" : provisioned.glassesId.trim();
+        String phoneDeviceId = provisioned.deviceId == null ? "" : provisioned.deviceId.trim();
 
         if (!bleService.isConnected()
-                && bleService.getConnectionState() != CRPBleConnectionStateListener.STATE_CONNECTED) {
+                && bleService.getConnectionState() != CRPBleConnectionStateListener.STATE_CONNECTED
+                && !BuildConfig.DEBUG) {
             tourSessionManager.invalidatePendingSessionRequests();
             inputLayout.setError(getString(R.string.must_connect_first));
-            confirm.setText(R.string.order_confirm_start);
+            confirm.setText(R.string.start_confirm);
             confirm.setEnabled(true);
             orderDialog.getButton(AlertDialog.BUTTON_NEGATIVE).setEnabled(true);
             return;
         }
 
-        TourSessionApiClient.get().createSession(orderNo, venue.id, deviceId,
+        TourSessionApiClient.get().startRental(venue.id, glassesId, phoneDeviceId, phone,
                 new TourSessionApiClient.CreateCallback() {
                     @Override
                     public void onSuccess(String sessionId) {
-                        postSessionCreated(requestGeneration, sessionId, orderNo,
-                                finalDeviceId, venue, true, false, null);
+                        postSessionCreated(requestGeneration, sessionId, phone,
+                                venue, null);
                     }
 
                     @Override
@@ -431,51 +442,31 @@ public class DeviceFragment extends Fragment {
                                     requestGeneration)) return;
                             if (orderDialog == null || !orderDialog.isShowing()) return;
                             inputLayout.setError(message);
-                            confirm.setText(R.string.order_confirm_start);
+                            confirm.setText(R.string.start_confirm);
                             confirm.setEnabled(true);
                             orderDialog.getButton(AlertDialog.BUTTON_NEGATIVE).setEnabled(true);
-                            if (BuildConfig.DEBUG && transportUnavailable) {
-                                new AlertDialog.Builder(requireContext())
-                                        .setTitle("会话服务未连接")
-                                        .setMessage("可以继续建立仅用于真机联调的本地会话，但不会校验订单号，也不会创建服务端 session。")
-                                        .setNegativeButton("返回重试", null)
-                                        .setPositiveButton("仅本地联调", (dialog, which) ->
-                                                postSessionCreated(requestGeneration,
-                                                        UUID.randomUUID().toString(), orderNo,
-                                                        finalDeviceId, venue, false, false,
-                                                        "当前是本地联调会话，订单尚未经过服务端校验"))
-                                        .show();
-                            }
                         });
                     }
                 });
     }
 
     private void postSessionCreated(int requestGeneration, String sessionId,
-                                    String orderNo, String deviceId,
-                                    OperatorConfigStore.Venue venue,
-                                    boolean serverBacked, boolean demoMode,
+                                    String phone, OperatorConfigStore.Venue venue,
                                     @Nullable String notice) {
         if (!isAdded()) {
-            if (serverBacked) {
-                TourSessionApiClient.get().closeSession(sessionId, ignored -> { });
-            }
+            TourSessionApiClient.get().closeSession(sessionId, ignored -> { });
             return;
         }
         requireActivity().runOnUiThread(() -> {
             if (!isAdded() || getView() == null
                     || TourReturnCoordinator.get().isInProgress()
                     || !tourSessionManager.isSessionRequestCurrent(requestGeneration)) {
-                if (serverBacked) {
-                    TourSessionApiClient.get().closeSession(sessionId, ignored -> { });
-                }
+                TourSessionApiClient.get().closeSession(sessionId, ignored -> { });
                 return;
             }
-            if (!tourSessionManager.beginSession(requestGeneration, sessionId, orderNo,
-                    venue.id, venue.name, deviceId, serverBacked, demoMode)) {
-                if (serverBacked) {
-                    TourSessionApiClient.get().closeSession(sessionId, ignored -> { });
-                }
+            if (!tourSessionManager.beginSession(requestGeneration, sessionId, phone,
+                    venue.id, venue.name)) {
+                TourSessionApiClient.get().closeSession(sessionId, ignored -> { });
                 return;
             }
             if (orderDialog != null) orderDialog.dismiss();
@@ -487,26 +478,28 @@ public class DeviceFragment extends Fragment {
 
     private void updateTourUi() {
         if (!isAdded() || layoutTourStart == null) return;
-        TourSessionManager.TourSession session = tourSessionManager.current();
-        boolean active = session != null;
+        boolean active = tourSessionManager.isActive();
         OperatorConfigStore.Venue venue = operatorConfigStore.defaultVenue();
         layoutTourStart.setVisibility(active ? View.GONE : View.VISIBLE);
         layoutTourActive.setVisibility(active ? View.VISIBLE : View.GONE);
         layoutCleanupWarning.setVisibility(!active && tourSessionManager.hasCleanupWarning()
                 ? View.VISIBLE : View.GONE);
         if (active) {
-            tvActiveTour.setText("订单 " + session.orderNo + " · " + session.venueName);
-        } else if (waitingToStartAfterReconnect) {
+            // 导览进行中：卡片固定展示“导览进行中”，不再展示场馆/手机号副文案。
+            return;
+        }
+        if (waitingToStartAfterReconnect) {
             btnStartTour.setText("正在连接眼镜…");
             btnStartTour.setEnabled(false);
-        } else {
-            tvDefaultVenue.setText(venue.name);
-            tvTourStartHint.setText(BuildConfig.DEBUG
-                    ? R.string.venue_mock_session_hint
-                    : R.string.venue_session_hint);
-            btnStartTour.setText(R.string.start_tour);
-            btnStartTour.setEnabled(!tourSessionManager.hasCleanupWarning());
+            return;
         }
+        tvDefaultVenue.setText(venue.name);
+        tvTourStartHint.setText(R.string.venue_session_hint);
+        btnStartTour.setText(R.string.start_tour);
+        boolean deviceReady = bleService != null
+                && bleService.getConnectionState() == CRPBleConnectionStateListener.STATE_CONNECTED
+                && bleService.getAudioConnectionState() == BleService.AUDIO_STATE_CONNECTED;
+        btnStartTour.setEnabled(!tourSessionManager.hasCleanupWarning() && deviceReady);
     }
 
     private void showPrivacyPolicyDialog() {
@@ -772,6 +765,7 @@ public class DeviceFragment extends Fragment {
                 break;
         }
         updateDeviceReadyMessage();
+        updateTourUi();
     }
 
     private void showDeviceCard() {
@@ -808,6 +802,7 @@ public class DeviceFragment extends Fragment {
             renderConnectionStatus(tvAudioStatus, R.string.connection_disconnected, R.color.qimu_error);
         }
         updateDeviceReadyMessage();
+        updateTourUi();
     }
 
     private void renderConnectionStatus(TextView label, int textRes, int colorRes) {

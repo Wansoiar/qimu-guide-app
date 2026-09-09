@@ -11,7 +11,6 @@ import androidx.appcompat.app.AlertDialog;
 import androidx.appcompat.app.AppCompatActivity;
 
 import com.google.android.material.textfield.TextInputEditText;
-import com.qimu.guide.BuildConfig;
 import com.qimu.guide.R;
 import com.qimu.guide.config.OperatorConfigStore;
 import com.qimu.guide.net.TourSessionManager;
@@ -31,6 +30,7 @@ public final class OperatorConfigActivity extends AppCompatActivity {
     private TextView tvOperatorDeviceId;
     private TextView tvOperatorPhoneSerial;
     private TextView tvOperatorGlassesId;
+    private TextView tvCurrentOrderId;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -52,11 +52,10 @@ public final class OperatorConfigActivity extends AppCompatActivity {
         tvOperatorDeviceId = findViewById(R.id.tv_operator_device_id);
         tvOperatorPhoneSerial = findViewById(R.id.tv_operator_phone_serial);
         tvOperatorGlassesId = findViewById(R.id.tv_operator_glasses_id);
+        tvCurrentOrderId = findViewById(R.id.tv_current_order_id);
 
         findViewById(R.id.btn_close_operator_config).setOnClickListener(view -> finish());
         findViewById(R.id.btn_reset_device).setOnClickListener(view -> confirmReset());
-        findViewById(R.id.layout_mock_order).setVisibility(
-                BuildConfig.DEBUG ? View.VISIBLE : View.GONE);
 
         populate();
     }
@@ -72,6 +71,11 @@ public final class OperatorConfigActivity extends AppCompatActivity {
         tvOperatorDeviceId.setText(snapshot.deviceId);
         tvOperatorPhoneSerial.setText(snapshot.phoneSerial);
         tvOperatorGlassesId.setText(snapshot.glassesId);
+
+        TourSessionManager.TourSession currentTour = tourSessionManager.current();
+        tvCurrentOrderId.setText(currentTour != null
+                ? currentTour.sessionId
+                : getString(R.string.current_order_placeholder));
     }
 
     private void confirmReset() {

@@ -43,16 +43,32 @@ public final class TourSessionApiClient {
     private TourSessionApiClient() {
     }
 
-    public void createSession(String orderNo, String venueId, String deviceId,
-                              CreateCallback callback) {
+    /**
+     * 开通一次租借（POST /v1/rentals/start）：后端建 session 并绑设备，返回唯一 session_id。
+     *
+     * 设备标识取初始化后端落盘的值（glassesId=眼镜 MAC，phoneDeviceId=手机 device_id）；
+     * 游客手机号 phoneNumber 作为本次租借的游客标识，后端落到 session.user_id。
+     * 全链路只有一个 session_id：后续 RealtimeGuideManager 会带着它去调 /v1/rtc/session，
+     * 由后端把两步映射到 session 表同一条数据。
+     */
+    public void startRental(String venueId, String glassesId, String phoneDeviceId,
+                            String phoneNumber, CreateCallback callback) {
         try {
             JSONObject payload = new JSONObject();
-            payload.put("order_no", orderNo.trim());
             payload.put("venue_id", venueId);
-            payload.put("device_id", deviceId);
+            if (glassesId != null && !glassesId.trim().isEmpty()) {
+                payload.put("device_glasses_id", glassesId.trim());
+            }
+            if (phoneDeviceId != null && !phoneDeviceId.trim().isEmpty()) {
+                payload.put("device_phone_id", phoneDeviceId.trim());
+            }
+            if (phoneNumber != null && !phoneNumber.trim().isEmpty()) {
+                payload.put("phone_number", phoneNumber.trim());
+            }
             Request request = new Request.Builder()
-                    .url(ApiConfig.sessions())
+                    .url(ApiConfig.rentalsStart())
                     .header("X-Client-Type", "android")
+                    .header("X-Staff-Pin", "0000")
                     .post(RequestBody.create(payload.toString(), JSON))
                     .build();
             client.newCall(request).enqueue(new Callback() {
@@ -78,7 +94,6 @@ public final class TourSessionApiClient {
 
                         JSONObject data = json.optJSONObject("data");
                         String sessionId = data == null ? "" : data.optString("session_id", "");
-                        if (sessionId.isEmpty()) sessionId = json.optString("session_id", "");
                         if (sessionId.trim().isEmpty()) {
                             callback.onError("会话服务未返回 session_id", false);
                         } else {

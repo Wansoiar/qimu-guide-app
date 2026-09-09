@@ -21,6 +21,11 @@ public final class ApiConfig {
         return baseUrl() + "/sessions";
     }
 
+    /** 租借/会话：开通一次租借（建 session + 绑设备），返回唯一 session_id。 */
+    public static String rentalsStart() {
+        return baseUrl() + "/v1/rentals/start";
+    }
+
     public static String uploadImage() {
         return baseUrl() + "/v1/upload/image";
     }

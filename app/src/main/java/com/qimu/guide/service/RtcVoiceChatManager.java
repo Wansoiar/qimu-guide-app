@@ -229,11 +229,6 @@ public class RtcVoiceChatManager {
         }
     }
 
-    /** 兼容旧测试入口；外部音频模式下“静音”就是关闭 PCM gate。 */
-    public void setMuted(boolean muted) {
-        setInputEnabled(!muted);
-    }
-
     /** 退房并销毁引擎。后端 VoiceChat Agent 仍需由 API 显式停止。 */
     public void stop() {
         // 先切断回调，再触发 leave/destroy。部分 RTC 实现会在 leaveRoom 期间同步回调，
