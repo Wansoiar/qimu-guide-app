@@ -135,6 +135,33 @@ public final class TourSessionManager {
         notifyListeners(isActive());
     }
 
+    /** 上次异常退出遗留的会话 id（仅用于清理收尾，不恢复到活动会话）。 */
+    @Nullable
+    public String lastSessionId() {
+        return preferences == null ? null : preferences.getString(KEY_SESSION_ID, null);
+    }
+
+    /** 结束上次遗留订单后的收尾：清除清理告警并移除遗留的 session id。 */
+    public synchronized boolean forgetLastSession(@Nullable String expectedSessionId,
+                                                  boolean cleanupConfirmed) {
+        if (expectedSessionId == null || expectedSessionId.trim().isEmpty()) {
+            return false;
+        }
+        cleanupWarning = !cleanupConfirmed;
+        if (preferences != null) {
+            SharedPreferences.Editor editor = preferences.edit()
+                    .putBoolean(KEY_ACTIVE_MARKER, false)
+                    .putBoolean(KEY_CLEANUP_WARNING, cleanupWarning);
+            String stored = preferences.getString(KEY_SESSION_ID, null);
+            if (expectedSessionId.equals(stored)) {
+                editor.remove(KEY_SESSION_ID);
+            }
+            editor.apply();
+        }
+        notifyListeners(isActive());
+        return true;
+    }
+
     /** Returns true exactly once for each newly started tour. */
     public synchronized boolean consumeFirstTutorial() {
         if (session == null || tutorialShown) return false;

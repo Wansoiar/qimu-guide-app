@@ -217,6 +217,11 @@
     <string name="end_tour_confirm">结束游览</string>
     <string name="cancel">取消</string>
 
+    <string name="cleanup_warning_hint">上次导览未正常结束。如需继续，请重新输入手机号开始导览；若确认是异常退出、现在要开始下一次导览，请点击「结束上次订单」清理上次导览残留。</string>
+    <string name="cleanup_acknowledge">我知道了</string>
+    <string name="end_last_order">结束上次订单</string>
+    <string name="end_last_order_progress_title">正在结束上次订单</string>
+
     <string name="share_back">返回分享设置</string>
     <string name="share_title">生成导览分享码</string>
     <string name="share_phone_explanation">游客扫码后需要输入手机号后 4 位验证。手机号只用于本次分享，不会保存在这台设备上。</string>

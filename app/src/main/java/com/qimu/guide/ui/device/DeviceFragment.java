@@ -20,6 +20,7 @@ import android.view.View;
 import android.view.ViewGroup;
 import android.widget.Button;
 import android.widget.LinearLayout;
+import android.widget.ProgressBar;
 import android.widget.ScrollView;
 import android.widget.TextView;
 import android.widget.Toast;
@@ -92,6 +93,8 @@ public class DeviceFragment extends Fragment {
     private boolean scanPublishScheduled;
     private boolean waitingToStartAfterReconnect;
     private AlertDialog orderDialog;
+    private AlertDialog lastOrderProgressDialog;
+    private TextView lastOrderProgressText;
     private final Runnable startReconnectTimeout = () -> {
         if (!waitingToStartAfterReconnect || !isAdded()) return;
         waitingToStartAfterReconnect = false;
@@ -103,6 +106,41 @@ public class DeviceFragment extends Fragment {
         if (!isAdded()) return;
         requireActivity().runOnUiThread(this::updateTourUi);
     };
+
+    private final TourReturnCoordinator.Listener lastOrderReturnListener =
+            new TourReturnCoordinator.Listener() {
+                @Override
+                public void onReturnStageChanged(String message) {
+                    if (!isAdded()) return;
+                    requireActivity().runOnUiThread(() -> showLastOrderProgress(message));
+                }
+
+                @Override
+                public void onReturnFinished(boolean glassesResetConfirmed,
+                                             boolean serverCloseSucceeded,
+                                             boolean localCleanupSucceeded) {
+                    if (!isAdded()) return;
+                    requireActivity().runOnUiThread(() -> {
+                        if (lastOrderProgressDialog != null) {
+                            lastOrderProgressDialog.dismiss();
+                            lastOrderProgressDialog = null;
+                        }
+                        if (!localCleanupSucceeded) {
+                            Toast.makeText(requireContext(),
+                                    "上次导览缓存未完全清理，已阻止开始新导览；请立即告知管理员",
+                                    Toast.LENGTH_LONG).show();
+                        } else if (!glassesResetConfirmed) {
+                            Toast.makeText(requireContext(),
+                                    "眼镜清理未确认，请归还前告知管理员",
+                                    Toast.LENGTH_LONG).show();
+                        } else {
+                            Toast.makeText(requireContext(),
+                                    "上次订单已结束，眼镜已为下一位游客准备就绪",
+                                    Toast.LENGTH_SHORT).show();
+                        }
+                    });
+                }
+            };
 
     private final OperatorConfigStore.Listener operatorConfigListener = venue -> {
         if (!isAdded()) return;
@@ -186,6 +224,7 @@ public class DeviceFragment extends Fragment {
         bleService.addListener(bleListener);
         tourSessionManager.addListener(tourSessionListener);
         operatorConfigStore.addListener(operatorConfigListener);
+        TourReturnCoordinator.get().addListener(lastOrderReturnListener);
 
         deviceAdapter = new ScanDeviceAdapter(deviceList, addr -> {
             appendLog("选中设备: " + addr);
@@ -201,13 +240,11 @@ public class DeviceFragment extends Fragment {
 
         btnStartTour.setOnClickListener(vi -> beginStartTourFlow());
         v.findViewById(R.id.btn_confirm_cleanup).setOnClickListener(vi ->
-                new AlertDialog.Builder(requireContext())
-                        .setTitle("确认眼镜已经清理？")
-                        .setMessage("仅当管理员已经重置眼镜、确认上一位游客的照片已清除时继续。")
-                        .setNegativeButton(R.string.cancel, null)
-                        .setPositiveButton("确认已清理", (dialog, which) ->
-                                tourSessionManager.clearCleanupWarning())
-                        .show());
+                // 仅清除提示；管理员已手工处理时用此按钮放行继续开导览。
+                tourSessionManager.clearCleanupWarning());
+
+        v.findViewById(R.id.btn_end_last_order).setOnClickListener(vi ->
+                beginLastOrderReturn());
 
         v.findViewById(R.id.btn_debug_disconnect).setOnClickListener(vi -> { bleService.disconnect(); appendLog("手动断开连接"); });
 
@@ -245,6 +282,47 @@ public class DeviceFragment extends Fragment {
         mainHandler.removeCallbacks(startReconnectTimeout);
         mainHandler.postDelayed(startReconnectTimeout, START_RECONNECT_TIMEOUT_MS);
         Toast.makeText(requireContext(), "正在连接眼镜，请保持设备靠近", Toast.LENGTH_SHORT).show();
+    }
+
+    private void beginLastOrderReturn() {
+        if (!isAdded()) return;
+        String last = tourSessionManager.lastSessionId();
+        if (last == null || last.trim().isEmpty()) {
+            Toast.makeText(requireContext(), "未找到上次导览记录", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        if (!TourReturnCoordinator.get().beginStaleOrderReturn(last)) {
+            Toast.makeText(requireContext(), "结束上次订单失败，请重试或先连接眼镜", Toast.LENGTH_LONG).show();
+        }
+    }
+
+    private void showLastOrderProgress(String message) {
+        if (!isAdded() || getView() == null) return;
+        if (lastOrderProgressDialog == null) {
+            LinearLayout content = new LinearLayout(requireContext());
+            content.setOrientation(LinearLayout.VERTICAL);
+            int padding = Math.round(24 * getResources().getDisplayMetrics().density);
+            content.setPadding(padding, padding / 2, padding, padding);
+            ProgressBar progress = new ProgressBar(requireContext());
+            content.addView(progress, new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+            lastOrderProgressText = new TextView(requireContext());
+            lastOrderProgressText.setTextColor(ContextCompat.getColor(
+                    requireContext(), R.color.qimu_text_secondary));
+            lastOrderProgressText.setTextSize(14);
+            lastOrderProgressText.setGravity(android.view.Gravity.CENTER);
+            LinearLayout.LayoutParams textParams = new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+            textParams.topMargin = padding / 2;
+            content.addView(lastOrderProgressText, textParams);
+            lastOrderProgressDialog = new AlertDialog.Builder(requireContext())
+                    .setTitle(R.string.end_last_order_progress_title)
+                    .setView(content)
+                    .setCancelable(false)
+                    .create();
+        }
+        lastOrderProgressText.setText(message);
+        if (!lastOrderProgressDialog.isShowing()) lastOrderProgressDialog.show();
     }
 
     private void showStartDialog() {
@@ -873,6 +951,11 @@ public class DeviceFragment extends Fragment {
         if (tourSessionManager != null) tourSessionManager.removeListener(tourSessionListener);
         if (operatorConfigStore != null) operatorConfigStore.removeListener(operatorConfigListener);
         bleService.removeListener(bleListener);
+        TourReturnCoordinator.get().removeListener(lastOrderReturnListener);
+        if (lastOrderProgressDialog != null) {
+            lastOrderProgressDialog.dismiss();
+            lastOrderProgressDialog = null;
+        }
         super.onDestroyView();
     }
 
