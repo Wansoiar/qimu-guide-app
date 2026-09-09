@@ -7,7 +7,6 @@ import android.text.TextUtils;
 import android.util.Log;
 
 import com.qimu.guide.QimuApplication;
-import com.qimu.guide.net.TourSessionApiClient;
 import com.qimu.guide.net.TourSessionManager;
 import com.qimu.guide.ui.gallery.GallerySelectionStore;
 import com.qimu.guide.ui.gallery.LocalPhotoRepository;
@@ -79,18 +78,10 @@ public final class TourReturnCoordinator {
         inProgress = true;
         int operation = ++generation;
         publishStage("正在关闭本次导览会话…");
-        if (session.serverBacked) {
-            try {
-                TourSessionApiClient.get().closeSession(session.sessionId, success ->
-                        mainHandler.post(() -> startGlassesReset(
-                                operation, session, returnTarget, success)));
-            } catch (RuntimeException closeFailure) {
-                Log.e(TAG, "关闭服务端导览会话失败", closeFailure);
-                startGlassesReset(operation, session, returnTarget, false);
-            }
-        } else {
-            startGlassesReset(operation, session, returnTarget, true);
-        }
+        // 服务端停火山由本方法开头的 stopForTour（/v1/rtc/session/stop 带 session_id）承担，
+        // 后端会落 rtc_status=stopped；失败由后端补停对账任务兜底。归还不再发独立的
+        // /sessions/{id}/close（后端无此路由）。
+        startGlassesReset(operation, session, returnTarget, true);
         return true;
     }
 

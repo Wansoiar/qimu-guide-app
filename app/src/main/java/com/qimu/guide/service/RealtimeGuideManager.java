@@ -386,7 +386,7 @@ public final class RealtimeGuideManager {
                 || !requestedTour.sessionId.equals(tourSessionId)
                 || TourReturnCoordinator.get().isInProgress()
                 || TourSessionManager.get().current() != requestedTour) {
-            if (created != null) stopServerSessionAsync(created);
+            if (created != null) stopServerSessionAsync(created, requestedTour.sessionId);
             return;
         }
         if (created == null) {
@@ -653,6 +653,8 @@ public final class RealtimeGuideManager {
         if (currentRtc != null) currentRtc.stop();
 
         GuideApiClient.RtcSessionInfo currentSession = rtcSession;
+        // tourSessionId 稍后置空，先捕获用于后端 stop（/v1/rtc/session/stop 带 session_id）。
+        String stopSessionId = tourSessionId;
         rtcSession = null;
         tourSession = null;
         tourSessionId = null;
@@ -671,7 +673,7 @@ public final class RealtimeGuideManager {
             // 计数保留（继续用同一段借阅，算进已有次数）。
             rtcAutoReconnectAttempt = 0;
         }
-        if (currentSession != null) stopServerSessionAsync(currentSession);
+        if (currentSession != null) stopServerSessionAsync(currentSession, stopSessionId);
         updateState(State.IDLE, "本次导览已结束");
     }
 
@@ -855,8 +857,9 @@ public final class RealtimeGuideManager {
         return new String[]{"", ""};
     }
 
-    private void stopServerSessionAsync(GuideApiClient.RtcSessionInfo session) {
-        stopExecutor.execute(() -> retryStopServerSession(session));
+    private void stopServerSessionAsync(GuideApiClient.RtcSessionInfo session,
+                                        @Nullable String sessionId) {
+        stopExecutor.execute(() -> retryStopServerSession(session, sessionId));
     }
 
     /**
@@ -867,6 +870,7 @@ public final class RealtimeGuideManager {
      */
     public void stopRtcSessionForExit(@Nullable String expectedTourSessionId) {
         GuideApiClient.RtcSessionInfo toStop;
+        final String stopSessionId;
         try {
             GuideApiClient.RtcSessionInfo current = rtcSession;
             if (current == null) return;
@@ -876,6 +880,7 @@ public final class RealtimeGuideManager {
                 return;
             }
             toStop = current;
+            stopSessionId = activeTourId;
         } catch (RuntimeException e) {
             Log.w(TAG, "读取退出前的 RTC 会话失败", e);
             return;
@@ -884,7 +889,7 @@ public final class RealtimeGuideManager {
         final CountDownLatch done = new CountDownLatch(1);
         stopExecutor.execute(() -> {
             try {
-                retryStopServerSession(toStop);
+                retryStopServerSession(toStop, stopSessionId);
             } finally {
                 done.countDown();
             }
@@ -899,9 +904,10 @@ public final class RealtimeGuideManager {
         }
     }
 
-    private void retryStopServerSession(GuideApiClient.RtcSessionInfo session) {
+    private void retryStopServerSession(GuideApiClient.RtcSessionInfo session,
+                                        @Nullable String sessionId) {
         for (int attempt = 1; attempt <= 3; attempt++) {
-            if (apiClient.stopRtcSession(session.roomId, session.taskId)) {
+            if (apiClient.stopRtcSession(session.roomId, session.taskId, sessionId)) {
                 return;
             }
             if (attempt < 3) {
@@ -1010,7 +1016,7 @@ public final class RealtimeGuideManager {
         rtcRoomJoined = false;
         agentOnline = false;
         if (failedSession != null) {
-            stopServerSessionAsync(failedSession);
+            stopServerSessionAsync(failedSession, tourSessionId);
         }
     }
 

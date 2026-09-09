@@ -453,20 +453,19 @@ public class DeviceFragment extends Fragment {
     private void postSessionCreated(int requestGeneration, String sessionId,
                                     String phone, OperatorConfigStore.Venue venue,
                                     @Nullable String notice) {
+        // 不满足本地建会话条件时不请求后端收尾：未起 RTC_task、无火山计费，后端没有
+        // 对应的"作废新建会话"接口，遗留的孤儿 session 由后端 reconcile_orphan_sessions 兜底。
         if (!isAdded()) {
-            TourSessionApiClient.get().closeSession(sessionId, ignored -> { });
             return;
         }
         requireActivity().runOnUiThread(() -> {
             if (!isAdded() || getView() == null
                     || TourReturnCoordinator.get().isInProgress()
                     || !tourSessionManager.isSessionRequestCurrent(requestGeneration)) {
-                TourSessionApiClient.get().closeSession(sessionId, ignored -> { });
                 return;
             }
             if (!tourSessionManager.beginSession(requestGeneration, sessionId, phone,
                     venue.id, venue.name)) {
-                TourSessionApiClient.get().closeSession(sessionId, ignored -> { });
                 return;
             }
             if (orderDialog != null) orderDialog.dismiss();

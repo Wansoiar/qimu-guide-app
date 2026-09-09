@@ -124,7 +124,7 @@ public class RtcTestActivity extends AppCompatActivity {
         rtc.stop();  // 先退房
         final GuideApiClient.RtcSessionInfo s = session;
         io.execute(() -> {
-            if (s != null) api.stopRtcSession(s.roomId, s.taskId);  // 再关后端智能体
+            if (s != null) api.stopRtcSession(s.roomId, s.taskId, s.sessionId);  // 再关后端智能体
             runOnUiThread(() -> {
                 setStatus("已结束");
                 btnStart.setEnabled(true);

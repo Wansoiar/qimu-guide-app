@@ -213,13 +213,22 @@ public class GuideApiClient {
         }
     }
 
-    /** 停止后端 VoiceChat Agent，避免结束游览后继续占用。阻塞调用。 */
-    public boolean stopRtcSession(String roomId, String taskId) {
+    /**
+     * 停止后端 VoiceChat Agent，避免结束游览后继续占用。阻塞调用。
+     *
+     * @param sessionId 传入租借 session_id（rentals/start 返回、create 与重连复用同一条）
+     *                  后，后端除停火山外还会把该 session 的 rtc_status 落 stopped 并清挂起
+     *                  RAG 预取；传 null 则只停火山、不动状态。
+     */
+    public boolean stopRtcSession(String roomId, String taskId, @Nullable String sessionId) {
         Call call = null;
         try {
             JSONObject body = new JSONObject();
             body.put("room_id", roomId);
             body.put("task_id", taskId);
+            if (sessionId != null && !sessionId.trim().isEmpty()) {
+                body.put("session_id", sessionId.trim());
+            }
             Request request = withDialogueHeaders(new Request.Builder()
                     .url(ApiConfig.rtcSessionStop())
                     .header("X-Client-Type", "android")
