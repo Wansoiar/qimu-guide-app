@@ -12,8 +12,6 @@ import com.moyoung.glasses.conn.CRPBleConnection;
 import com.moyoung.glasses.conn.callback.CRPDeviceVolumeCallback;
 import com.moyoung.glasses.conn.listener.CRPBleConnectionStateListener;
 import com.qimu.guide.QimuApplication;
-import com.qimu.guide.provisioning.ProvisioningApi;
-import com.qimu.guide.provisioning.ProvisioningStore;
 import com.qimu.guide.net.GuideApiClient;
 import com.qimu.guide.net.TourSessionManager;
 
@@ -366,14 +364,13 @@ public final class RealtimeGuideManager {
         registerBleListener();
         updateState(State.RTC_CONNECTING, "正在准备齐目 AI…");
 
-        // 全链路只有一个 session_id（rentals/start 返回，见 04-Session 改造方案）：
-        // 带着它调 /v1/rtc/session，由后端把两步映射到 session 表同一条数据。
-        // 断线重连复用同一次借阅也靠它（同 session_id → 后端停旧 task 起新 task）。
+        // 全链路只有一个 session_id（/v1/session/start 返回，见 04-Session 改造方案）：
+        // 带着它调 /v1/rtc/session 进房，venue/设备由后端自取。
+        // 断线重连复用同一条会话也靠它（同 session_id → 后端停旧 task 起新 task）。
         final String reuseSessionId = session.sessionId;
-        final String[] devIds = deviceIdsForSession();
         ioExecutor.execute(() -> {
             GuideApiClient.RtcSessionInfo created =
-                    apiClient.createRtcSession(session.venueId, reuseSessionId, devIds[0], devIds[1]);
+                    apiClient.createRtcSession(reuseSessionId);
             mainHandler.post(() -> onRtcSessionCreated(requestGeneration, session, created));
         });
     }
@@ -841,22 +838,6 @@ public final class RealtimeGuideManager {
         if (callback != null) mainHandler.post(() -> callback.onComplete(success, message));
     }
 
-    /** 读本地设备标识 [眼镜MAC, 手机device_id]，供建会话时上报（设备口径对齐）。缺失返回 ["",""]。 */
-    private String[] deviceIdsForSession() {
-        try {
-            ProvisioningApi.ProvisioningSnapshot snap =
-                    ProvisioningStore.get(QimuApplication.getAppContext()).snapshot();
-            if (snap != null) {
-                String glasses = snap.glassesId == null ? "" : snap.glassesId;  // = glasses_mac
-                String phone = snap.deviceId == null ? "" : snap.deviceId;      // = report device_id
-                return new String[]{glasses, phone};
-            }
-        } catch (Exception e) {
-            Log.w(TAG, "读取设备标识失败", e);
-        }
-        return new String[]{"", ""};
-    }
-
     private void stopServerSessionAsync(GuideApiClient.RtcSessionInfo session,
                                         @Nullable String sessionId) {
         stopExecutor.execute(() -> retryStopServerSession(session, sessionId));
@@ -988,10 +969,9 @@ public final class RealtimeGuideManager {
         registerBleListener();
         updateState(State.RTC_CONNECTING, "正在自动重连齐目 AI…");
         final String reuseSessionId = session.sessionId;
-        final String[] devIds = deviceIdsForSession();
         ioExecutor.execute(() -> {
             GuideApiClient.RtcSessionInfo created =
-                    apiClient.createRtcSession(session.venueId, reuseSessionId, devIds[0], devIds[1]);
+                    apiClient.createRtcSession(reuseSessionId);
             mainHandler.post(() -> onRtcSessionCreated(requestGeneration, session, created));
         });
     }

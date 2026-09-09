@@ -17,9 +17,9 @@ public final class ApiConfig {
         return configured;
     }
 
-    /** 租借/会话：开通一次租借（建 session + 绑设备），返回唯一 session_id。 */
+    /** 会话：开通一次导览（建 session + 绑设备），返回唯一 session_id。 */
     public static String rentalsStart() {
-        return baseUrl() + "/v1/rentals/start";
+        return baseUrl() + "/v1/session/start";
     }
 
     public static String uploadImage() {

@@ -38,7 +38,7 @@ public final class TourSessionApiClient {
     }
 
     /**
-     * 开通一次租借（POST /v1/rentals/start）：后端建 session 并绑设备，返回唯一 session_id。
+     * 开通一次导览（POST /v1/session/start）：后端建 session 并绑设备，返回唯一 session_id。
      *
      * 设备标识取初始化后端落盘的值（glassesId=眼镜 MAC，phoneDeviceId=手机 device_id）；
      * 游客手机号 phoneNumber 作为本次租借的游客标识，后端落到 session.user_id。
