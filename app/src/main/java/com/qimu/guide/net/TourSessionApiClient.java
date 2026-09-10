@@ -29,6 +29,7 @@ public final class TourSessionApiClient {
     }
 
     private final OkHttpClient client = new OkHttpClient.Builder()
+            .addInterceptor(AppAuthInterceptor.INSTANCE)
             .connectTimeout(8, TimeUnit.SECONDS)
             .readTimeout(15, TimeUnit.SECONDS)
             .writeTimeout(15, TimeUnit.SECONDS)
@@ -62,7 +63,6 @@ public final class TourSessionApiClient {
             Request request = new Request.Builder()
                     .url(ApiConfig.rentalsStart())
                     .header("X-Client-Type", "android")
-                    .header("X-Staff-Pin", "0000")
                     .post(RequestBody.create(payload.toString(), JSON))
                     .build();
             client.newCall(request).enqueue(new Callback() {

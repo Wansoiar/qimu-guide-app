@@ -14,6 +14,8 @@ public final class TourSessionManager {
     private static final String PREFS = "tour_session_state";
     private static final String KEY_ACTIVE_MARKER = "active_marker";
     private static final String KEY_SESSION_ID = "session_id";
+    private static final String KEY_SESSION_ROOM_ID = "session_room_id";
+    private static final String KEY_SESSION_TASK_ID = "session_task_id";
     private static final String KEY_CLEANUP_WARNING = "cleanup_warning";
     private static final TourSessionManager INSTANCE = new TourSessionManager();
 
@@ -99,6 +101,8 @@ public final class TourSessionManager {
                     .putBoolean(KEY_ACTIVE_MARKER, true)
                     .putString(KEY_SESSION_ID, sessionId)
                     .putBoolean(KEY_CLEANUP_WARNING, false)
+                    .remove(KEY_SESSION_ROOM_ID)
+                    .remove(KEY_SESSION_TASK_ID)
                     .apply();
         }
         notifyListeners(true);
@@ -120,6 +124,8 @@ public final class TourSessionManager {
             preferences.edit()
                     .putBoolean(KEY_ACTIVE_MARKER, false)
                     .remove(KEY_SESSION_ID)
+                    .remove(KEY_SESSION_ROOM_ID)
+                    .remove(KEY_SESSION_TASK_ID)
                     .putBoolean(KEY_CLEANUP_WARNING, cleanupWarning)
                     .apply();
         }
@@ -130,7 +136,11 @@ public final class TourSessionManager {
     public synchronized void clearCleanupWarning() {
         cleanupWarning = false;
         if (preferences != null) {
-            preferences.edit().putBoolean(KEY_CLEANUP_WARNING, false).apply();
+            preferences.edit()
+                    .putBoolean(KEY_CLEANUP_WARNING, false)
+                    .remove(KEY_SESSION_ROOM_ID)
+                    .remove(KEY_SESSION_TASK_ID)
+                    .apply();
         }
         notifyListeners(isActive());
     }
@@ -139,6 +149,31 @@ public final class TourSessionManager {
     @Nullable
     public String lastSessionId() {
         return preferences == null ? null : preferences.getString(KEY_SESSION_ID, null);
+    }
+
+    /** 留存当前会话的火山 RTC 房间/任务 id，供异常退出后「结束上次订单」能带齐参数停 RTC。 */
+    public synchronized void rememberRtcIds(@Nullable String sessionId,
+                                            @Nullable String roomId,
+                                            @Nullable String taskId) {
+        if (preferences == null || sessionId == null || sessionId.trim().isEmpty()) return;
+        String stored = preferences.getString(KEY_SESSION_ID, null);
+        if (!sessionId.trim().equals(stored)) return;  // 会话已结束/更换则不写，避免串会话
+        preferences.edit()
+                .putString(KEY_SESSION_ROOM_ID, roomId == null ? "" : roomId.trim())
+                .putString(KEY_SESSION_TASK_ID, taskId == null ? "" : taskId.trim())
+                .apply();
+    }
+
+    /** 上次遗留会话的 RTC 房间 id（可为空：建了会话但从未进过 RTC）。 */
+    @Nullable
+    public String lastSessionRoomId() {
+        return preferences == null ? "" : preferences.getString(KEY_SESSION_ROOM_ID, "");
+    }
+
+    /** 上次遗留会话的 RTC 任务 id（可为空：建了会话但从未进过 RTC）。 */
+    @Nullable
+    public String lastSessionTaskId() {
+        return preferences == null ? "" : preferences.getString(KEY_SESSION_TASK_ID, "");
     }
 
     /** 结束上次遗留订单后的收尾：清除清理告警并移除遗留的 session id。 */
@@ -154,7 +189,9 @@ public final class TourSessionManager {
                     .putBoolean(KEY_CLEANUP_WARNING, cleanupWarning);
             String stored = preferences.getString(KEY_SESSION_ID, null);
             if (expectedSessionId.equals(stored)) {
-                editor.remove(KEY_SESSION_ID);
+                editor.remove(KEY_SESSION_ID)
+                        .remove(KEY_SESSION_ROOM_ID)
+                        .remove(KEY_SESSION_TASK_ID);
             }
             editor.apply();
         }

@@ -30,17 +30,16 @@ public final class ShareBundleApiClient implements Closeable {
     private static final int MAX_ATTEMPTS = 3;
     private static final long[] RETRY_DELAYS_MS = {1000L, 2000L};
 
-    private final String appToken;
     private final String deviceId;
     private final OkHttpClient client;
     private final Set<Call> activeCalls = java.util.Collections.newSetFromMap(
             new ConcurrentHashMap<Call, Boolean>());
     private volatile boolean closed;
 
-    public ShareBundleApiClient(@NonNull String appToken, @NonNull String deviceId) {
-        this.appToken = appToken.trim();
+    public ShareBundleApiClient(@NonNull String deviceId) {
         this.deviceId = deviceId.trim().isEmpty() ? "android-unknown" : deviceId.trim();
         client = new OkHttpClient.Builder()
+                .addInterceptor(AppAuthInterceptor.INSTANCE)
                 .connectTimeout(15, TimeUnit.SECONDS)
                 .readTimeout(60, TimeUnit.SECONDS)
                 .writeTimeout(90, TimeUnit.SECONDS)
@@ -195,8 +194,8 @@ public final class ShareBundleApiClient implements Closeable {
 
     @NonNull
     private Request.Builder authenticated(@NonNull Request.Builder builder) {
+        // X-App-Token 由 AppAuthInterceptor 统一注入（同一把 APP_SHARED_SECRET）。
         return builder
-                .header("X-App-Token", appToken)
                 .header("X-Device-Id", deviceId)
                 .header("X-Client-Type", "android");
     }

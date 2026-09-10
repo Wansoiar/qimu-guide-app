@@ -27,6 +27,7 @@ public class GuideApiClient {
     private static final MediaType JSON = MediaType.parse("application/json; charset=utf-8");
 
     private final OkHttpClient client = new OkHttpClient.Builder()
+            .addInterceptor(AppAuthInterceptor.INSTANCE)
             .connectTimeout(15, TimeUnit.SECONDS)
             .readTimeout(90, TimeUnit.SECONDS)
             .writeTimeout(30, TimeUnit.SECONDS)
@@ -39,7 +40,7 @@ public class GuideApiClient {
     private boolean visionCallsCancelled;
     private boolean closed;
 
-    /** 给对话/RTC 链路请求统一加公参 header（X-Device-Id / X-Glasses-Sn / X-Order-Id 等）。 */
+    /** 给对话/RTC 链路请求统一加公参 header（X-Device-Id / X-Glasses-Sn / X-Phone-Number 等）。 */
     private Request.Builder withDialogueHeaders(Request.Builder builder) {
         for (Map.Entry<String, String> entry : AppContextHeaders.dialogue().entrySet()) {
             builder.header(entry.getKey(), entry.getValue());

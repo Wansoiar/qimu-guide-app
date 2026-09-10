@@ -291,7 +291,9 @@ public class DeviceFragment extends Fragment {
             Toast.makeText(requireContext(), "未找到上次导览记录", Toast.LENGTH_SHORT).show();
             return;
         }
-        if (!TourReturnCoordinator.get().beginStaleOrderReturn(last)) {
+        String roomId = tourSessionManager.lastSessionRoomId();
+        String taskId = tourSessionManager.lastSessionTaskId();
+        if (!TourReturnCoordinator.get().beginStaleOrderReturn(last, roomId, taskId)) {
             Toast.makeText(requireContext(), "结束上次订单失败，请重试或先连接眼镜", Toast.LENGTH_LONG).show();
         }
     }

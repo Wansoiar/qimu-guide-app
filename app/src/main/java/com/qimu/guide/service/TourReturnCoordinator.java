@@ -9,6 +9,7 @@ import android.util.Log;
 import androidx.annotation.Nullable;
 
 import com.qimu.guide.QimuApplication;
+import com.qimu.guide.net.GuideApiClient;
 import com.qimu.guide.net.TourSessionManager;
 import com.qimu.guide.ui.gallery.GallerySelectionStore;
 import com.qimu.guide.ui.gallery.LocalPhotoRepository;
@@ -92,7 +93,9 @@ public final class TourReturnCoordinator {
      * 复用与 {@link #beginReturn()} 相同的眼镜重置 + 本地缓存清理管线；服务端收尾只能
      * 尽力而为（重启后已无 RTC room/task，遗留会话由后端对账任务兜底）。
      */
-    public boolean beginStaleOrderReturn(@Nullable String sessionId) {
+    public boolean beginStaleOrderReturn(@Nullable String sessionId,
+                                         @Nullable String roomId,
+                                         @Nullable String taskId) {
         if (Looper.myLooper() != Looper.getMainLooper()) {
             Log.e(TAG, "上次订单收尾必须在主线程启动");
             return false;
@@ -109,10 +112,24 @@ public final class TourReturnCoordinator {
         RealtimeGuideManager.get().stopForTour(null);
         TourSessionManager.get().invalidatePendingSessionRequests();
 
+        // 通知后端关闭遗留会话：带 session_id 会把大 session 置 ended（释放设备），
+        // room/task 来自上次进房时的留存，用于停火山 RTC。异步发出，不阻塞本地清理。
+        final String sid = sessionId.trim();
+        final String rid = roomId == null ? "" : roomId.trim();
+        final String tid = taskId == null ? "" : taskId.trim();
+        new Thread(() -> {
+            try {
+                boolean ok = new GuideApiClient().stopRtcSession(rid, tid, sid);
+                if (!ok) Log.e(TAG, "结束上次订单：后端 RTC 停止未确认: " + sid);
+            } catch (RuntimeException failure) {
+                Log.e(TAG, "结束上次订单：后端停止异常", failure);
+            }
+        }, "stale-order-rtc-stop").start();
+
         inProgress = true;
         int operation = ++generation;
         publishStage("正在关闭上次导览会话…");
-        startGlassesReset(operation, sessionId.trim(), returnTarget, true);
+        startGlassesReset(operation, sid, returnTarget, true);
         return true;
     }
 

@@ -12,6 +12,7 @@ import com.moyoung.glasses.conn.CRPBleConnection;
 import com.moyoung.glasses.conn.callback.CRPDeviceVolumeCallback;
 import com.moyoung.glasses.conn.listener.CRPBleConnectionStateListener;
 import com.qimu.guide.QimuApplication;
+import com.qimu.guide.net.AppAuthInterceptor;
 import com.qimu.guide.net.GuideApiClient;
 import com.qimu.guide.net.TourSessionManager;
 
@@ -387,11 +388,14 @@ public final class RealtimeGuideManager {
             return;
         }
         if (created == null) {
-            updateState(State.ERROR, "齐目 AI 暂时不可用，请重试");
+            updateState(State.ERROR, AppAuthInterceptor.consumeAuthError()
+                    ? "配置错误，请联系运维" : "齐目 AI 暂时不可用，请重试");
             return;
         }
 
         rtcSession = created;
+        // 留存本会话的火山 room/task，供异常退出后「结束上次订单」停 RTC 用。
+        TourSessionManager.get().rememberRtcIds(requestedTour.sessionId, created.roomId, created.taskId);
         RtcVoiceChatManager manager = new RtcVoiceChatManager(QimuApplication.getAppContext());
         rtc = manager;
         updateState(State.RTC_CONNECTING,
@@ -891,6 +895,11 @@ public final class RealtimeGuideManager {
             if (apiClient.stopRtcSession(session.roomId, session.taskId, sessionId)) {
                 return;
             }
+            if (AppAuthInterceptor.consumeAuthError()) {
+                // 鉴权失败（X-App-Token 配置错误）重试无意义，直接放弃等后台兜底。
+                Log.w(TAG, "停止 RTC 鉴权失败，中止自动重试: room=" + session.roomId);
+                return;
+            }
             if (attempt < 3) {
                 try {
                     Thread.sleep(250L * attempt);
@@ -912,6 +921,11 @@ public final class RealtimeGuideManager {
      */
     private void handleRecoverableRtcFailure(RtcVoiceChatManager expectedRtc, String message) {
         if (rtc != expectedRtc) return;
+        if (AppAuthInterceptor.consumeAuthError()) {
+            // X-App-Token 配置错误：自动重连只会反复失败，直接进 ERROR 提示联系运维。
+            terminateRtcOnError(expectedRtc, "配置错误，请联系运维");
+            return;
+        }
         TourSessionManager.TourSession current = TourSessionManager.get().current();
         boolean canAuto = current != null
                 && current.sessionId.equals(tourSessionId)
