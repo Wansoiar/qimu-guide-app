@@ -72,9 +72,9 @@
     <string name="login_subtitle">登录运营账号，运营配置导览设备</string>
     <string name="login_action">登录</string>
     <string name="login_version">版本 %1$s</string>
-    <string name="mock_order_title">体验订单</string>
-    <string name="mock_order_value">123456</string>
-    <string name="mock_order_hint">调试包中已预填。确认后直接创建本地体验 Session，不依赖订单后端或眼镜连接。</string>
+    <string name="current_order_title">当前导览会话</string>
+    <string name="current_order_hint">本次导览在服务端创建的唯一会话 ID（sessionId）。</string>
+    <string name="current_order_placeholder">未开始导览</string>
 
     <string name="device_connect_title">连接导览眼镜</string>
     <string name="device_connect_body">请开启眼镜并靠近手机，扫描后选择对应设备。</string>
@@ -109,15 +109,12 @@
     <string name="privacy_policy_load_failed">隐私政策暂时无法加载，请联系现场服务人员</string>
     <string name="privacy_consent_required">请先阅读并勾选同意《用户隐私政策》</string>
     <string name="venue_configured_for_next_tour">当前场馆</string>
-    <string name="venue_session_hint">连接眼镜后输入租赁订单号，开始本次独立导览会话。</string>
-    <string name="venue_mock_session_hint">可直接使用体验订单 123456；连接眼镜后也可输入真实订单号。</string>
-    <string name="order_dialog_title">请输入订单号</string>
-    <string name="order_dialog_hint">请输入在租赁柜取眼镜时提供的订单号</string>
-    <string name="order_number">订单号</string>
-    <string name="order_confirm_start">确认并开始</string>
-    <string name="order_creating_session">正在创建会话…</string>
-    <string name="mock_session_notice">已进入本地体验会话；订单与会话未提交到服务端</string>
-    <string name="mock_order_helper">体验订单：无需连接眼镜或订单服务</string>
+    <string name="venue_session_hint">连接眼镜后输入手机号，开始本次导览会话。</string>
+    <string name="start_dialog_hint">请输入租赁设备的手机号</string>
+    <string name="tourist_phone">手机号</string>
+    <string name="tourist_phone_required">请输入手机号</string>
+    <string name="start_confirm">确认并开始</string>
+    <string name="start_creating_session">正在创建会话…</string>
 
     <string name="battery">电量</string>
     <string name="signal">连接</string>
@@ -219,6 +216,11 @@
     <string name="end_tour_message">将关闭当前会话、重置眼镜，并清空本机保存的导览照片。</string>
     <string name="end_tour_confirm">结束游览</string>
     <string name="cancel">取消</string>
+
+    <string name="cleanup_warning_hint">上次导览未正常结束。如需继续，请重新输入手机号开始导览；若确认是异常退出、现在要开始下一次导览，请点击「结束上次订单」清理上次导览残留。</string>
+    <string name="cleanup_acknowledge">我知道了</string>
+    <string name="end_last_order">结束上次订单</string>
+    <string name="end_last_order_progress_title">正在结束上次订单</string>
 
     <string name="share_back">返回分享设置</string>
     <string name="share_title">生成导览分享码</string>

@@ -27,6 +27,7 @@ public class GuideApiClient {
     private static final MediaType JSON = MediaType.parse("application/json; charset=utf-8");
 
     private final OkHttpClient client = new OkHttpClient.Builder()
+            .addInterceptor(AppAuthInterceptor.INSTANCE)
             .connectTimeout(15, TimeUnit.SECONDS)
             .readTimeout(90, TimeUnit.SECONDS)
             .writeTimeout(30, TimeUnit.SECONDS)
@@ -39,7 +40,7 @@ public class GuideApiClient {
     private boolean visionCallsCancelled;
     private boolean closed;
 
-    /** 给对话/RTC 链路请求统一加公参 header（X-Device-Id / X-Glasses-Sn / X-Order-Id 等）。 */
+    /** 给对话/RTC 链路请求统一加公参 header（X-Device-Id / X-Glasses-Sn / X-Phone-Number 等）。 */
     private Request.Builder withDialogueHeaders(Request.Builder builder) {
         for (Map.Entry<String, String> entry : AppContextHeaders.dialogue().entrySet()) {
             builder.header(entry.getKey(), entry.getValue());
@@ -106,12 +107,7 @@ public class GuideApiClient {
         }
     }
 
-    /** 上传眼镜照片，返回供 RTC Agent 访问的图片 URL。阻塞调用。 */
-    public UploadedImage uploadImage(File imageFile) {
-        return uploadImage(imageFile, null);
-    }
-
-    /** 上传 AI 拍图，并将对象归属到当前会话。阻塞调用。 */
+    /** 上传眼镜照片，返回供 RTC Agent 访问的图片 URL，并将对象归属到当前会话。阻塞调用。 */
     public UploadedImage uploadImage(File imageFile, @Nullable String sessionId) {
         Call call = null;
         try {
@@ -156,40 +152,18 @@ public class GuideApiClient {
         return builder.build();
     }
 
-    /** 创建 RTC 会话；当前后端会同时启动 VoiceChat Agent。阻塞调用。 */
-    public RtcSessionInfo createRtcSession(@Nullable String venueId) {
-        return createRtcSession(venueId, null);
-    }
-
-    public RtcSessionInfo createRtcSession(@Nullable String venueId, @Nullable String sessionId) {
-        return createRtcSession(venueId, sessionId, null, null);
-    }
-
     /**
      * 创建/复用 RTC 会话。阻塞调用。
      *
-     * @param sessionId 传入则复用同一条 Tour Session（断线重连场景，后端换新 RTC task
-     *                  并停掉旧 task，同一次借阅贯穿）；传 null 则由后端新建。
-     * @param glassesId 眼镜 BLE MAC（设备口径对齐，落 session 供设备统计）；可空。
-     * @param phoneId   手机 device_id（report 返回的 UUID）；可空。
+     * @param sessionId 必传：建会话（/v1/session/start）返回的 session_id。同一场导览贯穿
+     *                  全链路，断线重连也复用同一条（后端据它停旧 task 起新 task）；
+     *                  venue/设备由后端自取，App 不再上报。
      */
-    public RtcSessionInfo createRtcSession(@Nullable String venueId, @Nullable String sessionId,
-                                           @Nullable String glassesId, @Nullable String phoneId) {
+    public RtcSessionInfo createRtcSession(String sessionId) {
         Call call = null;
         try {
             JSONObject body = new JSONObject();
-            if (venueId != null && !venueId.trim().isEmpty()) {
-                body.put("venue_id", venueId.trim());
-            }
-            if (sessionId != null && !sessionId.trim().isEmpty()) {
-                body.put("session_id", sessionId.trim());
-            }
-            if (glassesId != null && !glassesId.trim().isEmpty()) {
-                body.put("device_glasses_id", glassesId.trim());
-            }
-            if (phoneId != null && !phoneId.trim().isEmpty()) {
-                body.put("device_phone_id", phoneId.trim());
-            }
+            body.put("session_id", sessionId.trim());
             Request request = withDialogueHeaders(new Request.Builder()
                     .url(ApiConfig.rtcSession())
                     .header("X-Client-Type", "android")
@@ -227,13 +201,22 @@ public class GuideApiClient {
         }
     }
 
-    /** 停止后端 VoiceChat Agent，避免结束游览后继续占用。阻塞调用。 */
-    public boolean stopRtcSession(String roomId, String taskId) {
+    /**
+     * 停止后端 VoiceChat Agent，避免结束游览后继续占用。阻塞调用。
+     *
+     * @param sessionId 传入租借 session_id（rentals/start 返回、create 与重连复用同一条）
+     *                  后，后端除停火山外还会把该 session 的 rtc_status 落 stopped 并清挂起
+     *                  RAG 预取；传 null 则只停火山、不动状态。
+     */
+    public boolean stopRtcSession(String roomId, String taskId, @Nullable String sessionId) {
         Call call = null;
         try {
             JSONObject body = new JSONObject();
             body.put("room_id", roomId);
             body.put("task_id", taskId);
+            if (sessionId != null && !sessionId.trim().isEmpty()) {
+                body.put("session_id", sessionId.trim());
+            }
             Request request = withDialogueHeaders(new Request.Builder()
                     .url(ApiConfig.rtcSessionStop())
                     .header("X-Client-Type", "android")
@@ -333,20 +316,18 @@ public class GuideApiClient {
     /**
      * 拍照识物：后端 CLIP 以图搜图 -> 返回识别结果与讲解素材（方案A FC 分支用）。
      *
-     * @param sessionId 当前 RTC 会话 id（/v1/rtc/session 返回的 session_id），
-     *                  用于把识图结果挂到会话并落库；可空。
+     * @param sessionId 必传：当前 RTC 会话 id（/v1/rtc/session 返回的 session_id），
+     *                  用于把识图结果挂到会话并落库。
      * @param roundId   触发拍照的语音轮次 roundId（火山 roundId）；语音触发拍照必传，
      *                  手动拍照按钮（无语音）传 0，后端回退为独立照片回合。
      */
-    public ImageDescribeResult describeRtcImage(String venueId, @Nullable String sessionId,
+    public ImageDescribeResult describeRtcImage(String venueId, String sessionId,
                                                 String imageUrl, int roundId) {
         Call call = null;
         try {
             JSONObject body = new JSONObject();
             body.put("venue_id", venueId);
-            if (sessionId != null && !sessionId.trim().isEmpty()) {
-                body.put("session_id", sessionId.trim());
-            }
+            body.put("session_id", sessionId.trim());
             body.put("image_url", imageUrl);
             if (roundId > 0) {
                 body.put("round_id", roundId);

@@ -6,7 +6,6 @@ import android.util.Log;
 
 import com.moyoung.glasses.CRPBleClient;
 import com.moyoung.glasses.util.BleLog;
-import com.qimu.guide.net.TourSessionApiClient;
 import com.qimu.guide.net.TourSessionManager;
 import com.qimu.guide.service.RealtimeGuideManager;
 import com.qimu.guide.service.TourExitWatchdogService;
@@ -70,16 +69,8 @@ public class QimuApplication extends Application {
             RealtimeGuideManager guide = RealtimeGuideManager.get();
             Log.i(TAG, "退出收尾: 结束会话 " + session.sessionId
                     + " processDying=" + processDying);
-            // 与归还流程一致：关闭服务端导览会话（本地体验会话无服务端记录，跳过）。
-            if (session.serverBacked) {
-                try {
-                    TourSessionApiClient.get().closeSession(
-                            session.sessionId, ignored -> { });
-                } catch (Throwable ignored) {
-                    // 关闭失败由服务端 IdleTimeout/下次进入时兜底。
-                }
-            }
-            // 先发上述关闭请求，再等待后端 RTC 停止，让两者都落在进程存活窗口内。
+            // 服务端停火山并落 rtc_status=stopped 由 stopForTour/stopRtcSessionForExit 内
+            // 的 /v1/rtc/session/stop（带 session_id）承担，确保落在进程存活窗口内。
             if (processDying) {
                 guide.stopRtcSessionForExit(session.sessionId);
             } else {

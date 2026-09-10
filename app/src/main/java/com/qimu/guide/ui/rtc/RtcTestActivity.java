@@ -14,7 +14,9 @@ import androidx.core.app.ActivityCompat;
 import androidx.core.content.ContextCompat;
 
 import com.qimu.guide.R;
+import com.qimu.guide.config.OperatorConfigStore;
 import com.qimu.guide.net.GuideApiClient;
+import com.qimu.guide.net.TourSessionApiClient;
 import com.qimu.guide.service.RtcVoiceChatManager;
 
 import java.util.concurrent.ExecutorService;
@@ -63,7 +65,7 @@ public class RtcTestActivity extends AppCompatActivity {
         btnStop.setOnClickListener(v -> stopChat());
         btnMute.setOnClickListener(v -> {
             muted = !muted;
-            rtc.setMuted(muted);
+            rtc.setInputEnabled(!muted);
             btnMute.setText(muted ? "取消静音" : "静音");
         });
     }
@@ -94,25 +96,43 @@ public class RtcTestActivity extends AppCompatActivity {
     private void startChat() {
         setStatus("正在创建会话…");
         btnStart.setEnabled(false);
-        io.execute(() -> {
-            // venue_id 传 null（默认馆 / 通用讲解员）；后续可从选馆页传入
-            GuideApiClient.RtcSessionInfo s = api.createRtcSession(null);
-            runOnUiThread(() -> {
-                if (s == null) {
-                    setStatus("创建会话失败（看后端日志）");
-                    btnStart.setEnabled(true);
-                    return;
-                }
-                session = s;
-                if (s.mocked) {
-                    // 后端无凭证走 mock，AI 不会进房——明确提示，避免误判"进房了但没人说话"
-                    setStatus("⚠️ 后端 mock 模式（无火山凭证），AI 不会进房。请在后端 .env 配置凭证。");
-                }
-                setStatus((s.mocked ? "⚠️ mock：" : "") + "进房中… room=" + s.roomId);
-                rtc.start(s, listener);
-                btnStop.setEnabled(true);
-                btnMute.setEnabled(true);
-            });
+        // 新规：/v1/rtc/session 必须带 session_id。先调 /v1/session/start 建会话拿 id，再进房。
+        OperatorConfigStore.Venue venue = OperatorConfigStore.get(this).defaultVenue();
+        TourSessionApiClient.get().startRental(
+                venue == null ? null : venue.id, null, null, null,
+                new TourSessionApiClient.CreateCallback() {
+                    @Override
+                    public void onSuccess(String sessionId) {
+                        io.execute(() -> createRoomFor(sessionId));
+                    }
+
+                    @Override
+                    public void onError(String message, boolean transportUnavailable) {
+                        runOnUiThread(() -> {
+                            setStatus("创建会话失败：" + message);
+                            btnStart.setEnabled(true);
+                        });
+                    }
+                });
+    }
+
+    private void createRoomFor(String sessionId) {
+        GuideApiClient.RtcSessionInfo s = api.createRtcSession(sessionId);
+        runOnUiThread(() -> {
+            if (s == null) {
+                setStatus("进房失败（看后端日志）");
+                btnStart.setEnabled(true);
+                return;
+            }
+            session = s;
+            if (s.mocked) {
+                // 后端无凭证走 mock，AI 不会进房——明确提示，避免误判"进房了但没人说话"
+                setStatus("⚠️ 后端 mock 模式（无火山凭证），AI 不会进房。请在后端 .env 配置凭证。");
+            }
+            setStatus((s.mocked ? "⚠️ mock：" : "") + "进房中… room=" + s.roomId);
+            rtc.start(s, listener);
+            btnStop.setEnabled(true);
+            btnMute.setEnabled(true);
         });
     }
 
@@ -123,7 +143,7 @@ public class RtcTestActivity extends AppCompatActivity {
         rtc.stop();  // 先退房
         final GuideApiClient.RtcSessionInfo s = session;
         io.execute(() -> {
-            if (s != null) api.stopRtcSession(s.roomId, s.taskId);  // 再关后端智能体
+            if (s != null) api.stopRtcSession(s.roomId, s.taskId, s.sessionId);  // 再关后端智能体
             runOnUiThread(() -> {
                 setStatus("已结束");
                 btnStart.setEnabled(true);

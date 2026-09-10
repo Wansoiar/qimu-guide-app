@@ -12,8 +12,7 @@ import com.moyoung.glasses.conn.CRPBleConnection;
 import com.moyoung.glasses.conn.callback.CRPDeviceVolumeCallback;
 import com.moyoung.glasses.conn.listener.CRPBleConnectionStateListener;
 import com.qimu.guide.QimuApplication;
-import com.qimu.guide.provisioning.ProvisioningApi;
-import com.qimu.guide.provisioning.ProvisioningStore;
+import com.qimu.guide.net.AppAuthInterceptor;
 import com.qimu.guide.net.GuideApiClient;
 import com.qimu.guide.net.TourSessionManager;
 
@@ -164,11 +163,6 @@ public final class RealtimeGuideManager {
     // 让“重试连接”的延迟重建可被结束游览或后续重试失效，避免旧 runnable
     // 在房间已经关闭后再次启动 Agent。
     private int rtcRetryAttempt;
-    // 断线重连复用同一次借阅：后端 rtc/session 返回的 session_id。同一 Tour 期间
-    // 记住它，重连时回传后端 → 后端复用同一条 session 行 + 停旧 task 起新 task
-    // （一次借阅贯穿，见 04-Session 改造方案 P0）。切换/结束 Tour 时清空。
-    private String backendRtcSessionId;
-    // 自动重连计数：RTC 断开（AI 退/重连超时）后自动重连，超上限才进 ERROR 让用户手动重试。
     private int rtcAutoReconnectAttempt;
     private volatile boolean visionOperationInProgress;
     private volatile int visionOperationId;
@@ -246,10 +240,6 @@ public final class RealtimeGuideManager {
 
     public boolean hasPendingVisionRequest() {
         return pendingVisionRequest != null;
-    }
-
-    public void retryPendingVisionRequest() {
-        mainHandler.post(this::deliverPendingVisionRequest);
     }
 
     /** 在真正占用眼镜 AIRecognition 前预留整条识图链路。仅主线程调用。 */
@@ -369,21 +359,19 @@ public final class RealtimeGuideManager {
                 recentSubtitlesByContent.clear();
             }
             handledCommandIds.clear();
-            // 换了不同的 Tour（新借阅）：清后端 session 复用指针 + 自动重连计数，
-            // 避免新借阅误用上一次借阅的后端 session_id。
-            backendRtcSessionId = null;
+            // 换了不同的 Tour（新借阅）：重置自动重连计数，避免新借阅沿用上一段计数上限。
             rtcAutoReconnectAttempt = 0;
         }
         registerBleListener();
         updateState(State.RTC_CONNECTING, "正在准备齐目 AI…");
 
-        // 断线重连复用同一次借阅：若本 Tour 已在后端建过 rtc session，回传其 id
-        // 让后端复用同一条 session 行（停旧 task 起新 task）；首次为 null 由后端新建。
-        final String reuseSessionId = backendRtcSessionId;
-        final String[] devIds = deviceIdsForSession();
+        // 全链路只有一个 session_id（/v1/session/start 返回，见 04-Session 改造方案）：
+        // 带着它调 /v1/rtc/session 进房，venue/设备由后端自取。
+        // 断线重连复用同一条会话也靠它（同 session_id → 后端停旧 task 起新 task）。
+        final String reuseSessionId = session.sessionId;
         ioExecutor.execute(() -> {
             GuideApiClient.RtcSessionInfo created =
-                    apiClient.createRtcSession(session.venueId, reuseSessionId, devIds[0], devIds[1]);
+                    apiClient.createRtcSession(reuseSessionId);
             mainHandler.post(() -> onRtcSessionCreated(requestGeneration, session, created));
         });
     }
@@ -396,19 +384,18 @@ public final class RealtimeGuideManager {
                 || !requestedTour.sessionId.equals(tourSessionId)
                 || TourReturnCoordinator.get().isInProgress()
                 || TourSessionManager.get().current() != requestedTour) {
-            if (created != null) stopServerSessionAsync(created);
+            if (created != null) stopServerSessionAsync(created, requestedTour.sessionId);
             return;
         }
         if (created == null) {
-            updateState(State.ERROR, "齐目 AI 暂时不可用，请重试");
+            updateState(State.ERROR, AppAuthInterceptor.consumeAuthError()
+                    ? "配置错误，请联系运维" : "齐目 AI 暂时不可用，请重试");
             return;
         }
 
         rtcSession = created;
-        // 记住后端 session_id，供本次借阅内断线重连复用（后端据此复用同一 session 行）。
-        if (created.sessionId != null && !created.sessionId.isEmpty()) {
-            backendRtcSessionId = created.sessionId;
-        }
+        // 留存本会话的火山 room/task，供异常退出后「结束上次订单」停 RTC 用。
+        TourSessionManager.get().rememberRtcIds(requestedTour.sessionId, created.roomId, created.taskId);
         RtcVoiceChatManager manager = new RtcVoiceChatManager(QimuApplication.getAppContext());
         rtc = manager;
         updateState(State.RTC_CONNECTING,
@@ -667,6 +654,8 @@ public final class RealtimeGuideManager {
         if (currentRtc != null) currentRtc.stop();
 
         GuideApiClient.RtcSessionInfo currentSession = rtcSession;
+        // tourSessionId 稍后置空，先捕获用于后端 stop（/v1/rtc/session/stop 带 session_id）。
+        String stopSessionId = tourSessionId;
         rtcSession = null;
         tourSession = null;
         tourSessionId = null;
@@ -681,12 +670,11 @@ public final class RealtimeGuideManager {
                 recentSubtitlesByContent.clear();
             }
             handledCommandIds.clear();
-            // 真正结束游览才清后端 session 复用指针；publishStopping=false 是重连前的
-            // 临时释放，必须保留 backendRtcSessionId 供随后重连复用同一 session。
-            backendRtcSessionId = null;
+            // 真正结束游览才重置自动重连计数；publishStopping=false 是重连前的临时释放，
+            // 计数保留（继续用同一段借阅，算进已有次数）。
             rtcAutoReconnectAttempt = 0;
         }
-        if (currentSession != null) stopServerSessionAsync(currentSession);
+        if (currentSession != null) stopServerSessionAsync(currentSession, stopSessionId);
         updateState(State.IDLE, "本次导览已结束");
     }
 
@@ -854,24 +842,9 @@ public final class RealtimeGuideManager {
         if (callback != null) mainHandler.post(() -> callback.onComplete(success, message));
     }
 
-    /** 读本地设备标识 [眼镜MAC, 手机device_id]，供建会话时上报（设备口径对齐）。缺失返回 ["",""]。 */
-    private String[] deviceIdsForSession() {
-        try {
-            ProvisioningApi.ProvisioningSnapshot snap =
-                    ProvisioningStore.get(QimuApplication.getAppContext()).snapshot();
-            if (snap != null) {
-                String glasses = snap.glassesId == null ? "" : snap.glassesId;  // = glasses_mac
-                String phone = snap.deviceId == null ? "" : snap.deviceId;      // = report device_id
-                return new String[]{glasses, phone};
-            }
-        } catch (Exception e) {
-            Log.w(TAG, "读取设备标识失败", e);
-        }
-        return new String[]{"", ""};
-    }
-
-    private void stopServerSessionAsync(GuideApiClient.RtcSessionInfo session) {
-        stopExecutor.execute(() -> retryStopServerSession(session));
+    private void stopServerSessionAsync(GuideApiClient.RtcSessionInfo session,
+                                        @Nullable String sessionId) {
+        stopExecutor.execute(() -> retryStopServerSession(session, sessionId));
     }
 
     /**
@@ -882,6 +855,7 @@ public final class RealtimeGuideManager {
      */
     public void stopRtcSessionForExit(@Nullable String expectedTourSessionId) {
         GuideApiClient.RtcSessionInfo toStop;
+        final String stopSessionId;
         try {
             GuideApiClient.RtcSessionInfo current = rtcSession;
             if (current == null) return;
@@ -891,6 +865,7 @@ public final class RealtimeGuideManager {
                 return;
             }
             toStop = current;
+            stopSessionId = activeTourId;
         } catch (RuntimeException e) {
             Log.w(TAG, "读取退出前的 RTC 会话失败", e);
             return;
@@ -899,7 +874,7 @@ public final class RealtimeGuideManager {
         final CountDownLatch done = new CountDownLatch(1);
         stopExecutor.execute(() -> {
             try {
-                retryStopServerSession(toStop);
+                retryStopServerSession(toStop, stopSessionId);
             } finally {
                 done.countDown();
             }
@@ -914,9 +889,15 @@ public final class RealtimeGuideManager {
         }
     }
 
-    private void retryStopServerSession(GuideApiClient.RtcSessionInfo session) {
+    private void retryStopServerSession(GuideApiClient.RtcSessionInfo session,
+                                        @Nullable String sessionId) {
         for (int attempt = 1; attempt <= 3; attempt++) {
-            if (apiClient.stopRtcSession(session.roomId, session.taskId)) {
+            if (apiClient.stopRtcSession(session.roomId, session.taskId, sessionId)) {
+                return;
+            }
+            if (AppAuthInterceptor.consumeAuthError()) {
+                // 鉴权失败（X-App-Token 配置错误）重试无意义，直接放弃等后台兜底。
+                Log.w(TAG, "停止 RTC 鉴权失败，中止自动重试: room=" + session.roomId);
                 return;
             }
             if (attempt < 3) {
@@ -940,6 +921,11 @@ public final class RealtimeGuideManager {
      */
     private void handleRecoverableRtcFailure(RtcVoiceChatManager expectedRtc, String message) {
         if (rtc != expectedRtc) return;
+        if (AppAuthInterceptor.consumeAuthError()) {
+            // X-App-Token 配置错误：自动重连只会反复失败，直接进 ERROR 提示联系运维。
+            terminateRtcOnError(expectedRtc, "配置错误，请联系运维");
+            return;
+        }
         TourSessionManager.TourSession current = TourSessionManager.get().current();
         boolean canAuto = current != null
                 && current.sessionId.equals(tourSessionId)
@@ -953,8 +939,8 @@ public final class RealtimeGuideManager {
         Log.w(TAG, "RTC 断开，自动重连 " + rtcAutoReconnectAttempt + "/" + RTC_AUTO_RECONNECT_MAX
                 + "：" + message);
 
-        // 释放当前 RTC（停旧 SDK 引擎），但保持 RTC_CONNECTING、保留 backendRtcSessionId，
-        // 让随后的 startForTourOnMain 复用同一后端 session。后端会停旧 task 起新 task。
+        // 释放当前 RTC（停旧 SDK 引擎），但保持 RTC_CONNECTING；随后的 startForTourReconnect
+        // 用同一导览 session_id 调 /v1/rtc/session，后端据此停旧 task 起新 task。
         ++generation;
         audioStartAttempt++;
         rtcReadyAttempt++;
@@ -996,11 +982,10 @@ public final class RealtimeGuideManager {
         rtcReadyAttempt++;
         registerBleListener();
         updateState(State.RTC_CONNECTING, "正在自动重连齐目 AI…");
-        final String reuseSessionId = backendRtcSessionId;
-        final String[] devIds = deviceIdsForSession();
+        final String reuseSessionId = session.sessionId;
         ioExecutor.execute(() -> {
             GuideApiClient.RtcSessionInfo created =
-                    apiClient.createRtcSession(session.venueId, reuseSessionId, devIds[0], devIds[1]);
+                    apiClient.createRtcSession(reuseSessionId);
             mainHandler.post(() -> onRtcSessionCreated(requestGeneration, session, created));
         });
     }
@@ -1025,7 +1010,7 @@ public final class RealtimeGuideManager {
         rtcRoomJoined = false;
         agentOnline = false;
         if (failedSession != null) {
-            stopServerSessionAsync(failedSession);
+            stopServerSessionAsync(failedSession, tourSessionId);
         }
     }
 

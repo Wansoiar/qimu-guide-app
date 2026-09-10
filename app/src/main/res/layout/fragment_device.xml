@@ -29,10 +29,17 @@
             <TextView
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:text="上次归还的数据清理未完成，请管理员检查眼镜及本机缓存"
+                android:text="@string/cleanup_warning_hint"
                 android:textColor="@color/qimu_error"
-                android:textSize="14sp"
-                android:textStyle="bold" />
+                android:textSize="14sp" />
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/btn_end_last_order"
+                style="@style/Widget.Qimu.Button.Primary"
+                android:layout_width="match_parent"
+                android:layout_height="48dp"
+                android:layout_marginTop="10dp"
+                android:text="@string/end_last_order" />
 
             <com.google.android.material.button.MaterialButton
                 android:id="@+id/btn_confirm_cleanup"
@@ -40,7 +47,7 @@
                 android:layout_width="match_parent"
                 android:layout_height="48dp"
                 android:layout_marginTop="10dp"
-                android:text="管理员确认已清理" />
+                android:text="@string/cleanup_acknowledge" />
         </LinearLayout>
 
         <LinearLayout
@@ -504,14 +511,6 @@
                     android:textSize="15sp"
                     android:textStyle="bold" />
             </LinearLayout>
-
-            <TextView
-                android:id="@+id/tv_active_tour"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="8dp"
-                android:textColor="@color/qimu_text_secondary"
-                android:textSize="13sp" />
 
             <TextView
                 android:layout_width="match_parent"

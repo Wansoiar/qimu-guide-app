@@ -6,8 +6,10 @@ import android.os.Looper;
 import android.text.TextUtils;
 import android.util.Log;
 
+import androidx.annotation.Nullable;
+
 import com.qimu.guide.QimuApplication;
-import com.qimu.guide.net.TourSessionApiClient;
+import com.qimu.guide.net.GuideApiClient;
 import com.qimu.guide.net.TourSessionManager;
 import com.qimu.guide.ui.gallery.GallerySelectionStore;
 import com.qimu.guide.ui.gallery.LocalPhotoRepository;
@@ -79,38 +81,69 @@ public final class TourReturnCoordinator {
         inProgress = true;
         int operation = ++generation;
         publishStage("正在关闭本次导览会话…");
-        if (session.serverBacked) {
-            try {
-                TourSessionApiClient.get().closeSession(session.sessionId, success ->
-                        mainHandler.post(() -> startGlassesReset(
-                                operation, session, returnTarget, success)));
-            } catch (RuntimeException closeFailure) {
-                Log.e(TAG, "关闭服务端导览会话失败", closeFailure);
-                startGlassesReset(operation, session, returnTarget, false);
-            }
-        } else {
-            startGlassesReset(operation, session, returnTarget, true);
-        }
+        // 服务端停火山由本方法开头的 stopForTour（/v1/rtc/session/stop 带 session_id）承担，
+        // 后端会落 rtc_status=stopped；失败由后端补停对账任务兜底。归还不再发独立的
+        // /sessions/{id}/close（后端无此路由）。
+        startGlassesReset(operation, session.sessionId, returnTarget, true);
         return true;
     }
 
-    private void startGlassesReset(int operation, TourSessionManager.TourSession session,
+    /**
+     * 清理上次异常退出遗留的订单（重启后无活动会话，仅持有持久化的 session_id）。
+     * 复用与 {@link #beginReturn()} 相同的眼镜重置 + 本地缓存清理管线；服务端收尾只能
+     * 尽力而为（重启后已无 RTC room/task，遗留会话由后端对账任务兜底）。
+     */
+    public boolean beginStaleOrderReturn(@Nullable String sessionId,
+                                         @Nullable String roomId,
+                                         @Nullable String taskId) {
+        if (Looper.myLooper() != Looper.getMainLooper()) {
+            Log.e(TAG, "上次订单收尾必须在主线程启动");
+            return false;
+        }
+        TourSessionManager.TourSession current = TourSessionManager.get().current();
+        if (current != null || inProgress
+                || sessionId == null || sessionId.trim().isEmpty()) {
+            return false;
+        }
+
+        BleService bleService = BleService.getInstance();
+        BleService.ReturnTarget returnTarget = bleService.beginReturnTransaction();
+        if (returnTarget == null) return false;
+        RealtimeGuideManager.get().stopForTour(null);
+        TourSessionManager.get().invalidatePendingSessionRequests();
+
+        // 通知后端关闭遗留会话：带 session_id 会把大 session 置 ended（释放设备），
+        // room/task 来自上次进房时的留存，用于停火山 RTC。异步发出，不阻塞本地清理。
+        final String sid = sessionId.trim();
+        final String rid = roomId == null ? "" : roomId.trim();
+        final String tid = taskId == null ? "" : taskId.trim();
+        new Thread(() -> {
+            try {
+                boolean ok = new GuideApiClient().stopRtcSession(rid, tid, sid);
+                if (!ok) Log.e(TAG, "结束上次订单：后端 RTC 停止未确认: " + sid);
+            } catch (RuntimeException failure) {
+                Log.e(TAG, "结束上次订单：后端停止异常", failure);
+            }
+        }, "stale-order-rtc-stop").start();
+
+        inProgress = true;
+        int operation = ++generation;
+        publishStage("正在关闭上次导览会话…");
+        startGlassesReset(operation, sid, returnTarget, true);
+        return true;
+    }
+
+    private void startGlassesReset(int operation, String sessionId,
                                    BleService.ReturnTarget returnTarget,
                                    boolean serverCloseSucceeded) {
         if (!isCurrent(operation)) return;
-        if (session.demoMode && !returnTarget.isResetEligible()) {
-            publishStage("正在结束本地体验会话…");
-            cleanupLocalData(operation, session, returnTarget,
-                    true, serverCloseSucceeded);
-            return;
-        }
         publishStage("正在清理眼镜中的照片，请勿关闭 App…");
         BleService.getInstance().resetForReturn(returnTarget, (success, errorCode) ->
-                cleanupLocalData(operation, session, returnTarget,
+                cleanupLocalData(operation, sessionId, returnTarget,
                         success, serverCloseSucceeded));
     }
 
-    private void cleanupLocalData(int operation, TourSessionManager.TourSession session,
+    private void cleanupLocalData(int operation, String sessionId,
                                   BleService.ReturnTarget returnTarget,
                                   boolean resetConfirmed, boolean serverCloseSucceeded) {
         if (!isCurrent(operation)) return;
@@ -118,14 +151,14 @@ public final class TourReturnCoordinator {
         Thread cleanupThread = new Thread(() -> {
             CleanupResult result = null;
             try {
-                result = deleteLocalData(session, returnTarget);
+                result = deleteLocalData(sessionId, returnTarget);
             } catch (RuntimeException cleanupFailure) {
                 Log.e(TAG, "清理本次导览缓存异常", cleanupFailure);
                 result = CleanupResult.failure("本地缓存清理异常");
             } finally {
                 CleanupResult completed = result == null
                         ? CleanupResult.failure("本地缓存清理未完成") : result;
-                mainHandler.post(() -> finish(operation, session, returnTarget,
+                mainHandler.post(() -> finish(operation, sessionId, returnTarget,
                         resetConfirmed, serverCloseSucceeded, completed));
             }
         }, "tour-return-cleanup");
@@ -133,12 +166,12 @@ public final class TourReturnCoordinator {
             cleanupThread.start();
         } catch (RuntimeException startFailure) {
             Log.e(TAG, "无法启动本地缓存清理线程", startFailure);
-            finish(operation, session, returnTarget, resetConfirmed,
+            finish(operation, sessionId, returnTarget, resetConfirmed,
                     serverCloseSucceeded, CleanupResult.failure("无法启动本地缓存清理"));
         }
     }
 
-    private void finish(int operation, TourSessionManager.TourSession session,
+    private void finish(int operation, String sessionId,
                         BleService.ReturnTarget returnTarget,
                         boolean resetConfirmed, boolean serverCloseSucceeded,
                         CleanupResult cleanupResult) {
@@ -163,8 +196,13 @@ public final class TourReturnCoordinator {
 
             boolean cleanupConfirmed = resetConfirmed && localCleanupSucceeded;
             try {
-                if (!TourSessionManager.get().completeSession(
-                        session.sessionId, cleanupConfirmed)) {
+                TourSessionManager sessionManager = TourSessionManager.get();
+                TourSessionManager.TourSession active = sessionManager.current();
+                if (active != null && sessionId.equals(active.sessionId)) {
+                    sessionManager.completeSession(sessionId, cleanupConfirmed);
+                } else if (active == null) {
+                    sessionManager.forgetLastSession(sessionId, cleanupConfirmed);
+                } else {
                     Log.e(TAG, "当前会话已变化，拒绝由旧归还事务清除新会话");
                 }
             } catch (RuntimeException sessionFailure) {
@@ -205,13 +243,13 @@ public final class TourReturnCoordinator {
         }
     }
 
-    private CleanupResult deleteLocalData(TourSessionManager.TourSession session,
+    private CleanupResult deleteLocalData(String sessionId,
                                           BleService.ReturnTarget returnTarget) {
         Context context = QimuApplication.getAppContext();
         CleanupResult result = new CleanupResult();
-        if (isSafeSessionId(session.sessionId)) {
+        if (isSafeSessionId(sessionId)) {
             deletePrivatePath(context,
-                    context.getExternalFilesDir("session_" + session.sessionId),
+                    context.getExternalFilesDir("session_" + sessionId),
                     "本次会话目录", result);
         } else {
             result.addFailure("会话标识格式异常，拒绝清理对应目录");

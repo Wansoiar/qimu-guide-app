@@ -33,6 +33,9 @@ fi
 echo "📱 设备："
 adb devices -l | grep -w "device" | grep -v "List of"
 
+# 本地联调：确保 adb reverse 隧道存在（App 指向 127.0.0.1:8787 时依赖它，重插/重连后易丢）
+adb reverse tcp:8787 tcp:8787 2>/dev/null || true
+
 if [ "$FORCE_UNINSTALL" -eq 1 ]; then
   echo "🗑  卸载旧包 $PKG ..."
   adb uninstall "$PKG" 2>/dev/null || echo "   (设备上无旧包，跳过)"

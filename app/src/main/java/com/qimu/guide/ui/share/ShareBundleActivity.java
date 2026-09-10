@@ -196,8 +196,8 @@ public final class ShareBundleActivity extends AppCompatActivity {
             showError("请先选择至少 1 张照片");
             return;
         }
-        if (BuildConfig.SHARE_APP_TOKEN == null
-                || BuildConfig.SHARE_APP_TOKEN.trim().isEmpty()) {
+        if (BuildConfig.APP_SHARED_SECRET == null
+                || BuildConfig.APP_SHARED_SECRET.trim().isEmpty()) {
             showError("此安装包未配置分享服务密钥，请让管理员重新生成联调包");
             return;
         }
@@ -221,8 +221,7 @@ public final class ShareBundleActivity extends AppCompatActivity {
     private void runUploadFlow(@NonNull AtomicReference<String> phone,
                                @Nullable String sessionId,
                                @Nullable String venueId) {
-        ShareBundleApiClient client = new ShareBundleApiClient(
-                BuildConfig.SHARE_APP_TOKEN, androidDeviceId());
+        ShareBundleApiClient client = new ShareBundleApiClient(androidDeviceId());
         apiClient = client;
         try {
             runOnUiThread(() -> setUploading(true, "正在检查照片…", true, 0));

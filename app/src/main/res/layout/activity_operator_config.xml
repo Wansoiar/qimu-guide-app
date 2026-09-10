@@ -187,30 +187,30 @@
             </LinearLayout>
 
             <LinearLayout
-                android:id="@+id/layout_mock_order"
+                android:id="@+id/layout_current_order"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:layout_marginTop="16dp"
                 android:background="@drawable/bg_card_accent"
                 android:orientation="vertical"
-                android:padding="@dimen/card_padding"
-                android:visibility="gone">
+                android:padding="@dimen/card_padding">
 
                 <com.qimu.guide.ui.widget.SerifTextView
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:letterSpacing="0.06"
-                    android:text="@string/mock_order_title"
+                    android:text="@string/current_order_title"
                     android:textAppearance="@style/TextAppearance.Qimu.SectionTitle"
                     android:textSize="15sp" />
 
                 <TextView
+                    android:id="@+id/tv_current_order_id"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:layout_marginTop="14dp"
                     android:fontFamily="sans-serif"
                     android:lineSpacingExtra="2dp"
-                    android:text="@string/mock_order_value"
+                    android:text="@string/current_order_placeholder"
                     android:textColor="@color/qimu_gold_dark"
                     android:textSize="16sp"
                     android:textStyle="bold" />
@@ -220,7 +220,7 @@
                     android:layout_height="wrap_content"
                     android:layout_marginTop="8dp"
                     android:lineSpacingExtra="2dp"
-                    android:text="@string/mock_order_hint"
+                    android:text="@string/current_order_hint"
                     android:textColor="@color/qimu_text_secondary"
                     android:textSize="11sp" />
             </LinearLayout>

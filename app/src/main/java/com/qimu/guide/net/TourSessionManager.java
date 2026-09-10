@@ -14,6 +14,8 @@ public final class TourSessionManager {
     private static final String PREFS = "tour_session_state";
     private static final String KEY_ACTIVE_MARKER = "active_marker";
     private static final String KEY_SESSION_ID = "session_id";
+    private static final String KEY_SESSION_ROOM_ID = "session_room_id";
+    private static final String KEY_SESSION_TASK_ID = "session_task_id";
     private static final String KEY_CLEANUP_WARNING = "cleanup_warning";
     private static final TourSessionManager INSTANCE = new TourSessionManager();
 
@@ -86,14 +88,12 @@ public final class TourSessionManager {
     }
 
     public synchronized boolean beginSession(int requestGeneration,
-                                             String sessionId, String orderNo,
-                                             String venueId, String venueName,
-                                             String deviceId, boolean serverBacked,
-                                             boolean demoMode) {
+                                             String sessionId, String phoneNumber,
+                                             String venueId, String venueName) {
         if (!isSessionRequestCurrent(requestGeneration)) return false;
         sessionRequestGeneration++;
-        session = new TourSession(sessionId, orderNo, venueId, venueName,
-                deviceId, System.currentTimeMillis(), serverBacked, demoMode);
+        session = new TourSession(sessionId, phoneNumber, venueId, venueName,
+                System.currentTimeMillis());
         tutorialShown = false;
         cleanupWarning = false;
         if (preferences != null) {
@@ -101,6 +101,8 @@ public final class TourSessionManager {
                     .putBoolean(KEY_ACTIVE_MARKER, true)
                     .putString(KEY_SESSION_ID, sessionId)
                     .putBoolean(KEY_CLEANUP_WARNING, false)
+                    .remove(KEY_SESSION_ROOM_ID)
+                    .remove(KEY_SESSION_TASK_ID)
                     .apply();
         }
         notifyListeners(true);
@@ -122,6 +124,8 @@ public final class TourSessionManager {
             preferences.edit()
                     .putBoolean(KEY_ACTIVE_MARKER, false)
                     .remove(KEY_SESSION_ID)
+                    .remove(KEY_SESSION_ROOM_ID)
+                    .remove(KEY_SESSION_TASK_ID)
                     .putBoolean(KEY_CLEANUP_WARNING, cleanupWarning)
                     .apply();
         }
@@ -132,9 +136,67 @@ public final class TourSessionManager {
     public synchronized void clearCleanupWarning() {
         cleanupWarning = false;
         if (preferences != null) {
-            preferences.edit().putBoolean(KEY_CLEANUP_WARNING, false).apply();
+            preferences.edit()
+                    .putBoolean(KEY_CLEANUP_WARNING, false)
+                    .remove(KEY_SESSION_ROOM_ID)
+                    .remove(KEY_SESSION_TASK_ID)
+                    .apply();
         }
         notifyListeners(isActive());
+    }
+
+    /** 上次异常退出遗留的会话 id（仅用于清理收尾，不恢复到活动会话）。 */
+    @Nullable
+    public String lastSessionId() {
+        return preferences == null ? null : preferences.getString(KEY_SESSION_ID, null);
+    }
+
+    /** 留存当前会话的火山 RTC 房间/任务 id，供异常退出后「结束上次订单」能带齐参数停 RTC。 */
+    public synchronized void rememberRtcIds(@Nullable String sessionId,
+                                            @Nullable String roomId,
+                                            @Nullable String taskId) {
+        if (preferences == null || sessionId == null || sessionId.trim().isEmpty()) return;
+        String stored = preferences.getString(KEY_SESSION_ID, null);
+        if (!sessionId.trim().equals(stored)) return;  // 会话已结束/更换则不写，避免串会话
+        preferences.edit()
+                .putString(KEY_SESSION_ROOM_ID, roomId == null ? "" : roomId.trim())
+                .putString(KEY_SESSION_TASK_ID, taskId == null ? "" : taskId.trim())
+                .apply();
+    }
+
+    /** 上次遗留会话的 RTC 房间 id（可为空：建了会话但从未进过 RTC）。 */
+    @Nullable
+    public String lastSessionRoomId() {
+        return preferences == null ? "" : preferences.getString(KEY_SESSION_ROOM_ID, "");
+    }
+
+    /** 上次遗留会话的 RTC 任务 id（可为空：建了会话但从未进过 RTC）。 */
+    @Nullable
+    public String lastSessionTaskId() {
+        return preferences == null ? "" : preferences.getString(KEY_SESSION_TASK_ID, "");
+    }
+
+    /** 结束上次遗留订单后的收尾：清除清理告警并移除遗留的 session id。 */
+    public synchronized boolean forgetLastSession(@Nullable String expectedSessionId,
+                                                  boolean cleanupConfirmed) {
+        if (expectedSessionId == null || expectedSessionId.trim().isEmpty()) {
+            return false;
+        }
+        cleanupWarning = !cleanupConfirmed;
+        if (preferences != null) {
+            SharedPreferences.Editor editor = preferences.edit()
+                    .putBoolean(KEY_ACTIVE_MARKER, false)
+                    .putBoolean(KEY_CLEANUP_WARNING, cleanupWarning);
+            String stored = preferences.getString(KEY_SESSION_ID, null);
+            if (expectedSessionId.equals(stored)) {
+                editor.remove(KEY_SESSION_ID)
+                        .remove(KEY_SESSION_ROOM_ID)
+                        .remove(KEY_SESSION_TASK_ID);
+            }
+            editor.apply();
+        }
+        notifyListeners(isActive());
+        return true;
     }
 
     /** Returns true exactly once for each newly started tour. */
@@ -150,25 +212,21 @@ public final class TourSessionManager {
 
     public static final class TourSession {
         public final String sessionId;
-        public final String orderNo;
+        public final String phoneNumber;
         public final String venueId;
         public final String venueName;
-        public final String deviceId;
         public final long startedAt;
-        public final boolean serverBacked;
-        public final boolean demoMode;
+        // 学会话全部走服务端 rentals/start + rtc/session，mock 由后端决定，App 恒为服务端会话。
+        public final boolean serverBacked = true;
+        public final boolean demoMode = false;
 
-        TourSession(String sessionId, String orderNo, String venueId, String venueName,
-                    String deviceId, long startedAt, boolean serverBacked,
-                    boolean demoMode) {
+        TourSession(String sessionId, String phoneNumber, String venueId, String venueName,
+                    long startedAt) {
             this.sessionId = sessionId;
-            this.orderNo = orderNo;
+            this.phoneNumber = phoneNumber;
             this.venueId = venueId;
             this.venueName = venueName;
-            this.deviceId = deviceId;
             this.startedAt = startedAt;
-            this.serverBacked = serverBacked;
-            this.demoMode = demoMode;
         }
     }
 }

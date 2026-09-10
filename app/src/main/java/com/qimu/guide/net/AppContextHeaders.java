@@ -18,9 +18,7 @@ public final class AppContextHeaders {
      *
      * - X-Device-Id：初始化后端的 device_id
      * - X-Glasses-Sn：初始化后端的眼镜 device_id（glasses.device_id）
-     * - X-Order-Id：当前导览会话订单号
-     * - X-Phone-Number：游客手机号 —— TODO(订单接口)：手机号后续由订单接口提供后再带；
-     *   当前 App 仅有手机 SN（provisioning phone_sn），不冒充手机号发送。
+     * - X-Phone-Number：游客手机号（开始导览时录入，落到 session.user_id / query_log.phone_number）
      *
      * 只返回非空值；未初始化/未在导览时对应 header 缺失（后端按可空处理）。
      */
@@ -39,7 +37,7 @@ public final class AppContextHeaders {
         try {
             TourSessionManager.TourSession tour = TourSessionManager.get().current();
             if (tour != null) {
-                putNonEmpty(headers, "X-Order-Id", tour.orderNo);
+                putNonEmpty(headers, "X-Phone-Number", tour.phoneNumber);
             }
         } catch (Exception ignored) {
         }
