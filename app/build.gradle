@@ -2,7 +2,7 @@ apply plugin: 'com.android.application'
 
 def qimuApiBaseUrl = project.findProperty('QIMU_API_BASE_URL')
         ?: System.getenv('QIMU_API_BASE_URL')
-        ?: 'http://115.190.147.152:8787'
+        ?: 'https://api.equavision.cn'
 def qimuAppSharedSecret = project.findProperty('QIMU_APP_SHARED_SECRET')
         ?: System.getenv('QIMU_APP_SHARED_SECRET')
         ?: 'dev-app-shared-secret-change-in-prod'
