@@ -30,6 +30,7 @@ public final class TourSessionApiClient {
 
     private final OkHttpClient client = new OkHttpClient.Builder()
             .addInterceptor(AppAuthInterceptor.INSTANCE)
+            .addInterceptor(HttpLog.debugLogger())
             .connectTimeout(8, TimeUnit.SECONDS)
             .readTimeout(15, TimeUnit.SECONDS)
             .writeTimeout(15, TimeUnit.SECONDS)

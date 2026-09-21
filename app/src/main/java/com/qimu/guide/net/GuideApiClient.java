@@ -28,6 +28,7 @@ public class GuideApiClient {
 
     private final OkHttpClient client = new OkHttpClient.Builder()
             .addInterceptor(AppAuthInterceptor.INSTANCE)
+            .addInterceptor(HttpLog.debugLogger())
             .connectTimeout(15, TimeUnit.SECONDS)
             .readTimeout(90, TimeUnit.SECONDS)
             .writeTimeout(30, TimeUnit.SECONDS)
