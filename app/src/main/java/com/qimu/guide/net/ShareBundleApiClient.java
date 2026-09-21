@@ -40,6 +40,7 @@ public final class ShareBundleApiClient implements Closeable {
         this.deviceId = deviceId.trim().isEmpty() ? "android-unknown" : deviceId.trim();
         client = new OkHttpClient.Builder()
                 .addInterceptor(AppAuthInterceptor.INSTANCE)
+                .addInterceptor(HttpLog.debugLogger())
                 .connectTimeout(15, TimeUnit.SECONDS)
                 .readTimeout(60, TimeUnit.SECONDS)
                 .writeTimeout(90, TimeUnit.SECONDS)

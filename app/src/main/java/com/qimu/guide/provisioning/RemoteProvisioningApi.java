@@ -5,6 +5,7 @@ import android.os.Looper;
 
 import com.qimu.guide.QimuApplication;
 import com.qimu.guide.net.ApiConfig;
+import com.qimu.guide.net.HttpLog;
 
 import org.json.JSONArray;
 import org.json.JSONObject;
@@ -37,6 +38,7 @@ public final class RemoteProvisioningApi implements ProvisioningApi {
     private static final String FAILED_LOGIN_LOCKED = "登录失败，账号锁定，剩余 %d 秒";
 
     private final OkHttpClient client = new OkHttpClient.Builder()
+            .addInterceptor(HttpLog.debugLogger())
             .connectTimeout(8, TimeUnit.SECONDS)
             .readTimeout(15, TimeUnit.SECONDS)
             .writeTimeout(15, TimeUnit.SECONDS)

@@ -1,11 +1,38 @@
 apply plugin: 'com.android.application'
 
+// 环境选择：-PqimuEnv=dev 或环境变量 QIMU_ENV=dev 走本地联调；默认 prod 走线上。
+def qimuEnv = (project.findProperty('qimuEnv') ?: System.getenv('QIMU_ENV') ?: 'prod')
+        .toString().trim().toLowerCase(Locale.ROOT)
+
+// 读取项目根 local.properties（已被 .gitignore 忽略，仅本机使用）
+def readLocalProperties() {
+    def props = new Properties()
+    def f = rootProject.file('local.properties')
+    if (f.exists()) f.withInputStream { props.load(it) }
+    return props
+}
+
+// App 共享密钥解析（仓库内不存放 prod 真实密钥）：
+// 优先级：Gradle 属性(-P / gradle.properties) > 环境变量 > local.properties > dev 内置兜底。
+// prod 缺失时直接报错并提示配置位置，避免带错误密钥出包。
+def resolveAppSharedSecret() {
+    def v = project.findProperty('QIMU_APP_SHARED_SECRET')
+            ?: System.getenv('QIMU_APP_SHARED_SECRET')
+            ?: readLocalProperties().getProperty('QIMU_APP_SHARED_SECRET')
+    if (v && v.toString().trim()) return v.toString().trim()
+    if (qimuEnv == 'dev') return 'dev-app-shared-secret-change-in-prod' // dev 密钥非机密，仅联调用
+    throw new GradleException("""
+        QIMU_APP_SHARED_SECRET 未配置（prod 构建必须显式提供 App 共享密钥）：
+          · 本地：在 ~/.gradle/gradle.properties 或项目 local.properties 添加
+                 QIMU_APP_SHARED_SECRET=<线上密钥>
+          · CI：在 Secrets 配置 QIMU_APP_SHARED_SECRET，构建步骤 env 注入
+    """.stripIndent())
+}
+
 def qimuApiBaseUrl = project.findProperty('QIMU_API_BASE_URL')
         ?: System.getenv('QIMU_API_BASE_URL')
-        ?: 'https://api.equavision.cn'
-def qimuAppSharedSecret = project.findProperty('QIMU_APP_SHARED_SECRET')
-        ?: System.getenv('QIMU_APP_SHARED_SECRET')
-        ?: 'dev-app-shared-secret-change-in-prod'
+        ?: (qimuEnv == 'dev' ? 'http://127.0.0.1:8787' : 'https://api.equavision.cn')
+def qimuAppSharedSecret = resolveAppSharedSecret()
 def asBuildConfigString = { value ->
     '"' + value.toString().replace('\\', '\\\\').replace('"', '\\"') + '"'
 }
@@ -78,6 +105,7 @@ dependencies {
     implementation 'com.google.code.gson:gson:2.8.9'
     implementation 'com.google.protobuf:protobuf-java:4.29.3'
     implementation 'com.squareup.okhttp3:okhttp:4.12.0'
+    implementation 'com.squareup.okhttp3:logging-interceptor:4.12.0'
     implementation 'com.google.zxing:core:3.5.3'
     implementation 'com.artillery.pay:paycertification:leadingSmart_1.0.55'
     implementation 'org.nanohttpd:nanohttpd:2.3.1'

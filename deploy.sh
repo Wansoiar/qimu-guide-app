@@ -5,6 +5,8 @@
 #   ./deploy.sh -r         安装前先卸载旧包（换签名/换环境时用）
 #   ./deploy.sh -n         装完不自动拉起 app
 #   ./deploy.sh -c         安装前 clean 一次
+#   ./deploy.sh -e dev     本地联调：API 走 127.0.0.1:8787 + 开发密钥（配合 adb reverse）
+#   ./deploy.sh -e prod    线上环境：API 走 api.equavision.cn + 生产密钥（默认）
 set -euo pipefail
 
 cd "$(dirname "$0")"
@@ -13,15 +15,23 @@ PKG="com.qimu.guide"
 FORCE_UNINSTALL=0
 NO_LAUNCH=0
 DO_CLEAN=0
+QIMU_ENV="prod"
 
-while getopts "rnc" opt; do
+while getopts "rnce:" opt; do
   case "$opt" in
     r) FORCE_UNINSTALL=1 ;;
     n) NO_LAUNCH=1 ;;
     c) DO_CLEAN=1 ;;
-    *) echo "用法: $0 [-r 先卸载] [-n 不拉起] [-c clean]"; exit 1 ;;
+    e) QIMU_ENV="$OPTARG" ;;
+    *) echo "用法: $0 [-r 先卸载] [-n 不拉起] [-c clean] [-e dev|prod]"; exit 1 ;;
   esac
 done
+
+case "$QIMU_ENV" in
+  dev|prod) ;;
+  *) echo "❌ 未知环境: $QIMU_ENV（仅支持 dev / prod）"; exit 1 ;;
+esac
+echo "🌍 环境：$QIMU_ENV"
 
 # 1. 确认设备
 DEVICE_COUNT=$(adb devices | grep -cw "device" || true)
@@ -45,10 +55,21 @@ fi
 
 # 2. 安装（签名不匹配时自动卸载重装）
 echo "🔨 编译 + 安装 ..."
-if ! ./gradlew installDebug; then
+GRADLE_ARGS=(-PqimuEnv="$QIMU_ENV")
+# 密钥注入：
+#   · dev 联调：强制 dev 密钥（覆盖本机 ~/.gradle/gradle.properties 里的 prod 密钥，
+#     避免本地 8787 鉴权 401）。
+#   · prod 构建：外部传了 QIMU_APP_SHARED_SECRET 则显式注入（CI 场景）；
+#     未传时由 Gradle 读取 ~/.gradle/gradle.properties / local.properties。
+if [ "$QIMU_ENV" = "dev" ]; then
+  GRADLE_ARGS+=(-PQIMU_APP_SHARED_SECRET=dev-app-shared-secret-change-in-prod)
+elif [ -n "${QIMU_APP_SHARED_SECRET:-}" ]; then
+  GRADLE_ARGS+=(-PQIMU_APP_SHARED_SECRET="$QIMU_APP_SHARED_SECRET")
+fi
+if ! ./gradlew "${GRADLE_ARGS[@]}" installDebug; then
   echo "⚠️  安装失败，尝试卸载旧包后重装（多为签名不匹配）..."
   adb uninstall "$PKG" 2>/dev/null || true
-  ./gradlew installDebug
+  ./gradlew "${GRADLE_ARGS[@]}" installDebug
 fi
 
 # 3. 拉起
