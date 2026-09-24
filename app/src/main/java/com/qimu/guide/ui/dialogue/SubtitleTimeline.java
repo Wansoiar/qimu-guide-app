@@ -4,7 +4,7 @@ import com.qimu.guide.model.DialogueMessage;
 import com.qimu.guide.service.SubtitleTranscript;
 
 import java.util.ArrayList;
-import java.util.Comparator;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -107,8 +107,10 @@ public final class SubtitleTimeline {
                 if (entry.source != first.source) sameSource = false;
             }
             if (sameSource) {
-                entries.sort(Comparator.comparingInt((SubtitleTranscript.Entry e) -> e.sequence)
-                        .thenComparingLong(e -> e.id));
+                Collections.sort(entries, (left, right) -> {
+                    int sequenceOrder = Integer.compare(left.sequence, right.sequence);
+                    return sequenceOrder != 0 ? sequenceOrder : Long.compare(left.id, right.id);
+                });
             }
             StringBuilder text = new StringBuilder();
             for (SubtitleTranscript.Entry entry : entries) text.append(entry.text);

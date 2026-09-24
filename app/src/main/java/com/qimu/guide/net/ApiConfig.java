@@ -2,8 +2,10 @@ package com.qimu.guide.net;
 
 import com.qimu.guide.BuildConfig;
 
-/** AI 导览线上后端端点。所有构建类型统一直连线上服务。 */
+/** AI 导览后端端点。正式环境固定走 HTTPS 域名，开发环境可显式覆盖。 */
 public final class ApiConfig {
+
+    private static final String PRODUCTION_API_BASE_URL = "https://api.equavision.cn";
 
     private ApiConfig() {
     }
@@ -13,6 +15,11 @@ public final class ApiConfig {
                 ? "" : BuildConfig.API_BASE_URL.trim();
         while (configured.endsWith("/")) {
             configured = configured.substring(0, configured.length() - 1);
+        }
+        if (BuildConfig.IS_PRODUCTION_ENV
+                && !PRODUCTION_API_BASE_URL.equals(configured)) {
+            throw new IllegalStateException(
+                    "正式环境只允许通过 " + PRODUCTION_API_BASE_URL + " 访问服务");
         }
         return configured;
     }

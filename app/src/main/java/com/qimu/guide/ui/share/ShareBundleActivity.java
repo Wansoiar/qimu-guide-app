@@ -226,6 +226,12 @@ public final class ShareBundleActivity extends AppCompatActivity {
             showError("此安装包未配置分享服务密钥，请让管理员重新生成联调包");
             return;
         }
+        String sessionId = validUuidOrNull(session.sessionId);
+        String venueId = validUuidOrNull(session.venueId);
+        if (sessionId == null || venueId == null) {
+            showError("当前导览会话信息无效，请返回设备页重新进入导览");
+            return;
+        }
 
         String enteredAccessCode = textOf(accessCodeInput);
         if (!ShareAccessCode.isValid(enteredAccessCode)) {
@@ -238,14 +244,12 @@ public final class ShareBundleActivity extends AppCompatActivity {
         setUploading(true, "正在创建分享…", true, 0);
 
         AtomicReference<String> code = new AtomicReference<>(enteredAccessCode);
-        String sessionId = validUuidOrNull(session.sessionId);
-        String venueId = validUuidOrNull(session.venueId);
         orchestrationExecutor.execute(() -> runUploadFlow(code, sessionId, venueId));
     }
 
     private void runUploadFlow(@NonNull AtomicReference<String> code,
-                               @Nullable String sessionId,
-                               @Nullable String venueId) {
+                               @NonNull String sessionId,
+                               @NonNull String venueId) {
         ShareBundleApiClient client = new ShareBundleApiClient(androidDeviceId());
         apiClient = client;
         try {
@@ -262,11 +266,11 @@ public final class ShareBundleActivity extends AppCompatActivity {
                 setUploading(true, "正在创建分享…", true, 0);
             });
             ShareBundleApiClient.CreateResult created = client.createBundle(
-                    code.get(), preparedPhotos.size(), needVlog, venueId);
+                    code.get(), preparedPhotos.size(), needVlog, sessionId, venueId);
             code.set(null);
             runOnUiThread(() -> accessCodeInput.setText(""));
 
-            uploadAllPhotos(client, created.bundleId, preparedPhotos, sessionId);
+            uploadAllPhotos(client, created.bundleId, preparedPhotos);
             runOnUiThread(() -> setUploading(true, "正在激活分享…", true, 0));
             ShareBundleApiClient.FinishResult finished = client.finishBundle(created.bundleId);
             runOnUiThread(() -> showShareResult(finished));
@@ -300,8 +304,7 @@ public final class ShareBundleActivity extends AppCompatActivity {
 
     private void uploadAllPhotos(@NonNull ShareBundleApiClient client,
                                  @NonNull String bundleId,
-                                 @NonNull List<PreparedPhoto> photos,
-                                 @Nullable String sessionId) throws IOException {
+                                 @NonNull List<PreparedPhoto> photos) throws IOException {
         CompletionService<ShareBundleApiClient.UploadResult> completion =
                 new ExecutorCompletionService<>(uploadExecutor);
         synchronized (uploadFutures) {
@@ -317,8 +320,7 @@ public final class ShareBundleActivity extends AppCompatActivity {
                             prepared.mimeType,
                             bytes,
                             sortOrder,
-                            prepared.sha256,
-                            sessionId);
+                            prepared.sha256);
                 }));
             }
         }

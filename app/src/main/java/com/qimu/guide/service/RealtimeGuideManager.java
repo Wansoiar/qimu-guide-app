@@ -142,6 +142,7 @@ public final class RealtimeGuideManager {
     private boolean rtcRoomJoined;
     private boolean agentOnline;
     private volatile int audioStartAttempt;
+    private int audioAutoRetryCount;
     // 从导出点击开始到 Wi-Fi 传输收尾前始终拦截收音重启，
     // 覆盖 stopTranslation 后的 1 s 释放窗口。
     private boolean mediaTransferAudioHold;
@@ -159,7 +160,11 @@ public final class RealtimeGuideManager {
             if (connectionState != CRPBleConnectionStateListener.STATE_CONNECTED) {
                 mainHandler.post(() -> pauseForGlassesDisconnect("眼镜已断开，对话收音已暂停"));
             } else {
-                mainHandler.post(RealtimeGuideManager.this::deliverPendingVisionRequest);
+                mainHandler.post(() -> {
+                    deliverPendingVisionRequest();
+                    audioAutoRetryCount = 0;
+                    resumeDesiredListeningIfReady();
+                });
             }
         }
 
@@ -207,8 +212,11 @@ public final class RealtimeGuideManager {
     public boolean isRecovering() { return hasConnectedInTour && recovery.isRecovering(); }
     public boolean requiresTourRestart() { return requiresNewTour; }
     public boolean wantsAudioAfterRecovery() {
-        return recovery.intent() == RtcRecoveryController.Intent.LISTENING;
+        return recovery.isListeningDesired();
     }
+
+    /** Foreground service and audio recovery share the same user intent as RTC recovery. */
+    public boolean isListeningDesired() { return recovery.isListeningDesired(); }
 
     public List<SubtitleTranscript.Entry> getTranscriptSnapshot() {
         return transcript.snapshot();
@@ -347,6 +355,7 @@ public final class RealtimeGuideManager {
         audioStartAttempt++;
         if (!session.sessionId.equals(transcriptTourSessionId)) {
             transcriptTourSessionId = session.sessionId;
+            audioAutoRetryCount = 0;
             transcript.clear();
             handledCommandIds.clear();
             hasConnectedInTour = false;
@@ -405,6 +414,10 @@ public final class RealtimeGuideManager {
             return;
         }
         if (created == null) {
+            // 自动重连若连建房接口都失败，当前已没有可恢复的 RTC 链路。
+            // 清除收音意图，避免 PAUSED/ERROR 状态下长期持有后台 WakeLock。
+            recovery.fail();
+            audioAutoRetryCount = 0;
             updateState(State.ERROR, AppAuthInterceptor.consumeAuthError()
                     ? "配置错误，请联系运维" : "齐目 AI 暂时不可用，请重试");
             return;
@@ -428,18 +441,14 @@ public final class RealtimeGuideManager {
 
     /** App “开始语音导览/继续语音导览”。RTC 已在房内，仅开启眼镜麦克风链路。 */
     public void startGuidance() {
-        mainHandler.post(this::startGuidanceOnMain);
+        mainHandler.post(() -> {
+            audioAutoRetryCount = 0;
+            startGuidanceOnMain();
+        });
     }
 
     private void startGuidanceOnMain() {
-        if (recovery.isRecovering()) {
-            recovery.setIntent(RtcRecoveryController.Intent.LISTENING);
-            recoveryDisplayState = State.LISTENING;
-            recoveryDisplayMessage = "正在聆听，请直接说话";
-            publishDisplayState();
-            return;
-        }
-        if (state != State.READY && state != State.PAUSED) return;
+        if (!currentTourAllowsRecovery() || state == State.ERROR) return;
         if (mediaTransferAudioHold || BleService.getInstance().isMediaDownloadActive()) {
             pauseAudioStart("照片导出中，完成后可继续对话");
             return;
@@ -448,6 +457,15 @@ public final class RealtimeGuideManager {
             pauseAudioStart("收音权限不可用，请点击继续对话");
             return;
         }
+        if (recovery.isRecovering()) {
+            recovery.setIntent(RtcRecoveryController.Intent.LISTENING);
+            recoveryDisplayState = State.LISTENING;
+            recoveryDisplayMessage = "正在聆听，请直接说话";
+            publishDisplayState();
+            return;
+        }
+        if (state != State.READY && state != State.PAUSED) return;
+        recovery.setIntent(RtcRecoveryController.Intent.LISTENING);
         GuideApiClient.RtcSessionInfo currentSession = rtcSession;
         if (!rtcRoomJoined || currentSession == null
                 || (!currentSession.mocked && !agentOnline)) {
@@ -458,12 +476,14 @@ public final class RealtimeGuideManager {
         BleService bleService = BleService.getInstance();
         CRPBleConnection connection = bleService.getConnection();
         if (!bleService.isConnected() || connection == null) {
-            pauseAudioStart("眼镜未连接，连接后可继续语音导览");
+            pauseForGlassesDisconnect("眼镜未连接，连接后将自动恢复收音");
             return;
         }
         RtcVoiceChatManager currentRtc = rtc;
         if (currentRtc == null) {
             quietAudioResume = false;
+            recovery.setIntent(RtcRecoveryController.Intent.PAUSED);
+            audioAutoRetryCount = 0;
             updateState(State.ERROR, "齐目 AI 暂时不可用，请重试");
             return;
         }
@@ -502,6 +522,7 @@ public final class RealtimeGuideManager {
                     setGlassesVolumeMax();
                     quietAudioResume = false;
                     recovery.setIntent(RtcRecoveryController.Intent.LISTENING);
+                    audioAutoRetryCount = 0;
                     updateState(State.LISTENING, "正在聆听，请直接说话");
                 });
             }
@@ -516,15 +537,44 @@ public final class RealtimeGuideManager {
             }
 
             @Override
+            public void onAudioFocusInterrupted(String message) {
+                mainHandler.post(() -> {
+                    if (startGeneration != generation || startAttempt != audioStartAttempt) return;
+                    RtcVoiceChatManager joinedRtc = rtc;
+                    if (joinedRtc != null) joinedRtc.setInputEnabled(false);
+                    // 保留收音意图。系统提示音/短暂通话结束并收到
+                    // AUDIOFOCUS_GAIN 后，无需用户解锁即可恢复眼镜收音。
+                    quietAudioResume = false;
+                    updateState(State.PAUSED, message);
+                });
+            }
+
+            @Override
+            public void onAudioFocusRestored() {
+                mainHandler.post(() -> {
+                    if (startGeneration != generation || startAttempt != audioStartAttempt
+                            || !isListeningDesired() || state != State.PAUSED
+                            || !currentTourAllowsRecovery()) return;
+                    startGuidanceOnMain();
+                });
+            }
+
+            @Override
             public void onError(int errorCode, String message) {
                 mainHandler.post(() -> {
                     if (startGeneration != generation || startAttempt != audioStartAttempt) return;
                     RtcVoiceChatManager joinedRtc = rtc;
                     if (joinedRtc != null) joinedRtc.setInputEnabled(false);
                     quietAudioResume = false;
-                    recovery.setIntent(RtcRecoveryController.Intent.PAUSED);
-                    updateState(State.PAUSED,
-                            message + "（" + errorCode + "），点击重试");
+                    glassesAudioSource.stop();
+                    if (errorCode == -15) {
+                        // 长期焦点占用需要用户明确继续，不能自动抢回麦克风。
+                        pauseAudioStart(message + "，结束后点击继续对话");
+                    } else {
+                        updateState(State.PAUSED,
+                                message + "（" + errorCode + "），正在重试");
+                        scheduleDesiredListeningRetry(startGeneration);
+                    }
                 });
             }
         });
@@ -536,10 +586,10 @@ public final class RealtimeGuideManager {
             audioStartAttempt++;
             RtcVoiceChatManager joinedRtc = rtc;
             if (joinedRtc != null) joinedRtc.setInputEnabled(false);
-            glassesAudioSource.pause();
+            glassesAudioSource.stop();
             quietAudioResume = false;
-            recovery.setIntent(RtcRecoveryController.Intent.PAUSED);
-            updateState(State.PAUSED, "眼镜麦克风连接超时，点击继续重试");
+            updateState(State.PAUSED, "眼镜麦克风连接超时，正在重试");
+            scheduleDesiredListeningRetry(startGeneration);
         }, AUDIO_LINK_START_TIMEOUT_MS);
     }
 
@@ -551,15 +601,19 @@ public final class RealtimeGuideManager {
     private void pauseAudioStart(String message) {
         quietAudioResume = false;
         audioStartAttempt++;
+        audioAutoRetryCount = 0;
         if (rtc != null) rtc.setInputEnabled(false);
         glassesAudioSource.pause();
-        recovery.setIntent(RtcRecoveryController.Intent.PAUSED);
+        if (setPausedRecoveryIntent(message)) return;
         updateState(State.PAUSED, message);
     }
 
     /** App “暂停收音”。仅停止眼镜音频；AI 导览员仍保持在线。 */
     public void pauseGuidance() {
-        mainHandler.post(() -> pauseGuidanceOnMain("已暂停收音 · 点击继续对话即可恢复"));
+        mainHandler.post(() -> {
+            audioAutoRetryCount = 0;
+            pauseGuidanceOnMain("已暂停收音 · 点击继续对话即可恢复");
+        });
     }
 
     /**
@@ -569,6 +623,7 @@ public final class RealtimeGuideManager {
      */
     public void suspendForMediaTransfer(@NonNull Runnable onAudioReleased) {
         mainHandler.post(() -> {
+            audioAutoRetryCount = 0;
             boolean audioTaskMayBeActive = state == State.LISTENING
                     || state == State.AUDIO_LINK_STARTING || state == State.PAUSED || recovery.isRecovering();
             mediaTransferAudioHold = true;
@@ -652,29 +707,32 @@ public final class RealtimeGuideManager {
     }
 
     private void pauseGuidanceOnMain(String message) {
-        if (setPausedRecoveryIntent(message)) return;
-        if (state != State.LISTENING && state != State.AUDIO_LINK_STARTING) return;
+        if (state != State.LISTENING && state != State.AUDIO_LINK_STARTING
+                && state != State.PAUSED && !recovery.isRecovering()) return;
         audioStartAttempt++;
         RtcVoiceChatManager currentRtc = rtc;
         if (currentRtc != null) currentRtc.setInputEnabled(false);
         glassesAudioSource.pause();
         quietAudioResume = false;
-        recovery.setIntent(RtcRecoveryController.Intent.PAUSED);
+        if (setPausedRecoveryIntent(message)) return;
         updateState(State.PAUSED, message);
     }
 
     private void pauseForGlassesDisconnect(String message) {
-        if (setPausedRecoveryIntent(message)) {
-            glassesAudioSource.stop();
-            return;
-        }
-        if (state != State.LISTENING && state != State.AUDIO_LINK_STARTING) return;
+        if (state != State.LISTENING && state != State.AUDIO_LINK_STARTING
+                && !isListeningDesired()) return;
         audioStartAttempt++;
         RtcVoiceChatManager currentRtc = rtc;
         if (currentRtc != null) currentRtc.setInputEnabled(false);
         glassesAudioSource.stop();
         quietAudioResume = false;
-        recovery.setIntent(RtcRecoveryController.Intent.PAUSED);
+        // BLE 中断只停止实际收音；用户暂停/导出才撤销自动续接意图。
+        if (recovery.isRecovering()) {
+            recoveryDisplayState = State.PAUSED;
+            recoveryDisplayMessage = message;
+            publishDisplayState();
+            return;
+        }
         updateState(State.PAUSED, message);
     }
 
@@ -756,6 +814,7 @@ public final class RealtimeGuideManager {
         rtcRoomJoined = false;
         agentOnline = false;
         if (publishStopping) {
+            audioAutoRetryCount = 0;
             transcriptTourSessionId = null;
             transcript.clear();
             handledCommandIds.clear();
@@ -1021,10 +1080,7 @@ public final class RealtimeGuideManager {
     }
 
     private RtcRecoveryController.Intent currentAudioIntent() {
-        if (state == State.LISTENING || state == State.AUDIO_LINK_STARTING || quietAudioResume) {
-            return RtcRecoveryController.Intent.LISTENING;
-        }
-        return state == State.PAUSED ? RtcRecoveryController.Intent.PAUSED : RtcRecoveryController.Intent.READY;
+        return recovery.intent();
     }
 
     private void beginRtcRecovery(RtcRecoveryController.Cause cause) {
@@ -1220,6 +1276,8 @@ public final class RealtimeGuideManager {
 
     private void failRecovery(String message, boolean stopAgent) {
         recovery.fail();
+        recovery.setIntent(RtcRecoveryController.Intent.PAUSED);
+        audioAutoRetryCount = 0;
         quietAudioResume = false;
         ++generation;
         audioStartAttempt++;
@@ -1299,15 +1357,40 @@ public final class RealtimeGuideManager {
                 state = State.READY;
                 startGuidanceOnMain();
             } else {
-                recovery.setIntent(RtcRecoveryController.Intent.PAUSED);
+                if (!permission || busy) recovery.setIntent(RtcRecoveryController.Intent.PAUSED);
                 updateState(State.PAUSED, !permission ? "收音权限不可用，请点击继续对话"
-                        : !connected ? "眼镜未连接，连接后可继续对话"
+                        : !connected ? "眼镜未连接，连接后将自动恢复收音"
                         : "已暂停收音 · 照片导出完成后可继续对话");
             }
         } else {
             updateState(State.READY, current.mocked ? "当前为 RTC 模拟模式，齐目 AI 不会响应"
                     : "齐目 AI 已准备好，点击开始对话");
+            resumeDesiredListeningIfReady();
         }
+    }
+
+    private void resumeDesiredListeningIfReady() {
+        if (!isListeningDesired() || !currentTourAllowsRecovery()
+                || (state != State.READY && state != State.PAUSED)) return;
+        if (mediaTransferAudioHold || BleService.getInstance().isMediaDownloadActive()) return;
+        startGuidanceOnMain();
+    }
+
+    private void scheduleDesiredListeningRetry(int expectedGeneration) {
+        if (!isListeningDesired() || expectedGeneration != generation
+                || !currentTourAllowsRecovery()) return;
+        if (audioAutoRetryCount >= 3) {
+            pauseAudioStart("眼镜音频连接失败，请解锁手机后重试");
+            return;
+        }
+        int attempt = ++audioAutoRetryCount;
+        int expectedAudioAttempt = audioStartAttempt;
+        mainHandler.postDelayed(() -> {
+            if (!isListeningDesired() || expectedGeneration != generation
+                    || expectedAudioAttempt != audioStartAttempt || state != State.PAUSED
+                    || !currentTourAllowsRecovery()) return;
+            startGuidanceOnMain();
+        }, 1_000L << (attempt - 1));
     }
 
     /**

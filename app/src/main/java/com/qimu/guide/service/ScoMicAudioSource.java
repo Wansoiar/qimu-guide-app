@@ -4,11 +4,15 @@ import android.Manifest;
 import android.content.Context;
 import android.content.pm.PackageManager;
 import android.media.AudioFormat;
+import android.media.AudioAttributes;
+import android.media.AudioFocusRequest;
 import android.media.AudioManager;
 import android.media.AudioRecord;
 import android.media.MediaRecorder;
 import android.os.Handler;
 import android.os.Looper;
+import android.os.Build;
+import android.os.Process;
 import android.util.Log;
 
 import androidx.annotation.NonNull;
@@ -46,6 +50,8 @@ public final class ScoMicAudioSource {
     public interface Listener {
         void onStarted();
         void onPcm(byte[] pcm);
+        default void onAudioFocusInterrupted(String message) { }
+        default void onAudioFocusRestored() { }
         void onError(int code, String message);
     }
 
@@ -60,6 +66,48 @@ public final class ScoMicAudioSource {
     private AudioRecord record;
     private int savedMode;
     private boolean modeChanged;
+    private boolean audioFocusHeld;
+    private boolean focusInterrupted;
+    private AudioFocusRequest audioFocusRequest;
+    private volatile Listener activeListener;
+    private final AudioManager.OnAudioFocusChangeListener audioFocusListener = focusChange -> {
+        if (focusChange == AudioManager.AUDIOFOCUS_GAIN) {
+            Listener current;
+            synchronized (lock) {
+                if (!focusInterrupted) return;
+                focusInterrupted = false;
+                current = activeListener;
+            }
+            if (current != null) {
+                Log.i(TAG, "音频焦点已恢复，准备恢复眼镜收音");
+                current.onAudioFocusRestored();
+            }
+            return;
+        }
+        Listener current = activeListener;
+        if (current == null) return;
+        if (isTransientFocusLoss(focusChange)) {
+            synchronized (lock) {
+                focusInterrupted = true;
+            }
+            Log.i(TAG, "音频焦点被短暂占用，等待系统恢复: " + focusChange);
+            // 保留 SCO、通话模式和焦点监听，只暂停 PCM。AUDIOFOCUS_GAIN
+            // 到来后由上层按原有 desiredListening 意图恢复。
+            stopRecordingOnly();
+            current.onAudioFocusInterrupted("音频被暂时占用，结束后将自动恢复");
+            return;
+        }
+        if (focusChange == AudioManager.AUDIOFOCUS_LOSS) {
+            Log.i(TAG, "音频焦点被长期占用，停止眼镜收音");
+            stop();
+            current.onError(-15, "音频被通话或其他应用长期占用");
+        }
+    };
+
+    static boolean isTransientFocusLoss(int focusChange) {
+        return focusChange == AudioManager.AUDIOFOCUS_LOSS_TRANSIENT
+                || focusChange == AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK;
+    }
 
     public ScoMicAudioSource(@NonNull Context context) {
         this.appContext = context.getApplicationContext();
@@ -84,6 +132,15 @@ public final class ScoMicAudioSource {
         }
         if (audioManager == null) {
             newListener.onError(-11, "AudioManager 不可用");
+            return;
+        }
+        activeListener = newListener;
+        synchronized (lock) {
+            focusInterrupted = false;
+        }
+        if (!requestAudioFocus()) {
+            activeListener = null;
+            newListener.onError(-15, "无法取得通话音频使用权");
             return;
         }
         Log.i(TAG, "start() 进通话模式 + startBluetoothSco");
@@ -115,7 +172,7 @@ public final class ScoMicAudioSource {
         }
     }
 
-    /** 轮询等待 SCO 真正连上，再开采集；超时仍尝试（此时可能走手机麦，日志告警）。 */
+    /** 轮询等待 SCO 真正连上再开采集；超时失败关闭，绝不回退到手机麦克风。 */
     private void waitScoConnected(int requestGeneration, Listener listener, long waited) {
         synchronized (lock) {
             if (requestGeneration != generation) return;
@@ -127,8 +184,10 @@ public final class ScoMicAudioSource {
             return;
         }
         if (waited >= SCO_WAIT_TIMEOUT_MS) {
-            Log.w(TAG, "等 " + (SCO_WAIT_TIMEOUT_MS / 1000) + "s SCO 未连上，仍尝试采集（可能走手机麦）");
-            beginRecording(requestGeneration, listener);
+            Log.w(TAG, "等 " + (SCO_WAIT_TIMEOUT_MS / 1000)
+                    + "s SCO 未连上，拒绝回退到手机麦克风");
+            stop();
+            listener.onError(-16, "眼镜通话音频未连接");
             return;
         }
         main.postDelayed(() -> waitScoConnected(requestGeneration, listener, waited + SCO_POLL_INTERVAL_MS),
@@ -145,11 +204,13 @@ public final class ScoMicAudioSource {
                     SAMPLE_RATE, AudioFormat.CHANNEL_IN_MONO,
                     AudioFormat.ENCODING_PCM_16BIT, minBuf * 2);
         } catch (SecurityException | IllegalArgumentException e) {
+            stop();
             listener.onError(-12, "AudioRecord 创建失败: " + e.getMessage());
             return;
         }
         if (created.getState() != AudioRecord.STATE_INITIALIZED) {
             created.release();
+            stop();
             listener.onError(-13, "AudioRecord 未初始化");
             return;
         }
@@ -166,12 +227,14 @@ public final class ScoMicAudioSource {
         } catch (IllegalStateException e) {
             synchronized (lock) { record = null; running = false; }
             created.release();
+            stop();
             listener.onError(-14, "startRecording 失败: " + e.getMessage());
             return;
         }
 
         final int frameBytes = SAMPLE_RATE / 1000 * READ_MS * 2; // 20ms * 16k * 2B = 640
         recordThread = new Thread(() -> {
+            Process.setThreadPriority(Process.THREAD_PRIORITY_AUDIO);
             byte[] buf = new byte[frameBytes];
             while (true) {
                 synchronized (lock) {
@@ -201,12 +264,22 @@ public final class ScoMicAudioSource {
      */
     public void pause() {
         stopRecordingOnly();
+        activeListener = null;
+        synchronized (lock) {
+            focusInterrupted = false;
+        }
+        abandonAudioFocus();
         Log.i(TAG, "pause() 已停采集（保留 SCO）");
     }
 
     /** 彻底停止：停采集 + 关 SCO + 恢复音频模式。 */
     public void stop() {
         stopRecordingOnly();
+        activeListener = null;
+        synchronized (lock) {
+            focusInterrupted = false;
+        }
+        abandonAudioFocus();
         AudioManager am = audioManager;
         if (am != null) {
             try {
@@ -229,6 +302,41 @@ public final class ScoMicAudioSource {
         Log.i(TAG, "stop() 已释放 SCO 并恢复音频模式");
     }
 
+    private boolean requestAudioFocus() {
+        if (audioFocusHeld) return true;
+        int result;
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            AudioAttributes attributes = new AudioAttributes.Builder()
+                    .setUsage(AudioAttributes.USAGE_VOICE_COMMUNICATION)
+                    .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
+                    .build();
+            audioFocusRequest = new AudioFocusRequest.Builder(
+                    AudioManager.AUDIOFOCUS_GAIN_TRANSIENT)
+                    .setAudioAttributes(attributes)
+                    .setOnAudioFocusChangeListener(audioFocusListener, main)
+                    .build();
+            result = audioManager.requestAudioFocus(audioFocusRequest);
+        } else {
+            result = audioManager.requestAudioFocus(audioFocusListener,
+                    AudioManager.STREAM_VOICE_CALL,
+                    AudioManager.AUDIOFOCUS_GAIN_TRANSIENT);
+        }
+        audioFocusHeld = result == AudioManager.AUDIOFOCUS_REQUEST_GRANTED;
+        return audioFocusHeld;
+    }
+
+    @SuppressWarnings("deprecation")
+    private void abandonAudioFocus() {
+        if (!audioFocusHeld || audioManager == null) return;
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && audioFocusRequest != null) {
+            audioManager.abandonAudioFocusRequest(audioFocusRequest);
+        } else {
+            audioManager.abandonAudioFocus(audioFocusListener);
+        }
+        audioFocusHeld = false;
+        audioFocusRequest = null;
+    }
+
     private void stopRecordingOnly() {
         Thread thread;
         AudioRecord current;
@@ -240,6 +348,11 @@ public final class ScoMicAudioSource {
             current = record;
             record = null;
         }
+        if (current != null) {
+            // AudioRecord.read() 可能忽略 Thread.interrupt() 并持续阻塞；先 stop
+            // 才能立即唤醒读线程，避免焦点切换或照片导出被固定拖慢约 300 ms。
+            try { current.stop(); } catch (RuntimeException ignored) { }
+        }
         if (thread != null) {
             thread.interrupt();
             try {
@@ -249,7 +362,6 @@ public final class ScoMicAudioSource {
             }
         }
         if (current != null) {
-            try { current.stop(); } catch (RuntimeException ignored) { }
             current.release();
         }
     }

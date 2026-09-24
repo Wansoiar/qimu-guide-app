@@ -160,4 +160,46 @@ public final class RtcRecoveryControllerTest {
         controller.connected();
         assertTrue(controller.shouldResumeAudio(true, true, false));
     }
+
+    @Test public void temporaryBleLossKeepsIntentButGatesAudioUntilConnected() {
+        RtcRecoveryController controller = interrupted(LISTENING);
+        controller.connected();
+        assertTrue(controller.isListeningDesired());
+        assertFalse(controller.shouldResumeAudio(true, false, false));
+        controller.interrupt(NETWORK, controller.intent(), 30_000);
+        controller.connected();
+        assertTrue(controller.shouldResumeAudio(true, true, false));
+    }
+
+    @Test public void explicitPauseWhileWaitingForAudioWinsOverRtcAndBleRecovery() {
+        RtcRecoveryController controller = interrupted(LISTENING);
+        assertFalse(controller.shouldResumeAudio(true, false, false));
+        controller.setIntent(PAUSED);
+        assertFalse(controller.isListeningDesired());
+        controller.connected();
+        assertFalse(controller.shouldResumeAudio(true, true, false));
+        controller.interrupt(AGENT, controller.intent(), 30_000);
+        controller.connected();
+        assertFalse(controller.isListeningDesired());
+    }
+
+    @Test public void exitOrFailureRevokesAudioAndForegroundListeningEvenWithRetainedIntent() {
+        for (boolean stop : new boolean[]{true, false}) {
+            RtcRecoveryController controller = interrupted(LISTENING);
+            if (stop) controller.stop(); else controller.fail();
+            controller.setIntent(LISTENING); // a late intent alone cannot revive the phase
+            controller.connected();
+            assertFalse(controller.isListeningDesired());
+            assertFalse(controller.shouldResumeAudio(true, true, false));
+        }
+    }
+
+    @Test public void nextTourDoesNotInheritPriorListeningOrForegroundWakeIntent() {
+        RtcRecoveryController controller = interrupted(LISTENING);
+        controller.stop();
+        controller.start();
+        assertEquals(READY, controller.intent());
+        assertFalse(controller.isListeningDesired());
+        assertFalse(controller.shouldResumeAudio(true, true, false));
+    }
 }

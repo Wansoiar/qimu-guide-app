@@ -112,8 +112,12 @@ public final class RtcRecoveryController {
     public Phase phase() { return phase; }
     public Intent intent() { return intent; }
 
+    public boolean isListeningDesired() {
+        return phase != Phase.STOPPED && phase != Phase.FAILED && intent == Intent.LISTENING;
+    }
+
     public boolean shouldResumeAudio(boolean permission, boolean glassesConnected, boolean busy) {
-        return intent == Intent.LISTENING && permission && glassesConnected && !busy;
+        return isListeningDesired() && permission && glassesConnected && !busy;
     }
 
     public String issueMessage() {

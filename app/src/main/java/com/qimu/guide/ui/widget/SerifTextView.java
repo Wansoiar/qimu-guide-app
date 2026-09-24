@@ -5,6 +5,7 @@ import android.graphics.Typeface;
 import android.util.AttributeSet;
 
 import androidx.appcompat.widget.AppCompatTextView;
+import androidx.core.content.res.ResourcesCompat;
 
 import com.qimu.guide.R;
 
@@ -13,7 +14,8 @@ import com.qimu.guide.R;
  *
  * 部分 ROM（如 vivo）会忽略布局 XML 中的 android:fontFamily 属性，
  * 导致 @font/noto_serif_sc_bold 不生效、中文回退到黑体。
- * 这里统一在代码里通过 Resources.getFont() 加载并 setTypeface，保证标题真正渲染宋体。
+ * 这里统一在代码里通过 ResourcesCompat 加载并 setTypeface，保证 API 21+
+ * 和不同 ROM 上的标题都能真正渲染宋体。
  */
 public class SerifTextView extends AppCompatTextView {
 
@@ -22,7 +24,7 @@ public class SerifTextView extends AppCompatTextView {
     private static Typeface serifBold(Context context) {
         if (sSerifBold == null) {
             try {
-                sSerifBold = context.getResources().getFont(R.font.noto_serif_sc_bold);
+                sSerifBold = ResourcesCompat.getFont(context, R.font.noto_serif_sc_bold);
             } catch (Throwable ignored) {
                 sSerifBold = null;
             }

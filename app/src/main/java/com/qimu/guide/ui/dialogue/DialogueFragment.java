@@ -35,6 +35,7 @@ import com.qimu.guide.R;
 import com.qimu.guide.model.DialogueMessage;
 import com.qimu.guide.net.TourSessionManager;
 import com.qimu.guide.service.BleService;
+import com.qimu.guide.service.GuideForegroundService;
 import com.qimu.guide.service.RealtimeGuideManager;
 import com.qimu.guide.service.SubtitleTranscript;
 
@@ -185,6 +186,12 @@ public class DialogueFragment extends Fragment {
     }
 
     private void handleDialogueButton() {
+        if (guideManager.getState() == RealtimeGuideManager.State.PAUSED
+                && guideManager.isListeningDesired()) {
+            // 暂时失去 BLE/焦点时，用户仍可取消自动续接。
+            guideManager.pauseGuidance();
+            return;
+        }
         if (guideManager.isRecovering()) {
             if (guideManager.wantsAudioAfterRecovery()) guideManager.pauseGuidance();
             else startGuidanceWithAudioPermission();
@@ -216,7 +223,7 @@ public class DialogueFragment extends Fragment {
     private void startGuidanceWithAudioPermission() {
         if (ContextCompat.checkSelfPermission(requireContext(), Manifest.permission.RECORD_AUDIO)
                 == PackageManager.PERMISSION_GRANTED) {
-            guideManager.startGuidance();
+            startGuidanceInForeground();
             return;
         }
 
@@ -242,7 +249,13 @@ public class DialogueFragment extends Fragment {
         RealtimeGuideManager.State state = guideManager.getState();
         if (guideManager.isRecovering() || state == RealtimeGuideManager.State.READY
                 || state == RealtimeGuideManager.State.PAUSED) {
-            guideManager.startGuidance();
+            startGuidanceInForeground();
+        }
+    }
+
+    private void startGuidanceInForeground() {
+        if (!GuideForegroundService.startListening()) {
+            showToast("无法开启后台收音，请保持 App 在前台并重试");
         }
     }
 
@@ -290,7 +303,8 @@ public class DialogueFragment extends Fragment {
                 dialogueButton.setEnabled(true);
                 break;
             case PAUSED:
-                dialogueButton.setText(R.string.dialogue_action_continue);
+                dialogueButton.setText(guideManager.isListeningDesired()
+                        ? R.string.dialogue_action_pause : R.string.dialogue_action_continue);
                 dialogueButton.setEnabled(true);
                 break;
             case ERROR:
