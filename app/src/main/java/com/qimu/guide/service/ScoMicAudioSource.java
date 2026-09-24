@@ -50,6 +50,8 @@ public final class ScoMicAudioSource {
     public interface Listener {
         void onStarted();
         void onPcm(byte[] pcm);
+        default void onAudioFocusInterrupted(String message) { }
+        default void onAudioFocusRestored() { }
         void onError(int code, String message);
     }
 
@@ -65,20 +67,47 @@ public final class ScoMicAudioSource {
     private int savedMode;
     private boolean modeChanged;
     private boolean audioFocusHeld;
+    private boolean focusInterrupted;
     private AudioFocusRequest audioFocusRequest;
     private volatile Listener activeListener;
     private final AudioManager.OnAudioFocusChangeListener audioFocusListener = focusChange -> {
-        if (focusChange != AudioManager.AUDIOFOCUS_LOSS
-                && focusChange != AudioManager.AUDIOFOCUS_LOSS_TRANSIENT
-                && focusChange != AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK) {
+        if (focusChange == AudioManager.AUDIOFOCUS_GAIN) {
+            Listener current;
+            synchronized (lock) {
+                if (!focusInterrupted) return;
+                focusInterrupted = false;
+                current = activeListener;
+            }
+            if (current != null) {
+                Log.i(TAG, "音频焦点已恢复，准备恢复眼镜收音");
+                current.onAudioFocusRestored();
+            }
             return;
         }
         Listener current = activeListener;
         if (current == null) return;
-        Log.i(TAG, "音频焦点被其他应用占用，暂停眼镜收音: " + focusChange);
-        stop();
-        current.onError(-15, "音频被通话或其他应用占用");
+        if (isTransientFocusLoss(focusChange)) {
+            synchronized (lock) {
+                focusInterrupted = true;
+            }
+            Log.i(TAG, "音频焦点被短暂占用，等待系统恢复: " + focusChange);
+            // 保留 SCO、通话模式和焦点监听，只暂停 PCM。AUDIOFOCUS_GAIN
+            // 到来后由上层按原有 desiredListening 意图恢复。
+            stopRecordingOnly();
+            current.onAudioFocusInterrupted("音频被暂时占用，结束后将自动恢复");
+            return;
+        }
+        if (focusChange == AudioManager.AUDIOFOCUS_LOSS) {
+            Log.i(TAG, "音频焦点被长期占用，停止眼镜收音");
+            stop();
+            current.onError(-15, "音频被通话或其他应用长期占用");
+        }
     };
+
+    static boolean isTransientFocusLoss(int focusChange) {
+        return focusChange == AudioManager.AUDIOFOCUS_LOSS_TRANSIENT
+                || focusChange == AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK;
+    }
 
     public ScoMicAudioSource(@NonNull Context context) {
         this.appContext = context.getApplicationContext();
@@ -106,6 +135,9 @@ public final class ScoMicAudioSource {
             return;
         }
         activeListener = newListener;
+        synchronized (lock) {
+            focusInterrupted = false;
+        }
         if (!requestAudioFocus()) {
             activeListener = null;
             newListener.onError(-15, "无法取得通话音频使用权");
@@ -233,6 +265,9 @@ public final class ScoMicAudioSource {
     public void pause() {
         stopRecordingOnly();
         activeListener = null;
+        synchronized (lock) {
+            focusInterrupted = false;
+        }
         abandonAudioFocus();
         Log.i(TAG, "pause() 已停采集（保留 SCO）");
     }
@@ -241,6 +276,9 @@ public final class ScoMicAudioSource {
     public void stop() {
         stopRecordingOnly();
         activeListener = null;
+        synchronized (lock) {
+            focusInterrupted = false;
+        }
         abandonAudioFocus();
         AudioManager am = audioManager;
         if (am != null) {
@@ -310,6 +348,11 @@ public final class ScoMicAudioSource {
             current = record;
             record = null;
         }
+        if (current != null) {
+            // AudioRecord.read() 可能忽略 Thread.interrupt() 并持续阻塞；先 stop
+            // 才能立即唤醒读线程，避免焦点切换或照片导出被固定拖慢约 300 ms。
+            try { current.stop(); } catch (RuntimeException ignored) { }
+        }
         if (thread != null) {
             thread.interrupt();
             try {
@@ -319,7 +362,6 @@ public final class ScoMicAudioSource {
             }
         }
         if (current != null) {
-            try { current.stop(); } catch (RuntimeException ignored) { }
             current.release();
         }
     }

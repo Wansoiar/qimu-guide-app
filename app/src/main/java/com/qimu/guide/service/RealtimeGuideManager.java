@@ -499,6 +499,27 @@ public final class RealtimeGuideManager {
             }
 
             @Override
+            public void onAudioFocusInterrupted(String message) {
+                mainHandler.post(() -> {
+                    if (startGeneration != generation || startAttempt != audioStartAttempt) return;
+                    RtcVoiceChatManager joinedRtc = rtc;
+                    if (joinedRtc != null) joinedRtc.setInputEnabled(false);
+                    // 保留 desiredListening。系统提示音/短暂通话结束并收到
+                    // AUDIOFOCUS_GAIN 后，无需用户解锁即可恢复眼镜收音。
+                    updateState(State.PAUSED, message);
+                });
+            }
+
+            @Override
+            public void onAudioFocusRestored() {
+                mainHandler.post(() -> {
+                    if (startGeneration != generation || startAttempt != audioStartAttempt
+                            || !desiredListening || state != State.PAUSED) return;
+                    startGuidanceOnMain();
+                });
+            }
+
+            @Override
             public void onError(int errorCode, String message) {
                 mainHandler.post(() -> {
                     if (startGeneration != generation || startAttempt != audioStartAttempt) return;
