@@ -191,8 +191,9 @@
     <string name="export_view_photos">查看本机照片</string>
     <string name="export_share_selection_hint">选择照片，并决定是否生成回忆视频</string>
     <string name="export_share_selection_summary">已选 %1$d 张 · 回忆视频 %2$s</string>
-    <string name="export_share_selection_ready">分享内容已确认，请输入手机号并上传</string>
+    <string name="export_share_selection_ready">分享内容已确认，请设置 4 位密码并上传</string>
     <string name="export_share_select_first">选择分享照片</string>
+    <string name="export_view_share_qr">再次查看二维码</string>
     <string name="gallery_view_title">本机照片</string>
     <string name="gallery_select_title">挑选要分享的照片</string>
     <string name="gallery_count_summary">共 %1$d 张</string>
@@ -224,14 +225,14 @@
 
     <string name="share_back">返回分享设置</string>
     <string name="share_title">生成导览分享码</string>
-    <string name="share_phone_explanation">游客扫码后需要输入手机号后 4 位验证。手机号只用于本次分享，不会保存在这台设备上。</string>
-    <string name="share_phone_hint">游客手机号</string>
+    <string name="share_access_code_explanation">请设置 4 位数字密码，并告知游客。游客扫码后输入该密码即可查看照片。</string>
+    <string name="share_access_code_hint">4 位数字密码</string>
     <string name="share_selection_summary">已选 %1$d 张照片 · 回忆视频 %2$s</string>
     <string name="share_start">上传并生成二维码</string>
     <string name="share_creating">正在创建分享…</string>
     <string name="share_qr_ready">分享码已生成</string>
     <string name="share_qr_content_description">本次导览 H5 分享二维码</string>
-    <string name="share_qr_summary">请用游客手机扫码 · 验证手机号后 4 位 %1$s\n有效期 7 天 · %2$d 张照片\n%3$s</string>
+    <string name="share_qr_summary">请用游客手机扫码 · 4 位密码 %1$s\n有效期 7 天 · %2$d 张照片\n%3$s</string>
     <string name="share_copy_link">复制链接</string>
     <string name="share_open_h5">打开 H5</string>
     <string name="share_done">已扫码，返回导出页</string>

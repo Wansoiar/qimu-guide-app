@@ -63,25 +63,26 @@
                 android:layout_height="wrap_content"
                 android:layout_marginTop="6dp"
                 android:lineSpacingExtra="2dp"
-                android:text="@string/share_phone_explanation"
+                android:text="@string/share_access_code_explanation"
                 android:textColor="@color/qimu_text_secondary"
                 android:textSize="13sp" />
 
             <com.google.android.material.textfield.TextInputLayout
-                android:id="@+id/share_phone_layout"
+                android:id="@+id/share_access_code_layout"
                 style="@style/Widget.Qimu.TextInputLayout.Outlined"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:layout_marginTop="14dp"
-                android:hint="@string/share_phone_hint">
+                android:hint="@string/share_access_code_hint">
 
                 <com.google.android.material.textfield.TextInputEditText
-                    android:id="@+id/share_phone"
+                    android:id="@+id/share_access_code"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:autofillHints="phone"
-                    android:inputType="phone"
-                    android:maxLength="20"
+                    android:digits="0123456789"
+                    android:importantForAutofill="no"
+                    android:inputType="numberPassword"
+                    android:maxLength="4"
                     android:singleLine="true" />
             </com.google.android.material.textfield.TextInputLayout>
 

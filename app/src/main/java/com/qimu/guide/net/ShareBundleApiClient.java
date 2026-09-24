@@ -48,13 +48,13 @@ public final class ShareBundleApiClient implements Closeable {
     }
 
     @NonNull
-    public CreateResult createBundle(@NonNull String phone,
+    public CreateResult createBundle(@NonNull String accessCode,
                                      int expectedPhotoCount,
                                      boolean needVlog,
                                      @Nullable String venueId) throws IOException {
         try {
             JSONObject payload = new JSONObject();
-            payload.put("phone", phone);
+            payload.put("access_code", accessCode);
             payload.put("expected_photo_count", expectedPhotoCount);
             payload.put("need_vlog", needVlog);
             if (venueId != null && !venueId.trim().isEmpty()) {
