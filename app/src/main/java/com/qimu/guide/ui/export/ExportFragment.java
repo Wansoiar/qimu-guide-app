@@ -34,7 +34,6 @@ import androidx.annotation.Nullable;
 import androidx.appcompat.app.AlertDialog;
 import androidx.core.content.ContextCompat;
 import androidx.fragment.app.Fragment;
-import androidx.fragment.app.FragmentTransaction;
 
 import com.google.android.material.bottomnavigation.BottomNavigationView;
 import com.moyoung.glasses.conn.listener.CRPBleConnectionStateListener;
@@ -58,8 +57,10 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
+import java.util.Set;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -72,6 +73,10 @@ import java.util.concurrent.atomic.AtomicReference;
 public class ExportFragment extends Fragment {
 
     private static final long END_MEDIA_QUERY_TIMEOUT_MS = 5000L;
+    private static final String STATE_SHARE_URL = "state_share_url";
+    private static final String STATE_SHARE_PHOTO_COUNT = "state_share_photo_count";
+    private static final String STATE_SHARE_VLOG_ENABLED = "state_share_vlog_enabled";
+    private static final String STATE_SHARE_ACCESS_CODE = "state_share_access_code";
 
     private BleService bleService;
     private RealtimeGuideManager realtimeGuideManager;
@@ -88,6 +93,7 @@ public class ExportFragment extends Fragment {
     private View btnExportPhotos;
     private View btnEndTour;
     private View btnGenerateQr;
+    private View btnViewShareQr;
     private View cardLocalPhotos;
     private ProgressBar exportProgress;
     private boolean exportRequested;
@@ -96,6 +102,12 @@ public class ExportFragment extends Fragment {
     private boolean finishAfterExport;
     private int pendingPhotoCount = -1;
     private int localPhotoCount;
+    private int expectedExportPhotoCount;
+    private final Set<String> downloadedPhotoPaths = new HashSet<>();
+    private String lastShareUrl = "";
+    private int lastSharePhotoCount;
+    private boolean lastShareVlogEnabled;
+    private String lastShareAccessCode = "";
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
     private AlertDialog returnProgressDialog;
     private TextView returnProgressText;
@@ -201,8 +213,15 @@ public class ExportFragment extends Fragment {
                         ShareBundleActivity.EXTRA_PHOTO_COUNT, 0);
                 boolean vlogEnabled = result.getData().getBooleanExtra(
                         ShareBundleActivity.EXTRA_VLOG_ENABLED, false);
-                tvQrStatus.setText("分享码已生成 · " + photoCount
-                        + " 张 · " + (vlogEnabled ? "已开启回忆视频" : "仅分享照片"));
+                lastShareUrl = result.getData().getStringExtra(
+                        ShareBundleActivity.EXTRA_SHARE_URL);
+                if (lastShareUrl == null) lastShareUrl = "";
+                lastSharePhotoCount = photoCount;
+                lastShareVlogEnabled = vlogEnabled;
+                lastShareAccessCode = result.getData().getStringExtra(
+                        ShareBundleActivity.EXTRA_ACCESS_CODE);
+                if (lastShareAccessCode == null) lastShareAccessCode = "";
+                updateShareResultUi();
                 Toast.makeText(requireContext(), "分享二维码已生成",
                         Toast.LENGTH_SHORT).show();
             });
@@ -283,7 +302,7 @@ public class ExportFragment extends Fragment {
 
                 @Override
                 public void onProgress(int total, int downloaded, int percent) {
-                    setStatus("正在下载照片 " + downloaded + "/" + total + "（" + percent + "%）");
+                    updatePhotoExportProgress(percent);
                     if (exportProgress != null) {
                         exportProgress.setIndeterminate(false);
                         exportProgress.setMax(100);
@@ -293,9 +312,11 @@ public class ExportFragment extends Fragment {
 
                 @Override
                 public void onFileDownloaded(String path) {
-                    // The service already reports transfer progress. Recount
-                    // the directory once on completion instead of recursively
-                    // walking the full history after every file.
+                    if (isImagePath(path)) {
+                        downloadedPhotoPaths.add(path);
+                        updatePhotoExportProgress(exportProgress == null
+                                ? 0 : exportProgress.getProgress());
+                    }
                 }
 
                 @Override
@@ -345,7 +366,18 @@ public class ExportFragment extends Fragment {
         btnExportPhotos = view.findViewById(R.id.btn_export_photos);
         btnEndTour = view.findViewById(R.id.btn_end_tour);
         btnGenerateQr = view.findViewById(R.id.btn_generate_qr);
+        btnViewShareQr = view.findViewById(R.id.btn_view_share_qr);
         cardLocalPhotos = view.findViewById(R.id.card_local_photos);
+
+        if (savedInstanceState != null) {
+            lastShareUrl = savedInstanceState.getString(STATE_SHARE_URL, "");
+            lastSharePhotoCount = savedInstanceState.getInt(STATE_SHARE_PHOTO_COUNT, 0);
+            lastShareVlogEnabled = savedInstanceState.getBoolean(
+                    STATE_SHARE_VLOG_ENABLED, false);
+            lastShareAccessCode = savedInstanceState.getString(
+                    STATE_SHARE_ACCESS_CODE, "");
+        }
+        updateShareResultUi();
 
         bleService.addListener(bleListener);
         bleService.setMediaDownloadListener(mediaDownloadListener);
@@ -372,6 +404,7 @@ public class ExportFragment extends Fragment {
 
         cardLocalPhotos.setOnClickListener(v -> openLocalPhotos(false));
         btnGenerateQr.setOnClickListener(v -> openLocalPhotos(true));
+        btnViewShareQr.setOnClickListener(v -> openLastShareQr());
         btnEndTour.setOnClickListener(v -> confirmEndTour());
 
         boolean returnInProgress = returnCoordinator.isInProgress();
@@ -446,6 +479,8 @@ public class ExportFragment extends Fragment {
         }
 
         exportRequested = true;
+        expectedExportPhotoCount = pendingPhotoCount;
+        downloadedPhotoPaths.clear();
         setBusyUi(true);
         setStatus("正在暂停眼镜收音并准备照片传输…");
         realtimeGuideManager.suspendForMediaTransfer(this::beginPhotoExportAfterAudioReleased);
@@ -473,6 +508,8 @@ public class ExportFragment extends Fragment {
             if (tvPendingCount != null) tvPendingCount.setText("0");
             bleService.queryNewMediaFile();
         }
+        downloadedPhotoPaths.clear();
+        expectedExportPhotoCount = 0;
         refreshLocalCount();
         updateActionState();
         if (!success) {
@@ -763,7 +800,39 @@ public class ExportFragment extends Fragment {
             if (btnGenerateQr != null) {
                 btnGenerateQr.setEnabled(activeTour && localPhotoCount > 0 && !returning);
             }
+            if (btnViewShareQr != null) {
+                btnViewShareQr.setEnabled(!lastShareUrl.isEmpty() && !returning);
+            }
         });
+    }
+
+    private void updatePhotoExportProgress(int percent) {
+        int expected = expectedExportPhotoCount > 0
+                ? expectedExportPhotoCount : Math.max(0, pendingPhotoCount);
+        if (expected == 0) {
+            setStatus("正在导出照片（" + percent + "%）");
+            return;
+        }
+        int downloaded = Math.min(downloadedPhotoPaths.size(), expected);
+        setStatus("正在导出照片 " + downloaded + "/" + expected + "（" + percent + "%）");
+    }
+
+    private void updateShareResultUi() {
+        if (tvQrStatus == null || btnViewShareQr == null) return;
+        boolean hasShare = !lastShareUrl.isEmpty()
+                && lastShareAccessCode.matches("^[0-9]{4}$");
+        btnViewShareQr.setVisibility(hasShare ? View.VISIBLE : View.GONE);
+        if (hasShare) {
+            tvQrStatus.setText("分享码已生成 · " + lastSharePhotoCount
+                    + " 张 · " + (lastShareVlogEnabled ? "已开启回忆视频" : "仅分享照片"));
+        }
+    }
+
+    private void openLastShareQr() {
+        if (lastShareUrl.isEmpty() || !lastShareAccessCode.matches("^[0-9]{4}$")) return;
+        startActivity(ShareBundleActivity.createResultIntent(
+                requireContext(), lastShareUrl, lastSharePhotoCount,
+                lastShareVlogEnabled, lastShareAccessCode));
     }
 
     private void refreshLocalCount() {
@@ -862,11 +931,6 @@ public class ExportFragment extends Fragment {
     }
 
     private void beginIrreversibleReturn() {
-        Fragment dialogue = getParentFragmentManager().findFragmentByTag("tab_dialogue");
-        if (dialogue != null) {
-            FragmentTransaction transaction = getParentFragmentManager().beginTransaction();
-            transaction.remove(dialogue).commit();
-        }
         setNavigationEnabled(false);
         showReturnProgress("正在开始归还流程…");
         if (!returnCoordinator.beginReturn()) {
@@ -911,6 +975,15 @@ public class ExportFragment extends Fragment {
         for (int index = 0; index < navigation.getMenu().size(); index++) {
             navigation.getMenu().getItem(index).setEnabled(enabled);
         }
+    }
+
+    @Override
+    public void onSaveInstanceState(@NonNull Bundle outState) {
+        super.onSaveInstanceState(outState);
+        outState.putString(STATE_SHARE_URL, lastShareUrl);
+        outState.putInt(STATE_SHARE_PHOTO_COUNT, lastSharePhotoCount);
+        outState.putBoolean(STATE_SHARE_VLOG_ENABLED, lastShareVlogEnabled);
+        outState.putString(STATE_SHARE_ACCESS_CODE, lastShareAccessCode);
     }
 
     @Override
