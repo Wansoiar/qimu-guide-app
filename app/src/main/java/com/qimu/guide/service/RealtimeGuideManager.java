@@ -52,6 +52,8 @@ public final class RealtimeGuideManager {
     private static final long SUBTITLE_CROSS_CHANNEL_DEDUP_MS = 1_500L;
     // 崩溃兜底时等待后端停止请求发出/确认的最长时间，避免拖慢系统杀进程。
     private static final long EXIT_STOP_GRACE_MS = 1_500L;
+    /** 归还确认的单次后端 stop 请求限时（连接 + 读超时），避免后端挂起时长时间卡住结束流程。 */
+    private static final long STOP_CONFIRM_TIMEOUT_MS = 4_000L;
 
     public enum State {
         IDLE,
@@ -889,16 +891,54 @@ public final class RealtimeGuideManager {
         }
     }
 
-    private void retryStopServerSession(GuideApiClient.RtcSessionInfo session,
-                                        @Nullable String sessionId) {
+    /**
+     * 归还流程阻塞确认（调用方必须在后台线程执行）：同步调后端停止本次导览会话并返回结果。
+     * 无活动 RTC/会话可停时视为无需确认，直接放行。
+     */
+    public GuideApiClient.RtcStopResult confirmServerStopForTour() {
+        GuideApiClient.RtcSessionInfo current = rtcSession;
+        String stopSessionId = tourSessionId;
+        if (current == null
+                && (stopSessionId == null || stopSessionId.trim().isEmpty())) {
+            // 无活动 RTC 与导览会话可停，视为无需确认。
+            return new GuideApiClient.RtcStopResult(true, null);
+        }
+        return retryStopServerSession(current, stopSessionId);
+    }
+
+    /**
+     * 上次订单收尾阻塞确认（调用方必须在后台线程执行）：按上次留存的 room/task/session id
+     * 同步调后端停止遗留会话。与活动游览确认走同一重试与超时口径。
+     */
+    public GuideApiClient.RtcStopResult confirmServerStopForStaleOrder(
+            @Nullable String roomId, @Nullable String taskId, @Nullable String sessionId) {
+        if (sessionId == null || sessionId.trim().isEmpty()) {
+            return new GuideApiClient.RtcStopResult(false, null);
+        }
+        return retryStopServerSession(roomId, taskId, sessionId);
+    }
+
+    private GuideApiClient.RtcStopResult retryStopServerSession(
+            @Nullable GuideApiClient.RtcSessionInfo session,
+            @Nullable String sessionId) {
+        return retryStopServerSession(session == null ? null : session.roomId,
+                session == null ? null : session.taskId, sessionId);
+    }
+
+    private GuideApiClient.RtcStopResult retryStopServerSession(
+            @Nullable String roomId, @Nullable String taskId, @Nullable String sessionId) {
+        final String rid = roomId == null ? "" : roomId.trim();
+        final String tid = taskId == null ? "" : taskId.trim();
+        GuideApiClient.RtcStopResult last = new GuideApiClient.RtcStopResult(false, null);
         for (int attempt = 1; attempt <= 3; attempt++) {
-            if (apiClient.stopRtcSession(session.roomId, session.taskId, sessionId)) {
-                return;
+            last = apiClient.stopRtcSession(rid, tid, sessionId, STOP_CONFIRM_TIMEOUT_MS);
+            if (last.ok) {
+                return last;
             }
             if (AppAuthInterceptor.consumeAuthError()) {
                 // 鉴权失败（X-App-Token 配置错误）重试无意义，直接放弃等后台兜底。
-                Log.w(TAG, "停止 RTC 鉴权失败，中止自动重试: room=" + session.roomId);
-                return;
+                Log.w(TAG, "停止 RTC 鉴权失败，中止自动重试: room=" + rid);
+                return last;
             }
             if (attempt < 3) {
                 try {
@@ -910,7 +950,8 @@ public final class RealtimeGuideManager {
             }
         }
         Log.e(TAG, "后端 VoiceChat 停止未确认，等待服务端 IdleTimeout 兜底: room="
-                + session.roomId + " task=" + session.taskId);
+                + rid + " task=" + tid);
+        return last;
     }
 
     /** 不可恢复错误不属于“暂停”：立即释放坏房间与 Agent，避免空转计费。 */

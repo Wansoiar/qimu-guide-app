@@ -391,6 +391,22 @@ public class BleService {
         return target;
     }
 
+    /** 归还确认失败时释放事务占位：保持当前蓝牙连接不变，恢复自动重连可用性。主线程调用。 */
+    public void cancelReturnTransaction(ReturnTarget target) {
+        if (Looper.myLooper() != Looper.getMainLooper()) {
+            Log.e(TAG, "取消归还事务必须在主线程执行");
+            return;
+        }
+        if (!isCurrentReturnTarget(target)) {
+            postLog("归还", "忽略过期归还事务的取消请求");
+            return;
+        }
+        returnTransactionInProgress = false;
+        activeReturnTarget = null;
+        userInitiatedDisconnect = false;
+        postLog("归还", "已释放归还占位，本次游览继续");
+    }
+
     public boolean startScan(GlassesScanCallback callback, long timeoutMs) {
         if (!isBluetoothEnabled()) {
             notifyError("蓝牙未开启，请在系统设置中开启蓝牙");

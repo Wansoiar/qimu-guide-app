@@ -202,6 +202,18 @@ public class GuideApiClient {
         }
     }
 
+    /** 后端停止 RTC 会话的结果：区分「成功 / 接口有返回但失败 / 无返回」。 */
+    public static final class RtcStopResult {
+        public final boolean ok;
+        /** 接口有返回时的后端 message；无返回时为 null，上层用兜底文案。 */
+        @Nullable public final String serverMessage;
+
+        public RtcStopResult(boolean ok, @Nullable String serverMessage) {
+            this.ok = ok;
+            this.serverMessage = serverMessage;
+        }
+    }
+
     /**
      * 停止后端 VoiceChat Agent，避免结束游览后继续占用。阻塞调用。
      *
@@ -209,7 +221,20 @@ public class GuideApiClient {
      *                  后，后端除停火山外还会把该 session 的 rtc_status 落 stopped 并清挂起
      *                  RAG 预取；传 null 则只停火山、不动状态。
      */
-    public boolean stopRtcSession(String roomId, String taskId, @Nullable String sessionId) {
+    public RtcStopResult stopRtcSession(String roomId, String taskId, @Nullable String sessionId) {
+        return stopRtcSession(roomId, taskId, sessionId, 0L);
+    }
+
+    /**
+     * 停止后端 VoiceChat Agent。阻塞调用。
+     *
+     * @param sessionId 传入租借 session_id 后，后端除停火山外还会把该 session 的 rtc_status 落
+     *                  stopped 并清挂起 RAG 预取；传 null 则只停火山、不动状态。
+     * @param timeoutMs 单次请求限时（连接 + 读超时）；<=0 使用客户端默认超时。归还确认用短超时，
+     *                  避免后端挂起时长时间卡住结束流程。
+     */
+    public RtcStopResult stopRtcSession(String roomId, String taskId,
+                                        @Nullable String sessionId, long timeoutMs) {
         Call call = null;
         try {
             JSONObject body = new JSONObject();
@@ -223,22 +248,40 @@ public class GuideApiClient {
                     .header("X-Client-Type", "android")
                     .post(RequestBody.create(body.toString(), JSON)))
                     .build();
-            call = client.newCall(request);
-            if (!register(call)) return false;
+            OkHttpClient callClient = client;
+            if (timeoutMs > 0) {
+                callClient = client.newBuilder()
+                        .connectTimeout(timeoutMs, TimeUnit.MILLISECONDS)
+                        .readTimeout(timeoutMs, TimeUnit.MILLISECONDS)
+                        .build();
+            }
+            call = callClient.newCall(request);
+            if (!register(call)) return new RtcStopResult(false, null);
             try (Response response = call.execute()) {
                 String responseBody = response.body() != null ? response.body().string() : "";
                 JSONObject json = new JSONObject(responseBody);
                 if (!response.isSuccessful() || json.optInt("code", -1) != 0) {
-                    Log.e(TAG, "stopRtcSession 后端错误: " + json.optString("message"));
-                    return false;
+                    String serverMessage = json.optString("message", "").trim();
+                    Log.e(TAG, "stopRtcSession 后端错误: " + serverMessage);
+                    return new RtcStopResult(false,
+                            serverMessage.isEmpty() ? null : serverMessage);
                 }
                 JSONObject data = json.optJSONObject("data");
-                return data == null || data.optBoolean("stopped", true);
+                boolean stopped = data == null || data.optBoolean("stopped", true);
+                // 后端明确返回 stopped=false（pending 等）也算有返回的失败，
+                // 优先带出 message；后端没写 message 时上层走兜底文案。
+                if (!stopped) {
+                    String serverMessage = json.optString("message", "").trim();
+                    Log.e(TAG, "stopRtcSession 返回未停止: " + serverMessage);
+                    return new RtcStopResult(false,
+                            serverMessage.isEmpty() ? null : serverMessage);
+                }
+                return new RtcStopResult(true, null);
             }
         } catch (Exception e) {
-            if (call != null && call.isCanceled()) return false;
+            if (call != null && call.isCanceled()) return new RtcStopResult(false, null);
             Log.e(TAG, "stopRtcSession 异常", e);
-            return false;
+            return new RtcStopResult(false, null);
         } finally {
             unregister(call);
         }
