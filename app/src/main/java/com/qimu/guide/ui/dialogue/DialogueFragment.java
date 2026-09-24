@@ -35,6 +35,7 @@ import com.qimu.guide.R;
 import com.qimu.guide.model.DialogueMessage;
 import com.qimu.guide.net.TourSessionManager;
 import com.qimu.guide.service.BleService;
+import com.qimu.guide.service.GuideForegroundService;
 import com.qimu.guide.service.RealtimeGuideManager;
 
 import java.io.File;
@@ -210,7 +211,7 @@ public class DialogueFragment extends Fragment {
     private void startGuidanceWithAudioPermission() {
         if (ContextCompat.checkSelfPermission(requireContext(), Manifest.permission.RECORD_AUDIO)
                 == PackageManager.PERMISSION_GRANTED) {
-            guideManager.startGuidance();
+            startGuidanceInForeground();
             return;
         }
 
@@ -236,7 +237,13 @@ public class DialogueFragment extends Fragment {
         RealtimeGuideManager.State state = guideManager.getState();
         if (state == RealtimeGuideManager.State.READY
                 || state == RealtimeGuideManager.State.PAUSED) {
-            guideManager.startGuidance();
+            startGuidanceInForeground();
+        }
+    }
+
+    private void startGuidanceInForeground() {
+        if (!GuideForegroundService.startListening()) {
+            showToast("无法开启后台收音，请保持 App 在前台并重试");
         }
     }
 

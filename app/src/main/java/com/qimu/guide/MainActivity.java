@@ -25,8 +25,7 @@ import com.qimu.guide.provisioning.OperatorConfigActivity;
 import com.qimu.guide.provisioning.OperatorSessionStore;
 import com.qimu.guide.provisioning.ProvisioningStore;
 import com.qimu.guide.service.BleService;
-import com.qimu.guide.service.RealtimeGuideManager;
-import com.qimu.guide.service.TourExitWatchdogService;
+import com.qimu.guide.service.GuideForegroundService;
 import com.qimu.guide.ui.device.DeviceFragment;
 import com.qimu.guide.ui.dialogue.DialogueFragment;
 import com.qimu.guide.ui.export.ExportFragment;
@@ -43,7 +42,6 @@ public class MainActivity extends AppCompatActivity implements TourSessionManage
     private BottomNavigationView bottomNav;
     private BleService bleService;
     private TourSessionManager tourSessionManager;
-    private RealtimeGuideManager realtimeGuideManager;
     private ProvisioningStore provisioningStore;
     private OperatorSessionStore operatorSessionStore;
     private TextView tvHeaderStatus;
@@ -93,7 +91,6 @@ public class MainActivity extends AppCompatActivity implements TourSessionManage
         bleService.addListener(bleListener);
         tourSessionManager = TourSessionManager.get();
         tourSessionManager.addListener(this);
-        realtimeGuideManager = RealtimeGuideManager.get();
         operatorSessionStore = OperatorSessionStore.get(this);
 
         bottomNav = findViewById(R.id.bottom_navigation);
@@ -123,16 +120,16 @@ public class MainActivity extends AppCompatActivity implements TourSessionManage
             return false;
         });
 
+        TourSessionManager.TourSession activeSession = tourSessionManager.current();
         if (savedInstanceState == null) {
-            bottomNav.setSelectedItemId(R.id.nav_device);
+            bottomNav.setSelectedItemId(activeSession == null
+                    ? R.id.nav_device : R.id.nav_dialogue);
         } else if (tourSessionManager.hasCleanupWarning()) {
             navigateForSessionState(false);
         }
         invalidateTabs();
-        TourSessionManager.TourSession activeSession = tourSessionManager.current();
         if (activeSession != null) {
-            realtimeGuideManager.startForTour(activeSession);
-            TourExitWatchdogService.start();
+            GuideForegroundService.startForTour();
         }
     }
 
@@ -321,14 +318,6 @@ public class MainActivity extends AppCompatActivity implements TourSessionManage
     @Override
     public void onTourSessionChanged(boolean active) {
         runOnUiThread(() -> {
-            TourSessionManager.TourSession session = tourSessionManager.current();
-            if (active && session != null) {
-                realtimeGuideManager.startForTour(session);
-                TourExitWatchdogService.start();
-            } else if (!active) {
-                realtimeGuideManager.stopForTour(null);
-                TourExitWatchdogService.stop();
-            }
             invalidateTabs();
             navigateForSessionState(active);
         });
@@ -395,12 +384,8 @@ public class MainActivity extends AppCompatActivity implements TourSessionManage
         operatorEntryHandler.removeCallbacks(operatorEntryRunnable);
         if (bleService != null) bleService.removeListener(bleListener);
         if (tourSessionManager != null) tourSessionManager.removeListener(this);
-        // 用户正常退出 App（返回键/finish）前结束当前导览会话并关闭 RTC 房间。
-        // 从最近任务划掉 App 由 TourExitWatchdogService.onTaskRemoved 处理。
-        // 旋转等配置变更触发重建时不结束会话；后台被系统杀死由下次启动的会话标记兜底。
-        if (isFinishing()) {
-            QimuApplication.endActiveTourBeforeExit(false);
-        }
+        // Activity 退出、锁屏或从最近任务划掉都不等于结束导览；前台服务继续托管。
+        // 只有显式“结束本次游览”才走 TourReturnCoordinator 的完整收尾。
     }
 
 }

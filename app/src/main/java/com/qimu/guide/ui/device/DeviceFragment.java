@@ -49,6 +49,7 @@ import com.qimu.guide.net.TourSessionManager;
 import com.qimu.guide.provisioning.ProvisioningApi;
 import com.qimu.guide.provisioning.ProvisioningStore;
 import com.qimu.guide.service.BleService;
+import com.qimu.guide.service.GuideForegroundService;
 import com.qimu.guide.service.TourReturnCoordinator;
 import com.qimu.guide.ui.widget.SerifTextView;
 
@@ -506,6 +507,17 @@ public class DeviceFragment extends Fragment {
             return;
         }
 
+        // 在用户仍停留于可见页面时取得 connectedDevice 前台服务资格。服务端响应
+        // 较慢时，即使用户按 Home 或锁屏，也不会再从后台违规启动前台服务。
+        if (!GuideForegroundService.prepare()) {
+            tourSessionManager.invalidatePendingSessionRequests();
+            inputLayout.setError("无法启动后台导览，请检查系统后台运行设置");
+            confirm.setText(R.string.start_confirm);
+            confirm.setEnabled(true);
+            orderDialog.getButton(AlertDialog.BUTTON_NEGATIVE).setEnabled(true);
+            return;
+        }
+
         TourSessionApiClient.get().startRental(venue.id, glassesId, phoneDeviceId, phone,
                 new TourSessionApiClient.CreateCallback() {
                     @Override
@@ -516,6 +528,7 @@ public class DeviceFragment extends Fragment {
 
                     @Override
                     public void onError(String message, boolean transportUnavailable) {
+                        GuideForegroundService.cancelPreparation();
                         if (!isAdded()) return;
                         requireActivity().runOnUiThread(() -> {
                             if (!tourSessionManager.isSessionRequestCurrent(
@@ -536,18 +549,22 @@ public class DeviceFragment extends Fragment {
         // 不满足本地建会话条件时不请求后端收尾：未起 RTC_task、无火山计费，后端没有
         // 对应的"作废新建会话"接口，遗留的孤儿 session 由后端 reconcile_orphan_sessions 兜底。
         if (!isAdded()) {
+            GuideForegroundService.cancelPreparation();
             return;
         }
         requireActivity().runOnUiThread(() -> {
             if (!isAdded() || getView() == null
                     || TourReturnCoordinator.get().isInProgress()
                     || !tourSessionManager.isSessionRequestCurrent(requestGeneration)) {
+                GuideForegroundService.cancelPreparation();
                 return;
             }
             if (!tourSessionManager.beginSession(requestGeneration, sessionId, phone,
                     venue.id, venue.name)) {
+                GuideForegroundService.cancelPreparation();
                 return;
             }
+            GuideForegroundService.startForTour();
             if (orderDialog != null) orderDialog.dismiss();
             if (notice != null) {
                 Toast.makeText(requireContext(), notice, Toast.LENGTH_LONG).show();
