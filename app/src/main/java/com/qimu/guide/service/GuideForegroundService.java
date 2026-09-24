@@ -253,7 +253,7 @@ public final class GuideForegroundService extends Service implements
     }
 
     @Override
-    public void onSubtitle(boolean fromSelf, String text, boolean definite, long sequence) {
+    public void onSubtitle(SubtitleTranscript.Entry entry) {
         // 不在系统通知中展示游客问题或 AI 字幕。
     }
 

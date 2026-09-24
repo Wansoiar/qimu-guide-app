@@ -1,5 +1,7 @@
 package com.qimu.guide.service;
 
+import android.Manifest;
+import android.content.pm.PackageManager;
 import android.os.Handler;
 import android.os.Looper;
 import android.os.SystemClock;
@@ -7,22 +9,21 @@ import android.util.Log;
 
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
+import androidx.core.content.ContextCompat;
 
 import com.moyoung.glasses.conn.CRPBleConnection;
 import com.moyoung.glasses.conn.callback.CRPDeviceVolumeCallback;
 import com.moyoung.glasses.conn.listener.CRPBleConnectionStateListener;
 import com.qimu.guide.QimuApplication;
 import com.qimu.guide.net.AppAuthInterceptor;
+import com.qimu.guide.net.AppContextHeaders;
 import com.qimu.guide.net.GuideApiClient;
 import com.qimu.guide.net.TourSessionManager;
 
 import org.json.JSONObject;
 
 import java.io.File;
-import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.HashSet;
-import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -44,12 +45,8 @@ public final class RealtimeGuideManager {
     private static final String TAG = "RealtimeGuide";
     private static final RealtimeGuideManager INSTANCE = new RealtimeGuideManager();
     private static final long AUDIO_LINK_START_TIMEOUT_MS = 8_000L;
-    private static final long RTC_READY_TIMEOUT_MS = 20_000L;
-    // 断线自动重连上限：超过后不再自动重连，进 ERROR 让用户手动点“重试”。
-    private static final int RTC_AUTO_RECONNECT_MAX = 3;
     private static final long VISION_COMMAND_TTL_MS = 30_000L;
     private static final long MEDIA_AUDIO_RELEASE_GRACE_MS = 1_000L;
-    private static final long SUBTITLE_CROSS_CHANNEL_DEDUP_MS = 1_500L;
     // 崩溃兜底时等待后端停止请求发出/确认的最长时间，避免拖慢系统杀进程。
     private static final long EXIT_STOP_GRACE_MS = 1_500L;
 
@@ -66,7 +63,7 @@ public final class RealtimeGuideManager {
 
     public interface Listener {
         void onStateChanged(State state, String message);
-        void onSubtitle(boolean fromSelf, String text, boolean definite, long sequence);
+        void onSubtitle(SubtitleTranscript.Entry entry);
         default boolean onVisionCaptureRequested(String commandId) {
             return false;
         }
@@ -75,20 +72,6 @@ public final class RealtimeGuideManager {
 
     public interface OperationCallback {
         void onComplete(boolean success, String message);
-    }
-
-    public static final class TranscriptEntry {
-        public final boolean fromSelf;
-        public final String text;
-        public final boolean definite;
-        public final long sequence;
-
-        TranscriptEntry(boolean fromSelf, String text, boolean definite, long sequence) {
-            this.fromSelf = fromSelf;
-            this.text = text;
-            this.definite = definite;
-            this.sequence = sequence;
-        }
     }
 
     private static final class PendingVisionRequest {
@@ -101,16 +84,6 @@ public final class RealtimeGuideManager {
             this.commandId = commandId;
             this.roundId = roundId;
             this.createdElapsedMs = SystemClock.elapsedRealtime();
-        }
-    }
-
-    private static final class RecentSubtitle {
-        final String transcriptKey;
-        long seenElapsedMs;
-
-        RecentSubtitle(String transcriptKey, long seenElapsedMs) {
-            this.transcriptKey = transcriptKey;
-            this.seenElapsedMs = seenElapsedMs;
         }
     }
 
@@ -130,10 +103,21 @@ public final class RealtimeGuideManager {
         thread.setDaemon(true);
         return thread;
     });
+    private final ExecutorService recoveryExecutor = Executors.newSingleThreadExecutor(runnable -> {
+        Thread thread = new Thread(runnable, "tour-rtc-recovery");
+        thread.setDaemon(true);
+        return thread;
+    });
+    private final RtcRecoveryController recovery = new RtcRecoveryController();
+    private State recoveryDisplayState = State.READY;
+    private String recoveryDisplayMessage = "齐目 AI 已准备好，点击开始对话";
+    private boolean hasConnectedInTour;
+    private boolean quietAudioResume;
+    private boolean networkConnected = true;
+    private boolean requiresNewTour;
+    private final RtcTokenRenewalController tokenRenewal = new RtcTokenRenewalController();
     private final Set<Listener> listeners = new CopyOnWriteArraySet<>();
-    private final Object transcriptLock = new Object();
-    private final Map<String, TranscriptEntry> transcript = new LinkedHashMap<>();
-    private final Map<String, RecentSubtitle> recentSubtitlesByContent = new HashMap<>();
+    private final SubtitleTranscript transcript = new SubtitleTranscript();
     private final Set<String> handledCommandIds = new HashSet<>();
     private final GuideApiClient apiClient = new GuideApiClient();
     // 收音源：眼镜当标准蓝牙耳机走系统 SCO 全双工（外放时仍收音→可打断），
@@ -147,6 +131,8 @@ public final class RealtimeGuideManager {
 
     private volatile int generation;
     private volatile String tourSessionId;
+    // Also read by the crash path when the main Looper may no longer be usable.
+    private volatile String endingTourSessionId;
     private String transcriptTourSessionId;
     private TourSessionManager.TourSession tourSession;
     private volatile GuideApiClient.RtcSessionInfo rtcSession;
@@ -155,19 +141,11 @@ public final class RealtimeGuideManager {
     // 二者都完成后才允许打开眼镜 PCM，避免用户第一句话发进“空房”。
     private boolean rtcRoomJoined;
     private boolean agentOnline;
-    private int audioStartAttempt;
-    // 用户主动点过“开始/继续对话”后为 true。系统断线只暂停实际链路，不清除
-    // 此意图；BLE/RTC 恢复后自动续接，锁屏状态无需回到页面再次操作。
-    private volatile boolean desiredListening;
+    private volatile int audioStartAttempt;
     private int audioAutoRetryCount;
-    private int rtcReadyAttempt;
     // 从导出点击开始到 Wi-Fi 传输收尾前始终拦截收音重启，
     // 覆盖 stopTranslation 后的 1 s 释放窗口。
     private boolean mediaTransferAudioHold;
-    // 让“重试连接”的延迟重建可被结束游览或后续重试失效，避免旧 runnable
-    // 在房间已经关闭后再次启动 Agent。
-    private int rtcRetryAttempt;
-    private int rtcAutoReconnectAttempt;
     private volatile boolean visionOperationInProgress;
     private volatile int visionOperationId;
     private OperationCallback activeVisionCallback;
@@ -207,7 +185,7 @@ public final class RealtimeGuideManager {
         listeners.add(listener);
         mainHandler.post(() -> {
             if (!listeners.contains(listener)) return;
-            listener.onStateChanged(state, stateMessage);
+            listener.onStateChanged(getState(), getStateMessage());
             listener.onVisionOperationChanged(visionOperationInProgress,
                     visionOperationInProgress ? "照片正在交给 AI 讲解…" : "");
             deliverPendingVisionRequest();
@@ -219,26 +197,35 @@ public final class RealtimeGuideManager {
     }
 
     public State getState() {
+        if (quietAudioResume) return recoveryDisplayState;
+        if (isRecovering() && !recovery.showIssue(SystemClock.elapsedRealtime())) return recoveryDisplayState;
         return state;
     }
 
     public String getStateMessage() {
+        if (quietAudioResume) return recoveryDisplayMessage;
+        if (isRecovering()) return recovery.showIssue(SystemClock.elapsedRealtime())
+                ? recovery.issueMessage() : recoveryDisplayMessage;
         return stateMessage;
     }
 
-    public boolean isListeningDesired() {
-        return desiredListening;
+    public boolean isRecovering() { return hasConnectedInTour && recovery.isRecovering(); }
+    public boolean requiresTourRestart() { return requiresNewTour; }
+    public boolean wantsAudioAfterRecovery() {
+        return recovery.isListeningDesired();
     }
 
-    public List<TranscriptEntry> getTranscriptSnapshot() {
-        synchronized (transcriptLock) {
-            return new ArrayList<>(transcript.values());
-        }
+    /** Foreground service and audio recovery share the same user intent as RTC recovery. */
+    public boolean isListeningDesired() { return recovery.isListeningDesired(); }
+
+    public List<SubtitleTranscript.Entry> getTranscriptSnapshot() {
+        return transcript.snapshot();
     }
 
-    public boolean isVisionEnabled() {
-        GuideApiClient.RtcSessionInfo current = rtcSession;
-        return current != null && current.photoEnabled;
+    /** Camera availability depends on a live session, not a retired venue setting. */
+    public boolean hasVisionSession() {
+        return rtcSession != null && !recovery.isRecovering() && rtcRoomJoined
+                && (rtcSession.mocked || agentOnline);
     }
 
     public boolean isVisionOperationInProgress() {
@@ -256,7 +243,8 @@ public final class RealtimeGuideManager {
 
     /** 在真正占用眼镜 AIRecognition 前预留整条识图链路。仅主线程调用。 */
     public boolean reserveVisionCapture(@Nullable String commandId) {
-        if (Looper.myLooper() != Looper.getMainLooper() || visionOperationInProgress) {
+        if (Looper.myLooper() != Looper.getMainLooper() || visionOperationInProgress
+                || !hasVisionSession()) {
             return false;
         }
         if (mediaTransferAudioHold || BleService.getInstance().isMediaDownloadActive()) {
@@ -335,11 +323,9 @@ public final class RealtimeGuideManager {
     }
 
     private void startForTourOnMain(TourSessionManager.TourSession session) {
-        // 任何直接启动都会使此前排队的“重试连接”失效；延迟重试本身会先完成校验，
-        // 再进入这里建立唯一的新房间。
-        rtcRetryAttempt++;
         TourSessionManager.TourSession activeTour = TourSessionManager.get().current();
-        if (TourReturnCoordinator.get().isInProgress() || activeTour != session) {
+        if (TourReturnCoordinator.get().isInProgress() || activeTour != session
+                || session.sessionId.equals(endingTourSessionId)) {
             Log.w(TAG, "游览已失效或正在归还，拒绝创建 RTC 房间");
             return;
         }
@@ -347,10 +333,10 @@ public final class RealtimeGuideManager {
                 && state != State.IDLE && state != State.ERROR) {
             return;
         }
-        if (state == State.ERROR) {
-            // ERROR 可能仍持有旧 room/task。先完整释放再重建，避免 Activity 重建或
-            // 用户重试时覆盖引用，留下继续计费的孤儿 Agent。
-            stopForTourOnMain(tourSessionId, false);
+        if (state == State.ERROR && rtcSession != null) {
+            // A retained RTC identity must never fall back to an unfenced start.
+            retryCurrentTour();
+            return;
         }
         if (state != State.IDLE && state != State.ERROR) {
             Log.w(TAG, "已有 RTC 会话，拒绝覆盖: " + state);
@@ -358,35 +344,58 @@ public final class RealtimeGuideManager {
         }
 
         int requestGeneration = ++generation;
+        recovery.start();
+        tokenRenewal.newCredentials();
+        requiresNewTour = false;
+        quietAudioResume = false;
         tourSession = session;
         tourSessionId = session.sessionId;
         rtcRoomJoined = false;
         agentOnline = false;
         audioStartAttempt++;
-        rtcReadyAttempt++;
         if (!session.sessionId.equals(transcriptTourSessionId)) {
             transcriptTourSessionId = session.sessionId;
-            desiredListening = false;
             audioAutoRetryCount = 0;
-            synchronized (transcriptLock) {
-                transcript.clear();
-                recentSubtitlesByContent.clear();
-            }
+            transcript.clear();
             handledCommandIds.clear();
-            // 换了不同的 Tour（新借阅）：重置自动重连计数，避免新借阅沿用上一段计数上限。
-            rtcAutoReconnectAttempt = 0;
+            hasConnectedInTour = false;
         }
         registerBleListener();
         updateState(State.RTC_CONNECTING, "正在准备齐目 AI…");
 
         // 全链路只有一个 session_id（/v1/session/start 返回，见 04-Session 改造方案）：
         // 带着它调 /v1/rtc/session 进房，venue/设备由后端自取。
-        // 断线重连复用同一条会话也靠它（同 session_id → 后端停旧 task 起新 task）。
-        final String reuseSessionId = session.sessionId;
+        // This unfenced request is only used for an initial start with no prior RTC identity.
+        requestInitialRtcSession(requestGeneration, session, 0);
+    }
+
+    private void requestInitialRtcSession(int requestGeneration,
+                                          TourSessionManager.TourSession requestedTour, int attempt) {
+        if (requestGeneration != generation || !currentTourAllowsRecovery()) return;
+        final long callEpoch = apiClient.rtcCallEpoch();
         ioExecutor.execute(() -> {
-            GuideApiClient.RtcSessionInfo created =
-                    apiClient.createRtcSession(reuseSessionId);
-            mainHandler.post(() -> onRtcSessionCreated(requestGeneration, session, created));
+            if (requestGeneration != generation) return;
+            GuideApiClient.RtcResult result =
+                    apiClient.createRtcSession(requestedTour.sessionId, null, callEpoch);
+            mainHandler.post(() -> {
+                if (requestGeneration != generation || !currentTourAllowsRecovery()) {
+                    if (GuideApiClient.shouldCleanUpRtcResponse(result.session, rtcSession)) {
+                        stopServerSessionAsync(result.session, requestedTour.sessionId, false);
+                    }
+                    return;
+                }
+                if (result.session == null && result.retryable() && attempt < 2) {
+                    mainHandler.postDelayed(() -> requestInitialRtcSession(requestGeneration,
+                            requestedTour, attempt + 1), 1_000L << attempt);
+                    return;
+                }
+                if (result.session == null && result.identityRejected()) {
+                    requiresNewTour = true;
+                    failRecovery("当前导览连接已失效，请重新开始导览", false);
+                    return;
+                }
+                onRtcSessionCreated(requestGeneration, requestedTour, result.session);
+            });
         });
     }
 
@@ -396,15 +405,18 @@ public final class RealtimeGuideManager {
         if (requestGeneration != generation
                 || tourSession == null
                 || !requestedTour.sessionId.equals(tourSessionId)
+                || requestedTour.sessionId.equals(endingTourSessionId)
                 || TourReturnCoordinator.get().isInProgress()
                 || TourSessionManager.get().current() != requestedTour) {
-            if (created != null) stopServerSessionAsync(created, requestedTour.sessionId);
+            if (GuideApiClient.shouldCleanUpRtcResponse(created, rtcSession)) {
+                stopServerSessionAsync(created, requestedTour.sessionId, false);
+            }
             return;
         }
         if (created == null) {
             // 自动重连若连建房接口都失败，当前已没有可恢复的 RTC 链路。
             // 清除收音意图，避免 PAUSED/ERROR 状态下长期持有后台 WakeLock。
-            desiredListening = false;
+            recovery.fail();
             audioAutoRetryCount = 0;
             updateState(State.ERROR, AppAuthInterceptor.consumeAuthError()
                     ? "配置错误，请联系运维" : "齐目 AI 暂时不可用，请重试");
@@ -418,43 +430,59 @@ public final class RealtimeGuideManager {
         rtc = manager;
         updateState(State.RTC_CONNECTING,
                 created.mocked ? "当前为 RTC 模拟模式，齐目 AI 不会响应" : "正在连接齐目 AI…");
+        recovery.interrupt(RtcRecoveryController.Cause.AGENT, RtcRecoveryController.Intent.READY,
+                SystemClock.elapsedRealtime());
+        recoveryDisplayState = state;
+        recoveryDisplayMessage = stateMessage;
         manager.start(created, createRtcListener(requestGeneration, manager));
-        scheduleRtcReadyTimeout(requestGeneration, manager,
-                "齐目 AI 连接超时，请重试");
+        scheduleRecoveryTimers();
+        scheduleTokenRenewal();
     }
 
     /** App “开始语音导览/继续语音导览”。RTC 已在房内，仅开启眼镜麦克风链路。 */
     public void startGuidance() {
         mainHandler.post(() -> {
-            desiredListening = true;
             audioAutoRetryCount = 0;
             startGuidanceOnMain();
         });
     }
 
     private void startGuidanceOnMain() {
-        if (state != State.READY && state != State.PAUSED) return;
+        if (!currentTourAllowsRecovery() || state == State.ERROR) return;
         if (mediaTransferAudioHold || BleService.getInstance().isMediaDownloadActive()) {
-            desiredListening = false;
-            audioAutoRetryCount = 0;
-            updateState(State.PAUSED, "照片导出中，完成后可继续对话");
+            pauseAudioStart("照片导出中，完成后可继续对话");
             return;
         }
+        if (!hasAudioPermission()) {
+            pauseAudioStart("收音权限不可用，请点击继续对话");
+            return;
+        }
+        if (recovery.isRecovering()) {
+            recovery.setIntent(RtcRecoveryController.Intent.LISTENING);
+            recoveryDisplayState = State.LISTENING;
+            recoveryDisplayMessage = "正在聆听，请直接说话";
+            publishDisplayState();
+            return;
+        }
+        if (state != State.READY && state != State.PAUSED) return;
+        recovery.setIntent(RtcRecoveryController.Intent.LISTENING);
         GuideApiClient.RtcSessionInfo currentSession = rtcSession;
         if (!rtcRoomJoined || currentSession == null
                 || (!currentSession.mocked && !agentOnline)) {
-            updateState(State.RTC_CONNECTING, "正在连接齐目 AI…");
+            beginRtcRecovery(networkConnected ? RtcRecoveryController.Cause.AGENT
+                    : RtcRecoveryController.Cause.NETWORK);
             return;
         }
         BleService bleService = BleService.getInstance();
         CRPBleConnection connection = bleService.getConnection();
         if (!bleService.isConnected() || connection == null) {
-            updateState(State.PAUSED, "眼镜未连接，连接后可继续语音导览");
+            pauseForGlassesDisconnect("眼镜未连接，连接后将自动恢复收音");
             return;
         }
         RtcVoiceChatManager currentRtc = rtc;
         if (currentRtc == null) {
-            desiredListening = false;
+            quietAudioResume = false;
+            recovery.setIntent(RtcRecoveryController.Intent.PAUSED);
             audioAutoRetryCount = 0;
             updateState(State.ERROR, "齐目 AI 暂时不可用，请重试");
             return;
@@ -462,6 +490,7 @@ public final class RealtimeGuideManager {
 
         int startGeneration = generation;
         int startAttempt = ++audioStartAttempt;
+        recovery.setIntent(RtcRecoveryController.Intent.LISTENING);
         currentRtc.setInputEnabled(false);
         updateState(State.AUDIO_LINK_STARTING, "正在连接眼镜麦克风…");
         glassesAudioSource.start(QimuApplication.getAppContext(), new ScoMicAudioSource.Listener() {
@@ -469,14 +498,20 @@ public final class RealtimeGuideManager {
             public void onStarted() {
                 mainHandler.post(() -> {
                     if (startGeneration != generation || startAttempt != audioStartAttempt
-                            || state != State.AUDIO_LINK_STARTING) {
-                        glassesAudioSource.pause();
+                            || state != State.AUDIO_LINK_STARTING || !currentTourAllowsRecovery()) {
+                        // The invalidating action already stopped its source. A late callback
+                        // must not pause the shared source belonging to a newer start attempt.
                         return;
                     }
                     RtcVoiceChatManager joinedRtc = rtc;
-                    if (joinedRtc == null) {
-                        glassesAudioSource.pause();
-                        updateState(State.ERROR, "AI 导览连接已断开");
+                    if (joinedRtc == null || !hasVisionSession()) {
+                        pauseAudioStart("AI 导览连接暂时不可用");
+                        return;
+                    }
+                    if (!hasAudioPermission() || !BleService.getInstance().isConnected()
+                            || mediaTransferAudioHold || BleService.getInstance().isMediaDownloadActive()
+                            || recovery.intent() == RtcRecoveryController.Intent.PAUSED) {
+                        pauseAudioStart("收音已暂停，条件就绪后可继续对话");
                         return;
                     }
                     joinedRtc.setInputEnabled(true);
@@ -485,6 +520,8 @@ public final class RealtimeGuideManager {
                     // 必须在此处（SCO 起来后）调，进房时调会被系统路由覆盖。
                     joinedRtc.routeToBluetooth();
                     setGlassesVolumeMax();
+                    quietAudioResume = false;
+                    recovery.setIntent(RtcRecoveryController.Intent.LISTENING);
                     audioAutoRetryCount = 0;
                     updateState(State.LISTENING, "正在聆听，请直接说话");
                 });
@@ -493,7 +530,8 @@ public final class RealtimeGuideManager {
             @Override
             public void onPcm(byte[] pcm) {
                 RtcVoiceChatManager activeRtc = rtc;
-                if (state == State.LISTENING && activeRtc != null) {
+                if (startGeneration == generation && startAttempt == audioStartAttempt
+                        && state == State.LISTENING && activeRtc != null) {
                     activeRtc.pushExternalPcm(pcm);
                 }
             }
@@ -504,8 +542,9 @@ public final class RealtimeGuideManager {
                     if (startGeneration != generation || startAttempt != audioStartAttempt) return;
                     RtcVoiceChatManager joinedRtc = rtc;
                     if (joinedRtc != null) joinedRtc.setInputEnabled(false);
-                    // 保留 desiredListening。系统提示音/短暂通话结束并收到
+                    // 保留收音意图。系统提示音/短暂通话结束并收到
                     // AUDIOFOCUS_GAIN 后，无需用户解锁即可恢复眼镜收音。
+                    quietAudioResume = false;
                     updateState(State.PAUSED, message);
                 });
             }
@@ -514,7 +553,8 @@ public final class RealtimeGuideManager {
             public void onAudioFocusRestored() {
                 mainHandler.post(() -> {
                     if (startGeneration != generation || startAttempt != audioStartAttempt
-                            || !desiredListening || state != State.PAUSED) return;
+                            || !isListeningDesired() || state != State.PAUSED
+                            || !currentTourAllowsRecovery()) return;
                     startGuidanceOnMain();
                 });
             }
@@ -525,12 +565,11 @@ public final class RealtimeGuideManager {
                     if (startGeneration != generation || startAttempt != audioStartAttempt) return;
                     RtcVoiceChatManager joinedRtc = rtc;
                     if (joinedRtc != null) joinedRtc.setInputEnabled(false);
+                    quietAudioResume = false;
                     glassesAudioSource.stop();
                     if (errorCode == -15) {
-                        // 电话/其他通话抢占后不在用户不知情时自动开麦。
-                        desiredListening = false;
-                        audioAutoRetryCount = 0;
-                        updateState(State.PAUSED, message + "，结束后点击继续对话");
+                        // 长期焦点占用需要用户明确继续，不能自动抢回麦克风。
+                        pauseAudioStart(message + "，结束后点击继续对话");
                     } else {
                         updateState(State.PAUSED,
                                 message + "（" + errorCode + "），正在重试");
@@ -548,15 +587,30 @@ public final class RealtimeGuideManager {
             RtcVoiceChatManager joinedRtc = rtc;
             if (joinedRtc != null) joinedRtc.setInputEnabled(false);
             glassesAudioSource.stop();
+            quietAudioResume = false;
             updateState(State.PAUSED, "眼镜麦克风连接超时，正在重试");
             scheduleDesiredListeningRetry(startGeneration);
         }, AUDIO_LINK_START_TIMEOUT_MS);
     }
 
+    private boolean hasAudioPermission() {
+        return ContextCompat.checkSelfPermission(QimuApplication.getAppContext(), Manifest.permission.RECORD_AUDIO)
+                == PackageManager.PERMISSION_GRANTED;
+    }
+
+    private void pauseAudioStart(String message) {
+        quietAudioResume = false;
+        audioStartAttempt++;
+        audioAutoRetryCount = 0;
+        if (rtc != null) rtc.setInputEnabled(false);
+        glassesAudioSource.pause();
+        if (setPausedRecoveryIntent(message)) return;
+        updateState(State.PAUSED, message);
+    }
+
     /** App “暂停收音”。仅停止眼镜音频；AI 导览员仍保持在线。 */
     public void pauseGuidance() {
         mainHandler.post(() -> {
-            desiredListening = false;
             audioAutoRetryCount = 0;
             pauseGuidanceOnMain("已暂停收音 · 点击继续对话即可恢复");
         });
@@ -569,11 +623,12 @@ public final class RealtimeGuideManager {
      */
     public void suspendForMediaTransfer(@NonNull Runnable onAudioReleased) {
         mainHandler.post(() -> {
-            desiredListening = false;
             audioAutoRetryCount = 0;
             boolean audioTaskMayBeActive = state == State.LISTENING
-                    || state == State.AUDIO_LINK_STARTING || state == State.PAUSED;
+                    || state == State.AUDIO_LINK_STARTING || state == State.PAUSED || recovery.isRecovering();
             mediaTransferAudioHold = true;
+            quietAudioResume = false;
+            setPausedRecoveryIntent("已暂停收音 · 正在导出眼镜照片");
             audioStartAttempt++;
             RtcVoiceChatManager currentRtc = rtc;
             if (currentRtc != null) currentRtc.setInputEnabled(false);
@@ -582,7 +637,7 @@ public final class RealtimeGuideManager {
             // Wi-Fi FILE 传输前必须 stopTranslation 完整释放它。
             glassesAudioSource.stop();
             if (audioTaskMayBeActive) {
-                updateState(State.PAUSED, "已暂停收音 · 正在导出眼镜照片");
+                if (!recovery.isRecovering()) updateState(State.PAUSED, "已暂停收音 · 正在导出眼镜照片");
                 mainHandler.postDelayed(onAudioReleased, MEDIA_AUDIO_RELEASE_GRACE_MS);
             } else {
                 onAudioReleased.run();
@@ -594,6 +649,10 @@ public final class RealtimeGuideManager {
     public void completeMediaTransferHold() {
         mainHandler.post(() -> {
             mediaTransferAudioHold = false;
+            if (recovery.isRecovering() && recovery.intent() == RtcRecoveryController.Intent.PAUSED) {
+                recoveryDisplayMessage = "已暂停收音 · 点击继续对话";
+                publishDisplayState();
+            }
             if (state == State.PAUSED) {
                 updateState(State.PAUSED, "已暂停收音 · 点击继续对话");
             }
@@ -648,62 +707,89 @@ public final class RealtimeGuideManager {
     }
 
     private void pauseGuidanceOnMain(String message) {
-        if (state != State.LISTENING && state != State.AUDIO_LINK_STARTING) return;
+        if (state != State.LISTENING && state != State.AUDIO_LINK_STARTING
+                && state != State.PAUSED && !recovery.isRecovering()) return;
         audioStartAttempt++;
         RtcVoiceChatManager currentRtc = rtc;
         if (currentRtc != null) currentRtc.setInputEnabled(false);
         glassesAudioSource.pause();
+        quietAudioResume = false;
+        if (setPausedRecoveryIntent(message)) return;
         updateState(State.PAUSED, message);
     }
 
     private void pauseForGlassesDisconnect(String message) {
-        if (state != State.LISTENING && state != State.AUDIO_LINK_STARTING) return;
+        if (state != State.LISTENING && state != State.AUDIO_LINK_STARTING
+                && !isListeningDesired()) return;
         audioStartAttempt++;
         RtcVoiceChatManager currentRtc = rtc;
         if (currentRtc != null) currentRtc.setInputEnabled(false);
         glassesAudioSource.stop();
+        quietAudioResume = false;
+        // BLE 中断只停止实际收音；用户暂停/导出才撤销自动续接意图。
+        if (recovery.isRecovering()) {
+            recoveryDisplayState = State.PAUSED;
+            recoveryDisplayMessage = message;
+            publishDisplayState();
+            return;
+        }
         updateState(State.PAUSED, message);
+    }
+
+    private boolean setPausedRecoveryIntent(String message) {
+        recovery.setIntent(RtcRecoveryController.Intent.PAUSED);
+        if (!recovery.isRecovering()) return false;
+        recoveryDisplayState = State.PAUSED;
+        recoveryDisplayMessage = message;
+        publishDisplayState();
+        return true;
     }
 
     public void retryCurrentTour() {
         mainHandler.post(() -> {
             TourSessionManager.TourSession current = TourSessionManager.get().current();
             if (current == null || TourReturnCoordinator.get().isInProgress()) return;
-            stopForTourOnMain(current.sessionId, false);
-            if (state != State.IDLE || rtcSession != null || rtc != null) return;
-
-            int attempt = ++rtcRetryAttempt;
-            mainHandler.postDelayed(() -> {
-                TourSessionManager.TourSession active = TourSessionManager.get().current();
-                if (attempt != rtcRetryAttempt
-                        || TourReturnCoordinator.get().isInProgress()
-                        || active != current
-                        || state != State.IDLE || rtcSession != null || rtc != null) {
-                    return;
-                }
-                startForTourOnMain(active);
-            }, 300L);
+            if (recovery.isRecovering()) return;
+            if (requiresNewTour) {
+                updateState(State.ERROR, "导览连接已失效，请到导出页结束后重新开始");
+                return;
+            }
+            if (rtcSession == null) {
+                if (!hasConnectedInTour) startForTourOnMain(current);
+                else updateState(State.ERROR, "连接已失效，请重新开始导览");
+                return;
+            }
+            recovery.retryExisting(recovery.intent(), SystemClock.elapsedRealtime());
+            rejoinExistingRtc();
         });
     }
 
     /** 点击结束游览后应立即调用；先停眼镜音频，再退房并停止后端 Agent。 */
     public void stopForTour(@Nullable String expectedTourSessionId) {
-        mainHandler.post(() -> stopForTourOnMain(expectedTourSessionId, true));
+        Map<String, String> stopHeaders = AppContextHeaders.dialogue();
+        String endingId = expectedTourSessionId != null ? expectedTourSessionId : tourSessionId;
+        if (endingId != null && (tourSessionId == null || endingId.equals(tourSessionId))) {
+            endingTourSessionId = endingId;
+            ++generation;
+            apiClient.cancelRtcCalls();
+        }
+        mainHandler.post(() -> stopForTourOnMain(expectedTourSessionId, true, stopHeaders));
     }
 
     private void stopForTourOnMain(@Nullable String expectedTourSessionId,
-                                   boolean publishStopping) {
-        // 即使当前已经是 IDLE，也必须先让排队中的延迟重试失效。
-        rtcRetryAttempt++;
+                                   boolean publishStopping, Map<String, String> stopHeaders) {
         if (expectedTourSessionId != null && tourSessionId != null
                 && !expectedTourSessionId.equals(tourSessionId)) {
             return;
         }
-        if (state == State.IDLE && rtcSession == null && rtc == null) return;
+        if (state == State.IDLE && rtcSession == null && rtc == null && expectedTourSessionId == null) return;
 
         ++generation;
         audioStartAttempt++;
-        rtcReadyAttempt++;
+        recovery.stop();
+        quietAudioResume = false;
+        invalidateTokenRenewal();
+        apiClient.cancelRtcCalls();
         if (publishStopping) updateState(State.STOPPING, "正在结束本次导览…");
         cancelVisionOperationOnMain(publishStopping
                 ? "游览已结束，识图任务已取消"
@@ -719,7 +805,7 @@ public final class RealtimeGuideManager {
 
         GuideApiClient.RtcSessionInfo currentSession = rtcSession;
         // tourSessionId 稍后置空，先捕获用于后端 stop（/v1/rtc/session/stop 带 session_id）。
-        String stopSessionId = tourSessionId;
+        String stopSessionId = tourSessionId != null ? tourSessionId : expectedTourSessionId;
         rtcSession = null;
         tourSession = null;
         tourSessionId = null;
@@ -728,19 +814,15 @@ public final class RealtimeGuideManager {
         rtcRoomJoined = false;
         agentOnline = false;
         if (publishStopping) {
-            desiredListening = false;
             audioAutoRetryCount = 0;
             transcriptTourSessionId = null;
-            synchronized (transcriptLock) {
-                transcript.clear();
-                recentSubtitlesByContent.clear();
-            }
+            transcript.clear();
             handledCommandIds.clear();
-            // 真正结束游览才重置自动重连计数；publishStopping=false 是重连前的临时释放，
-            // 计数保留（继续用同一段借阅，算进已有次数）。
-            rtcAutoReconnectAttempt = 0;
+            hasConnectedInTour = false;
         }
-        if (currentSession != null) stopServerSessionAsync(currentSession, stopSessionId);
+        if (currentSession != null || stopSessionId != null) {
+            stopServerSessionAsync(currentSession, stopSessionId, publishStopping, stopHeaders);
+        }
         updateState(State.IDLE, "本次导览已结束");
     }
 
@@ -759,10 +841,6 @@ public final class RealtimeGuideManager {
         if (currentSession == null || (state != State.READY && state != State.PAUSED
                 && state != State.LISTENING)) {
             dispatchOperation(callback, false, "RTC 对话尚未就绪");
-            return;
-        }
-        if (!currentSession.photoEnabled) {
-            dispatchOperation(callback, false, "当前场馆未开启拍照识别");
             return;
         }
         if (!visionOperationInProgress
@@ -908,9 +986,15 @@ public final class RealtimeGuideManager {
         if (callback != null) mainHandler.post(() -> callback.onComplete(success, message));
     }
 
-    private void stopServerSessionAsync(GuideApiClient.RtcSessionInfo session,
-                                        @Nullable String sessionId) {
-        stopExecutor.execute(() -> retryStopServerSession(session, sessionId));
+    private void stopServerSessionAsync(@Nullable GuideApiClient.RtcSessionInfo session,
+                                        @Nullable String sessionId, boolean endSession) {
+        stopServerSessionAsync(session, sessionId, endSession, AppContextHeaders.dialogue());
+    }
+
+    private void stopServerSessionAsync(@Nullable GuideApiClient.RtcSessionInfo session,
+                                        @Nullable String sessionId, boolean endSession,
+                                        Map<String, String> headers) {
+        stopExecutor.execute(() -> retryStopServerSession(session, sessionId, endSession, headers));
     }
 
     /**
@@ -922,16 +1006,22 @@ public final class RealtimeGuideManager {
     public void stopRtcSessionForExit(@Nullable String expectedTourSessionId) {
         GuideApiClient.RtcSessionInfo toStop;
         final String stopSessionId;
+        final Map<String, String> stopHeaders = AppContextHeaders.dialogue();
         try {
             GuideApiClient.RtcSessionInfo current = rtcSession;
-            if (current == null) return;
             String activeTourId = tourSessionId;
             if (expectedTourSessionId != null && activeTourId != null
                     && !expectedTourSessionId.equals(activeTourId)) {
                 return;
             }
             toStop = current;
-            stopSessionId = activeTourId;
+            stopSessionId = activeTourId != null ? activeTourId : expectedTourSessionId;
+            if (stopSessionId == null && toStop == null) return;
+            endingTourSessionId = stopSessionId;
+            ++generation;
+            apiClient.cancelRtcCalls();
+            RtcVoiceChatManager activeRtc = rtc;
+            if (activeRtc != null) activeRtc.setInputEnabled(false);
         } catch (RuntimeException e) {
             Log.w(TAG, "读取退出前的 RTC 会话失败", e);
             return;
@@ -940,7 +1030,7 @@ public final class RealtimeGuideManager {
         final CountDownLatch done = new CountDownLatch(1);
         stopExecutor.execute(() -> {
             try {
-                retryStopServerSession(toStop, stopSessionId);
+                retryStopServerSession(toStop, stopSessionId, true, stopHeaders);
             } finally {
                 done.countDown();
             }
@@ -948,22 +1038,25 @@ public final class RealtimeGuideManager {
         try {
             if (!done.await(EXIT_STOP_GRACE_MS, TimeUnit.MILLISECONDS)) {
                 Log.w(TAG, "退出兜底超时，后端停止请求仍在进行: room="
-                        + toStop.roomId + " task=" + toStop.taskId);
+                        + (toStop == null ? "pending" : toStop.roomId));
             }
         } catch (InterruptedException interrupted) {
             Thread.currentThread().interrupt();
         }
     }
 
-    private void retryStopServerSession(GuideApiClient.RtcSessionInfo session,
-                                        @Nullable String sessionId) {
+    private void retryStopServerSession(@Nullable GuideApiClient.RtcSessionInfo session,
+                                        @Nullable String sessionId, boolean endSession,
+                                        Map<String, String> headers) {
+        String roomId = session == null ? null : session.roomId;
+        String taskId = session == null ? null : session.taskId;
         for (int attempt = 1; attempt <= 3; attempt++) {
-            if (apiClient.stopRtcSession(session.roomId, session.taskId, sessionId)) {
+            if (apiClient.stopRtcSession(roomId, taskId, sessionId, endSession, headers)) {
                 return;
             }
             if (AppAuthInterceptor.consumeAuthError()) {
                 // 鉴权失败（X-App-Token 配置错误）重试无意义，直接放弃等后台兜底。
-                Log.w(TAG, "停止 RTC 鉴权失败，中止自动重试: room=" + session.roomId);
+                Log.w(TAG, "停止 RTC 鉴权失败，中止自动重试: room=" + roomId);
                 return;
             }
             if (attempt < 3) {
@@ -976,110 +1069,237 @@ public final class RealtimeGuideManager {
             }
         }
         Log.e(TAG, "后端 VoiceChat 停止未确认，等待服务端 IdleTimeout 兜底: room="
-                + session.roomId + " task=" + session.taskId);
+                + roomId + " task=" + taskId);
     }
 
-    /** 不可恢复错误不属于“暂停”：立即释放坏房间与 Agent，避免空转计费。 */
-    /**
-     * 处理“可恢复”的 RTC 失败（AI 退房 / 重连超时）：优先自动重连（复用同一次借阅的
-     * 后端 session_id），超过 {@link #RTC_AUTO_RECONNECT_MAX} 次才进 ERROR 让用户手动重试。
-     * 上下文可断——重连起的是新 RTC task，AI 可不记得之前对话（P0 目标：保可用）。
-     */
-    private void handleRecoverableRtcFailure(RtcVoiceChatManager expectedRtc, String message) {
-        if (rtc != expectedRtc) return;
-        if (AppAuthInterceptor.consumeAuthError()) {
-            // X-App-Token 配置错误：自动重连只会反复失败，直接进 ERROR 提示联系运维。
-            terminateRtcOnError(expectedRtc, "配置错误，请联系运维");
-            return;
-        }
-        TourSessionManager.TourSession current = TourSessionManager.get().current();
-        boolean canAuto = current != null
-                && current.sessionId.equals(tourSessionId)
-                && !TourReturnCoordinator.get().isInProgress()
-                && rtcAutoReconnectAttempt < RTC_AUTO_RECONNECT_MAX;
-        if (!canAuto) {
-            terminateRtcOnError(expectedRtc, message);
-            return;
-        }
-        rtcAutoReconnectAttempt++;
-        Log.w(TAG, "RTC 断开，自动重连 " + rtcAutoReconnectAttempt + "/" + RTC_AUTO_RECONNECT_MAX
-                + "：" + message);
+    private boolean currentTourAllowsRecovery() {
+        TourSessionManager.TourSession active = TourSessionManager.get().current();
+        return active != null && active == tourSession && active.sessionId.equals(tourSessionId)
+                && !active.sessionId.equals(endingTourSessionId)
+                && !TourReturnCoordinator.get().isInProgress();
+    }
 
-        // 释放当前 RTC（停旧 SDK 引擎），但保持 RTC_CONNECTING；随后的 startForTourReconnect
-        // 用同一导览 session_id 调 /v1/rtc/session，后端据此停旧 task 起新 task。
+    private RtcRecoveryController.Intent currentAudioIntent() {
+        return recovery.intent();
+    }
+
+    private void beginRtcRecovery(RtcRecoveryController.Cause cause) {
+        if (!currentTourAllowsRecovery() || state == State.IDLE || state == State.STOPPING
+                || state == State.ERROR || rtcSession == null) return;
+        State priorState = getState();
+        String priorMessage = getStateMessage();
+        boolean started = recovery.interrupt(cause, currentAudioIntent(), SystemClock.elapsedRealtime());
+        if (started) {
+            recoveryDisplayState = priorState == State.AUDIO_LINK_STARTING ? State.LISTENING : priorState;
+            recoveryDisplayMessage = priorMessage;
+            quietAudioResume = false;
+            transcript.breakGroup();
+            audioStartAttempt++;
+            if (rtc != null) rtc.setInputEnabled(false);
+            glassesAudioSource.pause();
+            cancelVisionOperationOnMain("连接暂时中断，拍照识别已取消");
+            pendingVisionRequest = null;
+            scheduleRecoveryTimers();
+        }
+        updateState(State.RTC_CONNECTING, recovery.issueMessage());
+    }
+
+    private void scheduleRecoveryTimers() {
+        long ticket = recovery.ticket();
+        long now = SystemClock.elapsedRealtime();
+        mainHandler.postDelayed(() -> {
+            if (recovery.isCurrent(ticket) && currentTourAllowsRecovery()) publishDisplayState();
+        }, recovery.issueDelay(now));
+        if (recovery.phase() == RtcRecoveryController.Phase.REBUILDING) return;
+        mainHandler.postDelayed(() -> {
+            if (!currentTourAllowsRecovery()) return;
+            RtcRecoveryController.Action action = recovery.onDeadline(ticket, SystemClock.elapsedRealtime());
+            if (action == RtcRecoveryController.Action.REJOIN_EXISTING) rejoinExistingRtc();
+            else if (action == RtcRecoveryController.Action.REBUILD_TASK) rebuildRtcTask();
+            else if (action == RtcRecoveryController.Action.FAIL) {
+                failRecovery("AI 导览服务暂时不可用，请重试", false);
+            }
+        }, Math.max(0, recovery.deadline() - now));
+    }
+
+    /** Local SDK teardown only. The old Agent and its room/task credentials stay alive. */
+    private void rejoinExistingRtc() {
+        if (!currentTourAllowsRecovery() || rtcSession == null || !recovery.isRecovering()) return;
+        RtcVoiceChatManager old = rtc;
+        rtc = null;
         ++generation;
         audioStartAttempt++;
-        rtcReadyAttempt++;
-        cancelVisionOperationOnMain("RTC 正在重连，识图任务已取消");
-        pendingVisionRequest = null;
-        expectedRtc.setInputEnabled(false);
-        glassesAudioSource.stop();
-        rtc = null;
-        expectedRtc.stop();
-        rtcSession = null;
+        invalidateTokenRenewal();
+        glassesAudioSource.pause();
+        if (old != null) old.stop();
         rtcRoomJoined = false;
-        agentOnline = false;
-        updateState(State.RTC_CONNECTING, "连接中断，正在自动重连…");
-
-        int attempt = ++rtcRetryAttempt;
-        mainHandler.postDelayed(() -> {
-            TourSessionManager.TourSession active = TourSessionManager.get().current();
-            if (attempt != rtcRetryAttempt
-                    || TourReturnCoordinator.get().isInProgress()
-                    || active == null
-                    || !active.sessionId.equals(tourSessionId)
-                    || rtc != null || rtcSession != null) {
-                return;
-            }
-            // 直接进入建房（此路径已释放旧 rtc，state=RTC_CONNECTING）。
-            startForTourReconnect(active);
-        }, 500L);
+        agentOnline = false; // require presence from this join, never a cached Boolean
+        RtcVoiceChatManager manager = new RtcVoiceChatManager(QimuApplication.getAppContext());
+        rtc = manager;
+        updateState(State.RTC_CONNECTING, recovery.issueMessage());
+        manager.start(rtcSession, createRtcListener(generation, manager));
+        scheduleRecoveryTimers();
+        scheduleTokenRenewal();
     }
 
-    /** 自动重连专用：绕过 startForTourOnMain 的 IDLE/ERROR 前置校验，复用当前 tour 直接重建房间。 */
-    private void startForTourReconnect(TourSessionManager.TourSession session) {
-        if (rtc != null || rtcSession != null) return;
+    private void rebuildRtcTask() {
+        GuideApiClient.RtcSessionInfo previous = rtcSession;
+        if (!currentTourAllowsRecovery() || previous == null) return;
+        long ticket = recovery.ticket();
         int requestGeneration = ++generation;
-        tourSession = session;
-        tourSessionId = session.sessionId;
+        invalidateTokenRenewal();
+        audioStartAttempt++;
+        RtcVoiceChatManager old = rtc;
+        rtc = null;
+        if (old != null) old.stop();
+        glassesAudioSource.pause();
         rtcRoomJoined = false;
         agentOnline = false;
-        audioStartAttempt++;
-        rtcReadyAttempt++;
-        registerBleListener();
-        updateState(State.RTC_CONNECTING, "正在自动重连齐目 AI…");
-        final String reuseSessionId = session.sessionId;
-        ioExecutor.execute(() -> {
-            GuideApiClient.RtcSessionInfo created =
-                    apiClient.createRtcSession(reuseSessionId);
-            mainHandler.post(() -> onRtcSessionCreated(requestGeneration, session, created));
+        requestRtcRebuild(previous, ticket, requestGeneration, 0);
+    }
+
+    private void requestRtcRebuild(GuideApiClient.RtcSessionInfo previous, long ticket,
+                                   int requestGeneration, int attempt) {
+        if (!recovery.isCurrent(ticket) || requestGeneration != generation || !currentTourAllowsRecovery()) return;
+        long callEpoch = apiClient.rtcCallEpoch();
+        recoveryExecutor.execute(() -> {
+            if (requestGeneration != generation) return;
+            GuideApiClient.RtcResult result = apiClient.createRtcSession(previous.sessionId, previous, callEpoch);
+            mainHandler.post(() -> {
+                if (!recovery.isCurrent(ticket) || requestGeneration != generation || !currentTourAllowsRecovery()) {
+                    // An idempotent response may name the task we already attached. Never stop it.
+                    if (GuideApiClient.shouldCleanUpRtcResponse(result.session, rtcSession)) {
+                        stopServerSessionAsync(result.session, previous.sessionId, false);
+                    }
+                    return;
+                }
+                if (result.session == null) {
+                    if (result.retryable() && attempt < 2) {
+                        mainHandler.postDelayed(() -> requestRtcRebuild(previous, ticket,
+                                requestGeneration, attempt + 1), 1_000L << attempt);
+                    } else {
+                        requiresNewTour = result.identityRejected();
+                        failRecovery(requiresNewTour ? "连接凭证已失效，请重新开始导览"
+                                : "AI 导览服务暂时不可用，请重试", false);
+                    }
+                    return;
+                }
+                if (!recovery.rebuilt(ticket, SystemClock.elapsedRealtime())) return;
+                rtcSession = result.session;
+                tokenRenewal.newCredentials();
+                TourSessionManager.get().rememberRtcIds(previous.sessionId,
+                        result.session.roomId, result.session.taskId);
+                rejoinExistingRtc();
+            });
         });
+    }
+
+    private void invalidateTokenRenewal() {
+        tokenRenewal.invalidate();
+    }
+
+    private void scheduleTokenRenewal() {
+        GuideApiClient.RtcSessionInfo current = rtcSession;
+        if (current == null || current.mocked || current.expireAt <= 0) return;
+        int expectedGeneration = generation;
+        long expectedAttempt = tokenRenewal.ticket();
+        long delay = Math.max(0, current.expireAt * 1000L - System.currentTimeMillis() - 60_000L);
+        mainHandler.postDelayed(() -> {
+            if (expectedGeneration == generation && tokenRenewal.isCurrent(expectedAttempt)
+                    && current.sameTask(rtcSession) && currentTourAllowsRecovery()) renewToken();
+        }, delay);
+    }
+
+    private void renewToken() {
+        GuideApiClient.RtcSessionInfo previous = rtcSession;
+        if (previous == null || previous.mocked || !currentTourAllowsRecovery()
+                || recovery.phase() == RtcRecoveryController.Phase.STOPPED
+                || recovery.phase() == RtcRecoveryController.Phase.FAILED
+                || recovery.phase() == RtcRecoveryController.Phase.REBUILDING) return;
+        long ticket = tokenRenewal.begin();
+        if (ticket >= 0) requestTokenRenewal(previous, generation, ticket, 0);
+    }
+
+    private void requestTokenRenewal(GuideApiClient.RtcSessionInfo previous, int expectedGeneration,
+                                     long expectedAttempt, int attempt) {
+        if (expectedGeneration != generation || !tokenRenewal.isCurrent(expectedAttempt)
+                || !currentTourAllowsRecovery() || !previous.sameTask(rtcSession)) return;
+        long callEpoch = apiClient.rtcCallEpoch();
+        recoveryExecutor.execute(() -> {
+            if (expectedGeneration != generation || !tokenRenewal.isCurrent(expectedAttempt)) return;
+            GuideApiClient.RtcResult result = apiClient.renewRtcToken(previous, callEpoch);
+            mainHandler.post(() -> {
+                if (expectedGeneration != generation || !tokenRenewal.isCurrent(expectedAttempt)
+                        || !currentTourAllowsRecovery() || !previous.sameTask(rtcSession)) return;
+                if (result.session != null && result.session.expireAt > System.currentTimeMillis() / 1000L) {
+                    tokenRenewal.newCredentials();
+                    rtcSession = result.session;
+                    RtcVoiceChatManager current = rtc;
+                    if (current != null && current.updateToken(result.session.token) != 0) {
+                        beginRtcRecovery(RtcRecoveryController.Cause.UNKNOWN);
+                    }
+                    scheduleTokenRenewal();
+                    return;
+                }
+                if (result.retryable() && RtcTokenRenewalController.canRetryHttp(
+                        attempt, System.currentTimeMillis() / 1000L, previous.expireAt)) {
+                    mainHandler.postDelayed(() -> requestTokenRenewal(previous, expectedGeneration,
+                            expectedAttempt, attempt + 1), 1_000L << attempt);
+                    return;
+                }
+                if (result.identityRejected()) {
+                    requiresNewTour = true;
+                    failRecovery("连接凭证已失效，请重新开始导览", false);
+                    return;
+                }
+                // Pre-expiry failure must not tear down a still-valid conversation.
+                tokenRenewal.waitForExpiry(expectedAttempt);
+                long delay = Math.max(0, previous.expireAt * 1000L - System.currentTimeMillis());
+                mainHandler.postDelayed(() -> {
+                    if (expectedGeneration != generation || !tokenRenewal.isCurrent(expectedAttempt)
+                            || !currentTourAllowsRecovery() || !previous.sameTask(rtcSession)) return;
+                    if (!result.retryable()) {
+                        requiresNewTour = true;
+                        failRecovery("连接续期暂不可用，请重新开始导览", false);
+                    } else if (tokenRenewal.retryAtExpiry(expectedAttempt,
+                            System.currentTimeMillis() / 1000L, previous.expireAt)) {
+                        beginRtcRecovery(networkConnected ? RtcRecoveryController.Cause.UNKNOWN
+                                : RtcRecoveryController.Cause.NETWORK);
+                        renewToken(); // one bounded retry window after expiry (backend allows 120 seconds)
+                    } else {
+                        failRecovery("连接续期未完成，请重试或重新开始导览", false);
+                    }
+                }, delay);
+            });
+        });
+    }
+
+    private void failRecovery(String message, boolean stopAgent) {
+        recovery.fail();
+        recovery.setIntent(RtcRecoveryController.Intent.PAUSED);
+        audioAutoRetryCount = 0;
+        quietAudioResume = false;
+        ++generation;
+        audioStartAttempt++;
+        invalidateTokenRenewal();
+        apiClient.cancelRtcCalls();
+        RtcVoiceChatManager old = rtc;
+        rtc = null;
+        if (old != null) old.stop();
+        glassesAudioSource.stop();
+        rtcRoomJoined = false;
+        agentOnline = false;
+        cancelVisionOperationOnMain("连接不可用，拍照识别已取消");
+        pendingVisionRequest = null;
+        if (stopAgent && rtcSession != null) stopServerSessionAsync(rtcSession, tourSessionId, false);
+        // Retain identity for explicit retry; never turn a recovery into an unfenced initial start.
+        updateState(State.ERROR, message);
     }
 
     private void terminateRtcOnError(RtcVoiceChatManager expectedRtc, String message) {
         if (rtc != expectedRtc) return;
-        ++generation;
-        audioStartAttempt++;
-        rtcReadyAttempt++;
-        desiredListening = false;
-        audioAutoRetryCount = 0;
-        updateState(State.ERROR, message);
-        cancelVisionOperationOnMain("RTC 已不可用，识图任务已取消");
-        pendingVisionRequest = null;
-        unregisterBleListener();
-
-        expectedRtc.setInputEnabled(false);
-        glassesAudioSource.stop();
-        rtc = null;
-        expectedRtc.stop();
-
-        GuideApiClient.RtcSessionInfo failedSession = rtcSession;
-        rtcSession = null;
-        rtcRoomJoined = false;
-        agentOnline = false;
-        if (failedSession != null) {
-            stopServerSessionAsync(failedSession, tourSessionId);
-        }
+        requiresNewTour = true;
+        failRecovery(message, true);
     }
 
     private void registerBleListener() {
@@ -1094,16 +1314,16 @@ public final class RealtimeGuideManager {
         bleListenerRegistered = false;
     }
 
+    private void publishDisplayState() {
+        for (Listener listener : listeners) listener.onStateChanged(getState(), getStateMessage());
+    }
+
     private void updateState(State nextState, String message) {
         state = nextState;
         stateMessage = message;
-        for (Listener listener : listeners) {
-            listener.onStateChanged(nextState, message);
-        }
-        if (nextState == State.READY || nextState == State.PAUSED
-                || nextState == State.LISTENING) {
-            deliverPendingVisionRequest();
-        }
+        publishDisplayState();
+        if (!recovery.isRecovering() && (nextState == State.READY || nextState == State.PAUSED
+                || nextState == State.LISTENING)) deliverPendingVisionRequest();
     }
 
     private boolean isExpectedAgent(@Nullable String uid) {
@@ -1118,99 +1338,59 @@ public final class RealtimeGuideManager {
 
     private void publishReadyIfComplete() {
         GuideApiClient.RtcSessionInfo current = rtcSession;
-        if (!rtcRoomJoined || current == null) return;
-        if (!current.mocked && !agentOnline) {
-            if (state == State.RTC_CONNECTING) {
-                updateState(State.RTC_CONNECTING, "正在连接齐目 AI…");
+        if (!rtcRoomJoined || current == null || (!current.mocked && !agentOnline)
+                || state != State.RTC_CONNECTING) return;
+        boolean restoring = hasConnectedInTour && recovery.isRecovering();
+        RtcRecoveryController.Intent intent = recovery.intent();
+        recovery.connected();
+        hasConnectedInTour = true;
+        if (restoring && intent == RtcRecoveryController.Intent.PAUSED) {
+            updateState(State.PAUSED, recoveryDisplayMessage);
+        } else if (restoring && intent == RtcRecoveryController.Intent.LISTENING) {
+            boolean permission = hasAudioPermission();
+            boolean connected = BleService.getInstance().isConnected();
+            boolean busy = mediaTransferAudioHold || BleService.getInstance().isMediaDownloadActive();
+            if (recovery.shouldResumeAudio(permission, connected, busy)) {
+                quietAudioResume = true;
+                recoveryDisplayState = State.LISTENING;
+                recoveryDisplayMessage = "正在聆听，请直接说话";
+                state = State.READY;
+                startGuidanceOnMain();
+            } else {
+                if (!permission || busy) recovery.setIntent(RtcRecoveryController.Intent.PAUSED);
+                updateState(State.PAUSED, !permission ? "收音权限不可用，请点击继续对话"
+                        : !connected ? "眼镜未连接，连接后将自动恢复收音"
+                        : "已暂停收音 · 照片导出完成后可继续对话");
             }
-            return;
+        } else {
+            updateState(State.READY, current.mocked ? "当前为 RTC 模拟模式，齐目 AI 不会响应"
+                    : "齐目 AI 已准备好，点击开始对话");
+            resumeDesiredListeningIfReady();
         }
-        // 重复/迟到的 room 或 bot 回调只更新 flags，不能把 LISTENING、拍照暂停
-        // 或 ERROR 覆盖回 READY，更不能让 PCM gate 与 UI 状态失配。
-        if (state != State.RTC_CONNECTING) return;
-        rtcReadyAttempt++;
-        rtcAutoReconnectAttempt = 0;  // 成功连上，重置自动重连计数（下次断开可重新自动重连）
-        updateState(State.READY, current.mocked
-                ? "当前为 RTC 模拟模式，齐目 AI 不会响应"
-                : "齐目 AI 已准备好，点击开始对话");
-        resumeDesiredListeningIfReady();
     }
 
     private void resumeDesiredListeningIfReady() {
-        if (!desiredListening || (state != State.READY && state != State.PAUSED)) return;
+        if (!isListeningDesired() || !currentTourAllowsRecovery()
+                || (state != State.READY && state != State.PAUSED)) return;
         if (mediaTransferAudioHold || BleService.getInstance().isMediaDownloadActive()) return;
         startGuidanceOnMain();
     }
 
     private void scheduleDesiredListeningRetry(int expectedGeneration) {
-        if (!desiredListening || expectedGeneration != generation
-                || TourReturnCoordinator.get().isInProgress()
-                || audioAutoRetryCount >= 3) {
-            if (desiredListening && audioAutoRetryCount >= 3) {
-                desiredListening = false;
-                updateState(State.PAUSED, "眼镜音频连接失败，请解锁手机后重试");
-            }
+        if (!isListeningDesired() || expectedGeneration != generation
+                || !currentTourAllowsRecovery()) return;
+        if (audioAutoRetryCount >= 3) {
+            pauseAudioStart("眼镜音频连接失败，请解锁手机后重试");
             return;
         }
         int attempt = ++audioAutoRetryCount;
+        int expectedAudioAttempt = audioStartAttempt;
         mainHandler.postDelayed(() -> {
-            if (!desiredListening || expectedGeneration != generation
-                    || state != State.PAUSED
-                    || TourReturnCoordinator.get().isInProgress()) return;
+            if (!isListeningDesired() || expectedGeneration != generation
+                    || expectedAudioAttempt != audioStartAttempt || state != State.PAUSED
+                    || !currentTourAllowsRecovery()) return;
             startGuidanceOnMain();
         }, 1_000L << (attempt - 1));
-    }
-
-    private void scheduleRtcReadyTimeout(int expectedGeneration,
-                                         RtcVoiceChatManager expectedRtc,
-                                         String timeoutMessage) {
-        int attempt = ++rtcReadyAttempt;
-        mainHandler.postDelayed(() -> {
-            if (attempt != rtcReadyAttempt || expectedGeneration != generation
-                    || rtc != expectedRtc || state != State.RTC_CONNECTING) {
-                return;
-            }
-            // 连接/重连超时属可恢复失败：先自动重连，超上限才进 ERROR。
-            handleRecoverableRtcFailure(expectedRtc, timeoutMessage);
-        }, RTC_READY_TIMEOUT_MS);
-    }
-
-    @Nullable
-    private TranscriptEntry recordTranscript(boolean fromSelf, String text,
-                                             boolean definite, long sequence) {
-        String key = (fromSelf ? "self:" : "agent:") + sequence;
-        String contentKey = (fromSelf ? "self:\u0000" : "agent:\u0000") + text;
-        long now = SystemClock.elapsedRealtime();
-        synchronized (transcriptLock) {
-            // AIGC 字幕可能同时从 SDK subtitle callback 与 subv 二进制消息到达，
-            // 两条链路的 sequence 不同。短时间内同说话人、同文本应归并到第一条，
-            // 但窗口外仍允许用户真实地重复说同一句话。
-            RecentSubtitle recent = recentSubtitlesByContent.get(contentKey);
-            if (recent != null
-                    && now - recent.seenElapsedMs <= SUBTITLE_CROSS_CHANNEL_DEDUP_MS) {
-                TranscriptEntry canonical = transcript.get(recent.transcriptKey);
-                recent.seenElapsedMs = now;
-                if (canonical != null) {
-                    if (canonical.definite) return null;
-                    if (!definite) return null;
-                    TranscriptEntry finalized = new TranscriptEntry(
-                            canonical.fromSelf, canonical.text, true, canonical.sequence);
-                    transcript.put(recent.transcriptKey, finalized);
-                    return finalized;
-                }
-            }
-
-            TranscriptEntry previous = transcript.get(key);
-            if (previous != null) {
-                // final 后忽略 SDK 的重复包或迟到 interim，避免重复气泡与文本回退。
-                if (previous.definite) return null;
-                if (previous.text.equals(text) && previous.definite == definite) return null;
-            }
-            TranscriptEntry recorded = new TranscriptEntry(fromSelf, text, definite, sequence);
-            transcript.put(key, recorded);
-            recentSubtitlesByContent.put(contentKey, new RecentSubtitle(key, now));
-            return recorded;
-        }
     }
 
     /**
@@ -1308,11 +1488,9 @@ public final class RealtimeGuideManager {
     private RtcVoiceChatManager.Listener createRtcListener(
             int rtcGeneration, RtcVoiceChatManager expectedRtc) {
         return new RtcVoiceChatManager.Listener() {
-            private boolean hasJoinedRoom;
-
             private void postIfCurrent(Runnable action) {
                 mainHandler.post(() -> {
-                    if (rtcGeneration != generation || rtc != expectedRtc) return;
+                    if (rtcGeneration != generation || rtc != expectedRtc || !currentTourAllowsRecovery()) return;
                     action.run();
                 });
             }
@@ -1321,45 +1499,60 @@ public final class RealtimeGuideManager {
             public void onRoomJoined(boolean success, String reason) {
                 postIfCurrent(() -> {
                     if (success) {
-                        hasJoinedRoom = true;
                         rtcRoomJoined = true;
+                        networkConnected = true;
+                        if (!agentOnline) recovery.setCause(RtcRecoveryController.Cause.AGENT);
                         publishReadyIfComplete();
-                        return;
+                        if (recovery.isRecovering()) publishDisplayState();
+                    } else {
+                        rtcRoomJoined = false;
+                        agentOnline = false;
+                        beginRtcRecovery(networkConnected ? RtcRecoveryController.Cause.UNKNOWN
+                                : RtcRecoveryController.Cause.NETWORK);
                     }
+                });
+            }
 
-                    if (state != State.RTC_CONNECTING) return;
-                    terminateRtcOnError(expectedRtc,
-                            "RTC 进房失败：" + (reason == null ? "未知错误" : reason));
+            @Override
+            public void onNetworkStateChanged(boolean connected) {
+                postIfCurrent(() -> {
+                    networkConnected = connected;
+                    if (!connected) {
+                        rtcRoomJoined = false;
+                        agentOnline = false;
+                        beginRtcRecovery(RtcRecoveryController.Cause.NETWORK);
+                    } else if (recovery.isRecovering()) {
+                        recovery.setCause(rtcRoomJoined && !agentOnline
+                                ? RtcRecoveryController.Cause.AGENT : RtcRecoveryController.Cause.UNKNOWN);
+                        publishDisplayState();
+                    }
                 });
             }
 
             @Override
             public void onRoomInterrupted(boolean recoverable, String reason) {
                 postIfCurrent(() -> {
-                    if (state == State.IDLE || state == State.STOPPING || state == State.ERROR) {
+                    if (!recoverable) {
+                        terminateRtcOnError(expectedRtc, "连接不可用，请重新开始导览");
                         return;
                     }
-                    audioStartAttempt++;
-                    expectedRtc.setInputEnabled(false);
-                    glassesAudioSource.pause();
                     rtcRoomJoined = false;
-                    if (recoverable && hasJoinedRoom) {
-                        updateState(State.RTC_CONNECTING,
-                                "连接暂时中断，正在重试…");
-                        cancelVisionOperationOnMain("连接正在恢复，拍照识别已取消");
-                        scheduleRtcReadyTimeout(rtcGeneration, expectedRtc,
-                                "连接超时，请重试");
-                        return;
-                    }
-
-                    terminateRtcOnError(expectedRtc, "连接失败，请重试");
+                    agentOnline = false;
+                    beginRtcRecovery("RECONNECT".equals(reason) || !networkConnected
+                            ? RtcRecoveryController.Cause.NETWORK : RtcRecoveryController.Cause.UNKNOWN);
                 });
             }
 
             @Override
-            public void onTokenWillExpire() {
+            public void onTokenWillExpire() { postIfCurrent(RealtimeGuideManager.this::renewToken); }
+
+            @Override
+            public void onTokenRejected() {
                 postIfCurrent(() -> {
-                    terminateRtcOnError(expectedRtc, "连接已过期，请重试");
+                    rtcRoomJoined = false;
+                    agentOnline = false;
+                    beginRtcRecovery(RtcRecoveryController.Cause.UNKNOWN);
+                    renewToken();
                 });
             }
 
@@ -1377,34 +1570,27 @@ public final class RealtimeGuideManager {
                 postIfCurrent(() -> {
                     if (!isExpectedAgent(uid)) return;
                     agentOnline = false;
-                    audioStartAttempt++;
-                    expectedRtc.setInputEnabled(false);
-                    glassesAudioSource.pause();
-                    if (state != State.IDLE && state != State.STOPPING && state != State.ERROR) {
-                        updateState(State.RTC_CONNECTING,
-                                "齐目 AI 暂时离线，正在重连…");
-                        cancelVisionOperationOnMain("齐目 AI 暂时离线，拍照识别已取消");
-                        scheduleRtcReadyTimeout(rtcGeneration, expectedRtc,
-                                "齐目 AI 重连超时，请重试");
-                    }
+                    beginRtcRecovery(networkConnected ? RtcRecoveryController.Cause.AGENT
+                            : RtcRecoveryController.Cause.NETWORK);
                 });
             }
 
             @Override
             public void onSubtitle(boolean fromSelf, String text,
-                                   boolean definite, int sequence) {
+                                   boolean definite, int sequence, int roundId,
+                                   SubtitleTranscript.Source source) {
                 if (text == null || text.trim().isEmpty()) return;
                 String normalized = TranscriptDisplayPolicy.visibleText(fromSelf, text);
                 if (normalized.isEmpty()) return;
-                long stableSequence = ((long) rtcGeneration << 32)
-                        | (sequence & 0xffffffffL);
+                long receivedElapsedMs = SystemClock.elapsedRealtime();
+                long timestamp = System.currentTimeMillis();
                 postIfCurrent(() -> {
-                    TranscriptEntry recorded = recordTranscript(
-                            fromSelf, normalized, definite, stableSequence);
+                    SubtitleTranscript.Entry recorded = transcript.record(
+                            rtcGeneration, fromSelf, normalized, definite, sequence, roundId,
+                            source, receivedElapsedMs, timestamp);
                     if (recorded == null) return;
                     for (Listener listener : listeners) {
-                        listener.onSubtitle(recorded.fromSelf, recorded.text,
-                                recorded.definite, recorded.sequence);
+                        listener.onSubtitle(recorded);
                     }
                 });
             }
@@ -1424,8 +1610,19 @@ public final class RealtimeGuideManager {
             @Override
             public void onError(int code, String description) {
                 postIfCurrent(() -> {
-                    terminateRtcOnError(expectedRtc,
-                            "AI 导览连接异常（" + code + "）：" + description);
+                    if (RtcFailurePolicy.isTokenError(code)) {
+                        rtcRoomJoined = false;
+                        agentOnline = false;
+                        beginRtcRecovery(RtcRecoveryController.Cause.UNKNOWN);
+                        renewToken();
+                    } else if (RtcFailurePolicy.isPermanent(code) || (code <= -100 && code >= -102)) {
+                        terminateRtcOnError(expectedRtc, "AI 导览配置不可用，请联系工作人员");
+                    } else {
+                        rtcRoomJoined = false;
+                        agentOnline = false;
+                        beginRtcRecovery(networkConnected ? RtcRecoveryController.Cause.UNKNOWN
+                                : RtcRecoveryController.Cause.NETWORK);
+                    }
                 });
             }
         };
