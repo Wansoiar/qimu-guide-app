@@ -1,6 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">齐目导览</string>
+    <string name="guide_notification_channel_name">后台导览</string>
+    <string name="guide_notification_channel_description">锁屏后继续连接眼镜和 AI 导览</string>
+    <string name="guide_notification_title">齐目导览正在运行</string>
     <string name="brand_status_online">设备在线</string>
     <string name="brand_status_offline">等待连接</string>
     <string name="brand_title_venue">齐目·%1$s</string>
@@ -100,8 +103,8 @@
     <string name="device_tips_title">连接提示</string>
     <string name="device_tips_body">首次连接请允许蓝牙与附近设备权限。连接成功后，对话和导出页面会自动开放。</string>
     <string name="disconnect_device">断开设备</string>
-    <string name="start_tour">开始导览</string>
-    <string name="must_start_tour_first">请先在设备页开始导览</string>
+    <string name="start_tour">进入导览</string>
+    <string name="must_start_tour_first">请先在设备页进入导览</string>
     <string name="privacy_consent_checkbox">阅读并同意《用户隐私政策》</string>
     <string name="privacy_policy_link">《用户隐私政策》</string>
     <string name="privacy_policy_title">齐目导览用户隐私政策</string>
@@ -225,7 +228,7 @@
 
     <string name="share_back">返回分享设置</string>
     <string name="share_title">生成导览分享码</string>
-    <string name="share_access_code_explanation">请设置 4 位数字密码，并告知游客。游客扫码后输入该密码即可查看照片。</string>
+    <string name="share_access_code_explanation">请由游客设置并记住 4 位数字密码。扫码后输入该密码即可查看照片。</string>
     <string name="share_access_code_hint">4 位数字密码</string>
     <string name="share_selection_summary">已选 %1$d 张照片 · 回忆视频 %2$s</string>
     <string name="share_start">上传并生成二维码</string>

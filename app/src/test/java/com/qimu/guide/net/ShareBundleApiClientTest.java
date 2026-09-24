@@ -34,17 +34,9 @@ public final class ShareBundleApiClientTest {
     }
 
     @Test
-    public void sharePhotoIncludesTrimmedTourSessionId() throws Exception {
+    public void sharePhotoDoesNotCarryMutableSessionId() throws Exception {
         MultipartBody body = ShareBundleApiClient.buildPhotoUploadBody(
-                "photo.jpg", "image/jpeg", new byte[]{1}, 0, "sha", " session-123 ");
-
-        assertEquals("session-123", formValue(body, "session_id"));
-    }
-
-    @Test
-    public void sharePhotoOmitsTourSessionIdWhenMissing() throws Exception {
-        MultipartBody body = ShareBundleApiClient.buildPhotoUploadBody(
-                "photo.jpg", "image/jpeg", new byte[]{1}, 0, "sha", null);
+                "photo.jpg", "image/jpeg", new byte[]{1}, 0, "sha");
 
         assertNull(formValue(body, "session_id"));
     }
