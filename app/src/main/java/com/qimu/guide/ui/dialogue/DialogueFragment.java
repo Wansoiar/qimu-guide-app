@@ -36,12 +36,11 @@ import com.qimu.guide.model.DialogueMessage;
 import com.qimu.guide.net.TourSessionManager;
 import com.qimu.guide.service.BleService;
 import com.qimu.guide.service.RealtimeGuideManager;
+import com.qimu.guide.service.SubtitleTranscript;
 
 import java.io.File;
 import java.util.ArrayList;
-import java.util.HashSet;
 import java.util.List;
-import java.util.Set;
 
 /**
  * 智能导览对话页。
@@ -88,12 +87,7 @@ public class DialogueFragment extends Fragment {
                 }
             });
 
-    // 对齐 feat/volc-main-dialogue：中间态不上屏；同一说话人的连续 final 分句
-    // 合并进同一个气泡，只有说话人切换时才新建气泡。
-    private final Set<String> renderedFinalSubtitleKeys = new HashSet<>();
-    private int volcBubbleIndex = -1;
-    private boolean volcBubbleFromSelf;
-    private final StringBuilder volcBubbleText = new StringBuilder();
+    private final SubtitleTimeline subtitleTimeline = new SubtitleTimeline();
 
     private int visionGeneration;
     private boolean visionBusy;
@@ -109,7 +103,7 @@ public class DialogueFragment extends Fragment {
                 @Override
                 public void onStateChanged(RealtimeGuideManager.State state, String message) {
                     postUi(() -> {
-                        if (!isVisionReadyState(state)) {
+                        if (!isVisionReadyState(state) || !guideManager.hasVisionSession()) {
                             // Manager 负责取消自己的 reservation/HTTP；这里只立即释放
                             // Fragment 的延迟拍照、BLE listener 和硬件阶段。
                             cancelVisionCapture(false);
@@ -119,9 +113,11 @@ public class DialogueFragment extends Fragment {
                 }
 
                 @Override
-                public void onSubtitle(boolean fromSelf, String text,
-                                       boolean definite, long sequence) {
-                    postUi(() -> upsertSubtitle(fromSelf, text, definite, sequence));
+                public void onSubtitle(SubtitleTranscript.Entry entry) {
+                    postUi(() -> {
+                        subtitleTimeline.upsert(entry);
+                        renderTimeline();
+                    });
                 }
 
                 @Override
@@ -172,11 +168,10 @@ public class DialogueFragment extends Fragment {
 
         // 先注册再取快照，避免视图重建时字幕恰好到达而漏掉一条。
         guideManager.addListener(realtimeListener);
-        List<RealtimeGuideManager.TranscriptEntry> transcript =
-                guideManager.getTranscriptSnapshot();
-        for (RealtimeGuideManager.TranscriptEntry entry : transcript) {
-            upsertSubtitle(entry.fromSelf, entry.text, entry.definite, entry.sequence);
+        for (SubtitleTranscript.Entry entry : guideManager.getTranscriptSnapshot()) {
+            subtitleTimeline.upsert(entry);
         }
+        renderTimeline();
 
         renderState(guideManager.getState(), guideManager.getStateMessage());
 
@@ -190,6 +185,11 @@ public class DialogueFragment extends Fragment {
     }
 
     private void handleDialogueButton() {
+        if (guideManager.isRecovering()) {
+            if (guideManager.wantsAudioAfterRecovery()) guideManager.pauseGuidance();
+            else startGuidanceWithAudioPermission();
+            return;
+        }
         switch (guideManager.getState()) {
             case READY:
             case PAUSED:
@@ -200,7 +200,13 @@ public class DialogueFragment extends Fragment {
                 guideManager.pauseGuidance();
                 break;
             case ERROR:
-                guideManager.retryCurrentTour();
+                if (guideManager.requiresTourRestart()) {
+                    com.google.android.material.bottomnavigation.BottomNavigationView navigation =
+                            requireActivity().findViewById(R.id.bottom_navigation);
+                    if (navigation != null) navigation.setSelectedItemId(R.id.nav_export);
+                } else {
+                    guideManager.retryCurrentTour();
+                }
                 break;
             default:
                 break;
@@ -234,7 +240,7 @@ public class DialogueFragment extends Fragment {
     private void startGuidanceIfReady() {
         if (!isAdded() || !viewActive) return;
         RealtimeGuideManager.State state = guideManager.getState();
-        if (state == RealtimeGuideManager.State.READY
+        if (guideManager.isRecovering() || state == RealtimeGuideManager.State.READY
                 || state == RealtimeGuideManager.State.PAUSED) {
             guideManager.startGuidance();
         }
@@ -288,7 +294,8 @@ public class DialogueFragment extends Fragment {
                 dialogueButton.setEnabled(true);
                 break;
             case ERROR:
-                dialogueButton.setText(R.string.dialogue_action_retry);
+                if (guideManager.requiresTourRestart()) dialogueButton.setText("前往结束导览");
+                else dialogueButton.setText(R.string.dialogue_action_retry);
                 dialogueButton.setEnabled(true);
                 break;
             case RTC_CONNECTING:
@@ -306,6 +313,12 @@ public class DialogueFragment extends Fragment {
                 break;
         }
 
+        if (guideManager.isRecovering()) {
+            dialogueButton.setText(guideManager.wantsAudioAfterRecovery()
+                    ? R.string.dialogue_action_pause : R.string.dialogue_action_continue);
+            dialogueButton.setEnabled(true);
+        }
+
         boolean effectiveVisionBusy = visionBusy || guideManager.isVisionOperationInProgress();
         if (effectiveVisionBusy) {
             dialogueButton.setText(R.string.dialogue_action_vision_busy);
@@ -313,7 +326,7 @@ public class DialogueFragment extends Fragment {
         }
 
         boolean photoAvailable = !effectiveVisionBusy
-                && guideManager.isVisionEnabled()
+                && guideManager.hasVisionSession()
                 && (state == RealtimeGuideManager.State.READY
                 || state == RealtimeGuideManager.State.PAUSED
                 || state == RealtimeGuideManager.State.LISTENING);
@@ -322,45 +335,12 @@ public class DialogueFragment extends Fragment {
                 ? R.string.dialogue_action_photo_busy : R.string.photo_hint);
     }
 
-    /** 断开字幕合并锚点：下一条字幕将新建气泡，而不是追加进上方旧气泡。 */
-    private void resetVolcSubtitleBubble() {
-        volcBubbleIndex = -1;
-        volcBubbleText.setLength(0);
-    }
-
-    private void upsertSubtitle(boolean fromSelf, String text,
-                                boolean definite, long sequence) {
-        if (!viewActive || text == null || text.trim().isEmpty()) return;
-        if (!definite) return;
-
-        String normalized = text.trim();
-        DialogueMessage.Type type = fromSelf
-                ? DialogueMessage.Type.VOICE : DialogueMessage.Type.AI_REPLY;
-        String key = (fromSelf ? "self:" : "agent:") + sequence;
-        if (!renderedFinalSubtitleKeys.add(key)) return;
-
-        boolean sameSpeaker = volcBubbleIndex >= 0
-                && volcBubbleIndex < messages.size()
-                && volcBubbleFromSelf == fromSelf
-                && messages.get(volcBubbleIndex).getType() == type;
-        if (!sameSpeaker) {
-            volcBubbleFromSelf = fromSelf;
-            volcBubbleText.setLength(0);
-            volcBubbleText.append(normalized);
-            volcBubbleIndex = appendMessageDirect(new DialogueMessage(
-                    type, volcBubbleText.toString(), System.currentTimeMillis()));
-        } else {
-            volcBubbleText.append(normalized);
-            updateMessageDirect(volcBubbleIndex, volcBubbleText.toString());
-        }
-    }
-
     /** App 主动拍照：抢占眼镜硬件任务，图片返回后交给 RTC Agent 讲解（与模型 take_photo 同一链路）。 */
     private boolean requestVisionCapture(@Nullable String commandId,
                                          boolean showFailure) {
         if (visionBusy || guideManager.isVisionOperationInProgress()) return false;
-        if (!guideManager.isVisionEnabled()) {
-            if (showFailure) showToast("当前场馆未开启拍照识别");
+        if (!guideManager.hasVisionSession()) {
+            if (showFailure) showToast(getString(R.string.dialogue_not_ready));
             return false;
         }
         RealtimeGuideManager.State state = guideManager.getState();
@@ -392,9 +372,7 @@ public class DialogueFragment extends Fragment {
         if (resumeAfterVisionFailure) guideManager.pauseGuidance();
         // 拍照发起即落一条状态气泡，作为对话时间轴锚点，确保后续 AI 识图讲解
         // （走 RTC 字幕通道）不会抢在“拍照—照片—讲解”之前。
-        // 关键：重置字幕合并锚点，否则识图讲解字幕会 sameSpeaker 命中拍照前那条
-        // 旧 AI 气泡、被追加到照片上方，造成“讲解跑到照片前”的乱序。
-        resetVolcSubtitleBubble();
+        // 照片/状态消息在统一投影中自然形成边界，后续字幕不能合并到照片上方。
         appendMessageDirect(new DialogueMessage(
                 DialogueMessage.Type.STATUS_HINT,
                 "正在拍照",
@@ -460,8 +438,6 @@ public class DialogueFragment extends Fragment {
                 DialogueMessage.Type.STATUS_HINT,
                 "照片已收到，正在交给 AI 导览员讲解",
                 System.currentTimeMillis()));
-        // 让紧随其后的识图讲解字幕独立成条，排在照片/状态提示之后，不被合并进上方气泡。
-        resetVolcSubtitleBubble();
 
         boolean wasListening = resumeAfterVisionFailure;
         String commandId = visionCommandId;
@@ -550,20 +526,18 @@ public class DialogueFragment extends Fragment {
                 || state == RealtimeGuideManager.State.LISTENING;
     }
 
-    private int appendMessageDirect(DialogueMessage message) {
-        if (!viewActive || messageAdapter == null || recyclerMessages == null) return -1;
-        messages.add(message);
-        int index = messages.size() - 1;
-        messageAdapter.notifyItemInserted(index);
-        recyclerMessages.smoothScrollToPosition(index);
-        return index;
+    private void appendMessageDirect(DialogueMessage message) {
+        if (!viewActive) return;
+        subtitleTimeline.append(message);
+        renderTimeline();
     }
 
-    private void updateMessageDirect(int index, String text) {
-        if (!viewActive || messageAdapter == null || index < 0 || index >= messages.size()) return;
-        messages.get(index).setText(text);
-        messageAdapter.notifyItemChanged(index);
-        recyclerMessages.smoothScrollToPosition(index);
+    private void renderTimeline() {
+        if (!viewActive || messageAdapter == null || recyclerMessages == null) return;
+        messages.clear();
+        messages.addAll(subtitleTimeline.snapshot());
+        messageAdapter.notifyDataSetChanged();
+        if (!messages.isEmpty()) recyclerMessages.smoothScrollToPosition(messages.size() - 1);
     }
 
     private void postUi(Runnable action) {

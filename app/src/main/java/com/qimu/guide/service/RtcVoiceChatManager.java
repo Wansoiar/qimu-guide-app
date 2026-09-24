@@ -1,6 +1,7 @@
 package com.qimu.guide.service;
 
 import android.content.Context;
+import android.os.SystemClock;
 import android.util.Log;
 
 import androidx.annotation.NonNull;
@@ -22,14 +23,12 @@ import com.ss.bytertc.engine.handler.IRTCEngineEventHandler;
 import com.ss.bytertc.engine.handler.IRTCRoomEventHandler;
 import com.ss.bytertc.engine.type.AudioScenarioType;
 import com.ss.bytertc.engine.type.ChannelProfile;
+import com.ss.bytertc.engine.type.ConnectionState;
 import com.ss.bytertc.engine.type.RoomState;
 import com.ss.bytertc.engine.type.RoomStateChangeReason;
 import com.ss.bytertc.engine.type.SubtitleMessage;
 import com.ss.bytertc.engine.utils.AudioFrame;
 
-import java.util.Iterator;
-import java.util.LinkedHashSet;
-import java.util.Set;
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
@@ -52,9 +51,12 @@ public class RtcVoiceChatManager {
         void onRoomJoined(boolean success, String reason);
         default void onRoomInterrupted(boolean recoverable, String reason) { }
         default void onTokenWillExpire() { }
+        default void onTokenRejected() { }
+        default void onNetworkStateChanged(boolean connected) { }
         void onAgentJoined(String uid);
         void onUserLeave(String uid);
-        void onSubtitle(boolean fromSelf, String text, boolean definite, int sequence);
+        void onSubtitle(boolean fromSelf, String text, boolean definite, int sequence,
+                        int roundId, SubtitleTranscript.Source source);
         default void onCommand(String senderUid, String payload) { }
         /**
          * 火山 client-side Function Calling：模型下发工具调用指令（如 take_photo）。
@@ -77,21 +79,14 @@ public class RtcVoiceChatManager {
     private volatile boolean inputEnabled;
     private int pendingPcmSize;
     private String selfUid;
+    private String botUid;
+    private volatile boolean roomInterrupted;
     private ScheduledExecutorService framePump;
     // 下行外部渲染播放器：走 VOICE_CALL 通话流，替代 RTC 内部媒体流渲染（见类注释）。
     private volatile RtcDownlinkVoicePlayer downlinkPlayer;
-    // AIGC 的 subv 二进制字幕在部分服务版本里不带 sequence。为同一说话人的
-    // interim/final 维护稳定序号，使 UI 能覆盖更新而不是重复追加气泡。
-    private int nextBinarySubtitleSequence = 1_000_000;
-    private int selfBinarySubtitleSequence = -1;
-    private int agentBinarySubtitleSequence = -1;
-    // 最近一次游客语音分片携带的火山 roundId（0=未知）。FC take_photo 无 roundId 时兜底，
-    // 供 describe-image 精确关联「关键词+图片+识别+讲解」同一条语音回合。
+    private final BinarySubtitleTracker binarySubtitles = new BinarySubtitleTracker();
+    // 最近一次游客语音分片的 roundId；FC take_photo 缺少 roundId 时精确关联图片。
     private volatile int lastUserRoundId;
-    // VoiceChat 可能在后续 subv 包里再次携带已经结束的字幕项。完整 JSON 相同就属于
-    // 同一个服务端事件，必须幂等；否则 definite 后序号已重置，会被 UI 当成新消息。
-    private static final int MAX_FINAL_SUBTITLE_FINGERPRINTS = 256;
-    private final Set<String> finalBinarySubtitleFingerprints = new LinkedHashSet<>();
 
     public RtcVoiceChatManager(@NonNull Context context) {
         appContext = context.getApplicationContext();
@@ -103,6 +98,8 @@ public class RtcVoiceChatManager {
         stop();
         this.listener = listener;
         selfUid = session.uid;
+        botUid = session.botUid;
+        roomInterrupted = false;
         resetBinarySubtitleSequences();
 
         if (session.appId == null || session.appId.isEmpty()) {
@@ -166,8 +163,22 @@ public class RtcVoiceChatManager {
         int joinResult = room.joinRoom(session.token, userInfo, true, roomConfig);
         Log.d(TAG, "joinRoom ret=" + joinResult + " room=" + session.roomId);
         if (joinResult != 0) {
-            listener.onRoomJoined(false, "joinRoom=" + joinResult);
+            markRoomInterrupted();
+            if (RtcFailurePolicy.isTokenError(joinResult)) listener.onTokenRejected();
+            else listener.onRoomInterrupted(!RtcFailurePolicy.isPermanent(joinResult), "joinRoom=" + joinResult);
         }
+    }
+
+    /** Refresh credentials in the existing room; never joins or starts a new Agent. */
+    public int updateToken(String token) {
+        RTCRoom current = room;
+        return current == null ? -1 : current.updateToken(token);
+    }
+
+    private synchronized void markRoomInterrupted() {
+        setInputEnabled(false);
+        if (!roomInterrupted) resetBinarySubtitleSequences();
+        roomInterrupted = true;
     }
 
     /** Translation PCM 的唯一入口；任意长度均可，内部按 10 ms 重帧并限流。 */
@@ -316,7 +327,25 @@ public class RtcVoiceChatManager {
 
     private final IRTCEngineEventHandler engineHandler = new IRTCEngineEventHandler() {
         @Override
+        public void onConnectionStateChanged(int state, int reason) {
+            Listener current = listener;
+            if (current == null) return;
+            ConnectionState connection = ConnectionState.fromId(state);
+            if (connection == ConnectionState.CONNECTION_STATE_CONNECTED
+                    || connection == ConnectionState.CONNECTION_STATE_RECONNECTED) {
+                current.onNetworkStateChanged(true);
+            } else if (connection == ConnectionState.CONNECTION_STATE_RECONNECTING
+                    || connection == ConnectionState.CONNECTION_STATE_DISCONNECTED
+                    || connection == ConnectionState.CONNECTION_STATE_LOST
+                    || connection == ConnectionState.CONNECTION_STATE_FAILED) {
+                markRoomInterrupted();
+                current.onNetworkStateChanged(false);
+            }
+        }
+
+        @Override
         public void onError(int errorCode) {
+            markRoomInterrupted();
             Listener current = listener;
             if (current != null) current.onError(errorCode, "engine error");
         }
@@ -343,10 +372,14 @@ public class RtcVoiceChatManager {
             Listener current = listener;
             if (current == null) return;
             if (state == 0) {
+                roomInterrupted = false;
                 current.onRoomJoined(true, null);
+            } else if (RtcFailurePolicy.isTokenError(state)) {
+                markRoomInterrupted();
+                current.onTokenRejected();
             } else {
-                current.onRoomInterrupted(false,
-                        "state=" + state + " " + extraInfo);
+                markRoomInterrupted();
+                current.onRoomInterrupted(!RtcFailurePolicy.isPermanent(state), "state=" + state);
             }
         }
 
@@ -356,13 +389,24 @@ public class RtcVoiceChatManager {
                                                  RoomStateChangeReason reason) {
             Listener current = listener;
             if (current == null) return;
+            String name = reason == null ? "UNKNOWN" : reason.name();
+            if (name.contains("TOKEN")) {
+                markRoomInterrupted();
+                current.onTokenRejected();
+                return;
+            }
+            if (RtcFailurePolicy.isPermanentReason(name)) {
+                markRoomInterrupted();
+                current.onRoomInterrupted(false, name);
+                return;
+            }
             if (state == RoomState.JOIN_SUCCESS) {
+                roomInterrupted = false;
                 current.onRoomJoined(true, null);
                 return;
             }
-            boolean recoverable = reason == RoomStateChangeReason.RECONNECT;
-            current.onRoomInterrupted(recoverable,
-                    "state=" + state + " reason=" + reason);
+            markRoomInterrupted();
+            current.onRoomInterrupted(!RtcFailurePolicy.isPermanentReason(name), name);
         }
 
         @Override
@@ -381,6 +425,7 @@ public class RtcVoiceChatManager {
 
         @Override
         public void onUserLeave(String uid, int reason) {
+            if (botUid != null && botUid.equals(uid)) markRoomInterrupted();
             Listener current = listener;
             if (current != null) current.onUserLeave(uid);
         }
@@ -392,8 +437,11 @@ public class RtcVoiceChatManager {
             for (SubtitleMessage subtitle : subtitles) {
                 if (subtitle == null || subtitle.text == null || subtitle.text.isEmpty()) continue;
                 boolean fromSelf = selfUid != null && selfUid.equals(subtitle.userId);
+                if (!fromSelf && botUid != null && botUid.equals(subtitle.userId)) {
+                    current.onAgentJoined(botUid); // fresh activity also confirms presence after recovery
+                }
                 current.onSubtitle(fromSelf, subtitle.text, subtitle.definite,
-                        subtitle.sequence);
+                        subtitle.sequence, 0, SubtitleTranscript.Source.SDK);
             }
         }
 
@@ -476,13 +524,22 @@ public class RtcVoiceChatManager {
                         : selfUid != null && selfUid.equals(speaker);
                 boolean definite = item.optBoolean(
                         "definite", item.optBoolean("paragraph", false));
-                if (definite && !rememberFinalBinarySubtitle(speaker, uid, item)) {
+                if (!fromSelf && botUid != null && botUid.equals(speaker.isEmpty() ? uid : speaker)) {
+                    current.onAgentJoined(botUid);
+                }
+                int itemRoundId = item.optInt("roundId", item.optInt("round_id", 0));
+                int explicitSequence = item.optInt("sequence", item.optInt("seq", -1));
+                String owner = speaker.isEmpty() ? uid : speaker;
+                if (definite && !binarySubtitles.rememberFinal(
+                        owner + '\u0000' + item.toString(),
+                        itemRoundId > 0 || explicitSequence >= 0, SystemClock.elapsedRealtime())) {
                     continue;
                 }
-                int sequence = resolveBinarySubtitleSequence(fromSelf, item, definite);
-                int itemRoundId = item.optInt("roundId", 0);
+                int sequence = binarySubtitles.sequence(
+                        fromSelf, explicitSequence, itemRoundId, definite);
                 if (fromSelf && itemRoundId > 0) lastUserRoundId = itemRoundId;
-                current.onSubtitle(fromSelf, text, definite, sequence);
+                current.onSubtitle(fromSelf, text, definite, sequence,
+                        itemRoundId, SubtitleTranscript.Source.BINARY);
             }
         } catch (Exception error) {
             Log.d(TAG, "忽略无法解析的 AIGC 二进制消息", error);
@@ -560,38 +617,8 @@ public class RtcVoiceChatManager {
         return buffer.array();
     }
 
-    private synchronized int resolveBinarySubtitleSequence(
-            boolean fromSelf, org.json.JSONObject item, boolean definite) {
-        int explicit = item.optInt("sequence", item.optInt("seq", -1));
-        if (explicit >= 0) return explicit;
-
-        int active = fromSelf ? selfBinarySubtitleSequence : agentBinarySubtitleSequence;
-        if (active < 0) active = nextBinarySubtitleSequence++;
-        if (fromSelf) selfBinarySubtitleSequence = definite ? -1 : active;
-        else agentBinarySubtitleSequence = definite ? -1 : active;
-        return active;
-    }
-
-    private synchronized boolean rememberFinalBinarySubtitle(
-            String speaker, String senderUid, org.json.JSONObject item) {
-        String owner = speaker == null || speaker.isEmpty() ? senderUid : speaker;
-        String fingerprint = owner + '\u0000' + item.toString();
-        if (!finalBinarySubtitleFingerprints.add(fingerprint)) return false;
-        if (finalBinarySubtitleFingerprints.size() > MAX_FINAL_SUBTITLE_FINGERPRINTS) {
-            Iterator<String> iterator = finalBinarySubtitleFingerprints.iterator();
-            if (iterator.hasNext()) {
-                iterator.next();
-                iterator.remove();
-            }
-        }
-        return true;
-    }
-
-    private synchronized void resetBinarySubtitleSequences() {
-        nextBinarySubtitleSequence = 1_000_000;
-        selfBinarySubtitleSequence = -1;
-        agentBinarySubtitleSequence = -1;
+    private void resetBinarySubtitleSequences() {
+        binarySubtitles.reset();
         lastUserRoundId = 0;
-        finalBinarySubtitleFingerprints.clear();
     }
 }

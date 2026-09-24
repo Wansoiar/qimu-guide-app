@@ -90,8 +90,8 @@ public final class TourReturnCoordinator {
 
     /**
      * 清理上次异常退出遗留的订单（重启后无活动会话，仅持有持久化的 session_id）。
-     * 复用与 {@link #beginReturn()} 相同的眼镜重置 + 本地缓存清理管线；服务端收尾只能
-     * 尽力而为（重启后已无 RTC room/task，遗留会话由后端对账任务兜底）。
+     * 复用与 {@link #beginReturn()} 相同的眼镜重置 + 本地缓存清理管线；缺少 RTC room/task
+     * 时通过 session-only stop 让后端关闭当前任务。网络失败仍由后端对账兜底。
      */
     public boolean beginStaleOrderReturn(@Nullable String sessionId,
                                          @Nullable String roomId,
@@ -117,9 +117,13 @@ public final class TourReturnCoordinator {
         final String sid = sessionId.trim();
         final String rid = roomId == null ? "" : roomId.trim();
         final String tid = taskId == null ? "" : taskId.trim();
+        final java.util.Map<String, String> stopHeaders = com.qimu.guide.net.AppContextHeaders.dialogue();
         new Thread(() -> {
             try {
-                boolean ok = new GuideApiClient().stopRtcSession(rid, tid, sid);
+                boolean hasRtcIdentity = !rid.isEmpty() && !tid.isEmpty();
+                boolean ok = new GuideApiClient().stopRtcSession(
+                        hasRtcIdentity ? rid : null, hasRtcIdentity ? tid : null,
+                        sid, true, stopHeaders);
                 if (!ok) Log.e(TAG, "结束上次订单：后端 RTC 停止未确认: " + sid);
             } catch (RuntimeException failure) {
                 Log.e(TAG, "结束上次订单：后端停止异常", failure);

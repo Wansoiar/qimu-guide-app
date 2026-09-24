@@ -8,6 +8,7 @@ import org.json.JSONObject;
 
 import java.io.File;
 import java.util.Map;
+import java.util.LinkedHashMap;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
@@ -26,24 +27,37 @@ public class GuideApiClient {
     private static final String TAG = "GuideApiClient";
     private static final MediaType JSON = MediaType.parse("application/json; charset=utf-8");
 
-    private final OkHttpClient client = new OkHttpClient.Builder()
-            .addInterceptor(AppAuthInterceptor.INSTANCE)
-            .addInterceptor(HttpLog.debugLogger())
-            .connectTimeout(15, TimeUnit.SECONDS)
-            .readTimeout(90, TimeUnit.SECONDS)
-            .writeTimeout(30, TimeUnit.SECONDS)
-            .build();
+    private final OkHttpClient client;
     private final Set<Call> activeCalls = java.util.Collections.newSetFromMap(
             new ConcurrentHashMap<Call, Boolean>());
     private final Object callLock = new Object();
+    private final Set<Call> rtcCalls = java.util.Collections.newSetFromMap(
+            new ConcurrentHashMap<Call, Boolean>());
+    private long rtcCallEpoch;
     private final Object visionCallLock = new Object();
     private Call activeVisionCall;
     private boolean visionCallsCancelled;
     private boolean closed;
 
+    public GuideApiClient() {
+        this(new OkHttpClient.Builder()
+                .addInterceptor(AppAuthInterceptor.INSTANCE)
+                .addInterceptor(HttpLog.rtcLogger())
+                .connectTimeout(15, TimeUnit.SECONDS)
+                .readTimeout(90, TimeUnit.SECONDS)
+                .writeTimeout(30, TimeUnit.SECONDS)
+                .build());
+    }
+
+    GuideApiClient(OkHttpClient client) { this.client = client; }
+
     /** 给对话/RTC 链路请求统一加公参 header（X-Device-Id / X-Glasses-Sn / X-Phone-Number 等）。 */
     private Request.Builder withDialogueHeaders(Request.Builder builder) {
-        for (Map.Entry<String, String> entry : AppContextHeaders.dialogue().entrySet()) {
+        return withDialogueHeaders(builder, AppContextHeaders.dialogue());
+    }
+
+    private Request.Builder withDialogueHeaders(Request.Builder builder, Map<String, String> headers) {
+        for (Map.Entry<String, String> entry : headers.entrySet()) {
             builder.header(entry.getKey(), entry.getValue());
         }
         return builder;
@@ -90,12 +104,12 @@ public class GuideApiClient {
         public final String token;
         public final String taskId;
         public final String botUid;
-        public final boolean photoEnabled;
         public final boolean mocked;
+        public final long expireAt;
 
         RtcSessionInfo(String sessionId, String appId, String roomId, String uid,
                        String token, String taskId, String botUid,
-                       boolean photoEnabled, boolean mocked) {
+                       boolean mocked, long expireAt) {
             this.sessionId = sessionId;
             this.appId = appId;
             this.roomId = roomId;
@@ -103,9 +117,29 @@ public class GuideApiClient {
             this.token = token;
             this.taskId = taskId;
             this.botUid = botUid;
-            this.photoEnabled = photoEnabled;
             this.mocked = mocked;
+            this.expireAt = expireAt;
         }
+
+        public boolean sameTask(RtcSessionInfo other) {
+            return other != null && sessionId.equals(other.sessionId) && roomId.equals(other.roomId)
+                    && taskId.equals(other.taskId) && uid.equals(other.uid);
+        }
+    }
+
+    public static final class RtcResult {
+        public final RtcSessionInfo session;
+        public final int httpStatus;
+        public final int code;
+
+        RtcResult(RtcSessionInfo session, int httpStatus, int code) {
+            this.session = session;
+            this.httpStatus = httpStatus;
+            this.code = code;
+        }
+
+        public boolean retryable() { return isRtcRetryable(httpStatus, code); }
+        public boolean identityRejected() { return isRtcIdentityRejected(httpStatus, code); }
     }
 
     /** 上传眼镜照片，返回供 RTC Agent 访问的图片 URL，并将对象归属到当前会话。阻塞调用。 */
@@ -153,53 +187,161 @@ public class GuideApiClient {
         return builder.build();
     }
 
-    /**
-     * 创建/复用 RTC 会话。阻塞调用。
-     *
-     * @param sessionId 必传：建会话（/v1/session/start）返回的 session_id。同一场导览贯穿
-     *                  全链路，断线重连也复用同一条（后端据它停旧 task 起新 task）；
-     *                  venue/设备由后端自取，App 不再上报。
-     */
+    /** Initial start only. Recovery must use the overload carrying the previous task proof. */
     public RtcSessionInfo createRtcSession(String sessionId) {
+        return createRtcSession(sessionId, null).session;
+    }
+
+    public RtcResult createRtcSession(String sessionId, @Nullable RtcSessionInfo previous) {
+        return createRtcSession(sessionId, previous, rtcCallEpoch());
+    }
+
+    public RtcResult createRtcSession(String sessionId, @Nullable RtcSessionInfo previous, long epoch) {
+        return rtcRequest(sessionId, previous, false, epoch);
+    }
+
+    public RtcResult renewRtcToken(RtcSessionInfo current) {
+        return renewRtcToken(current, rtcCallEpoch());
+    }
+
+    public RtcResult renewRtcToken(RtcSessionInfo current, long epoch) {
+        return rtcRequest(current.sessionId, current, true, epoch);
+    }
+
+    static Map<String, Object> rtcRequestFields(String sessionId, @Nullable RtcSessionInfo previous,
+                                               boolean renewal) {
+        Map<String, Object> fields = new LinkedHashMap<>();
+        fields.put("session_id", sessionId.trim());
+        if (renewal && previous == null) throw new IllegalArgumentException("missing RTC identity");
+        if (previous != null) {
+            if (!sessionId.equals(previous.sessionId)) throw new IllegalArgumentException("RTC identity mismatch");
+            fields.put(renewal ? "task_id" : "previous_task_id", previous.taskId);
+            fields.put("room_id", previous.roomId);
+            fields.put("uid", previous.uid);
+            fields.put("token", previous.token);
+        } else {
+            fields.put("initial_only", true);
+        }
+        return fields;
+    }
+
+    static boolean isRtcRetryable(int status, int code) {
+        if (isRtcIdentityRejected(status, code)) return false;
+        // Older create endpoints report supplier failure as HTTP 200 / business code 502.
+        return code == 40911 || code == 502 || status == 0 || status == 408
+                || status == 429 || status >= 500;
+    }
+
+    static boolean isRtcIdentityRejected(int status, int code) {
+        return code == 40310 || code == 40910 || code == 40401 || status == 401 || status == 403;
+    }
+
+    static boolean isRtcResponseValid(String sessionId, @Nullable RtcSessionInfo previous,
+                                      boolean renewal, RtcSessionInfo result) {
+        return result != null && sessionId.equals(result.sessionId) && !result.appId.isEmpty()
+                && !result.roomId.isEmpty() && !result.uid.isEmpty() && !result.taskId.isEmpty()
+                && !result.token.isEmpty() && result.expireAt > 0
+                && (!renewal || result.sameTask(previous))
+                && (renewal || previous == null || !result.taskId.equals(previous.taskId));
+    }
+
+    /** A stale idempotent response can name the active task; that task must not be cleaned up. */
+    public static boolean shouldCleanUpRtcResponse(@Nullable RtcSessionInfo response,
+                                                   @Nullable RtcSessionInfo attached) {
+        return response != null && !response.sameTask(attached);
+    }
+
+    private RtcResult rtcRequest(String sessionId, @Nullable RtcSessionInfo previous,
+                                  boolean renewal, long epoch) {
         Call call = null;
         try {
-            JSONObject body = new JSONObject();
-            body.put("session_id", sessionId.trim());
+            JSONObject body = new JSONObject(rtcRequestFields(sessionId, previous, renewal));
             Request request = withDialogueHeaders(new Request.Builder()
-                    .url(ApiConfig.rtcSession())
+                    .url(renewal ? ApiConfig.rtcSessionRenewToken() : ApiConfig.rtcSession())
                     .header("X-Client-Type", "android")
                     .post(RequestBody.create(body.toString(), JSON)))
                     .build();
             call = client.newCall(request);
-            if (!register(call)) return null;
+            call.timeout().timeout(25, TimeUnit.SECONDS);
+            if (!registerRtcCall(call, epoch)) return new RtcResult(null, 0, -1);
             try (Response response = call.execute()) {
-                String responseBody = response.body() != null ? response.body().string() : "";
-                JSONObject json = new JSONObject(responseBody);
-                if (!response.isSuccessful() || json.optInt("code", -1) != 0) {
-                    Log.e(TAG, "createRtcSession 后端错误 HTTP " + response.code()
-                            + ": " + responseBody);
-                    return null;
+                String raw = response.body() == null ? "" : response.body().string();
+                JSONObject envelope;
+                try {
+                    envelope = new JSONObject(raw);
+                } catch (Exception invalidJson) {
+                    return new RtcResult(null, response.code(), -1);
                 }
-                JSONObject data = json.getJSONObject("data");
-                JSONObject settings = data.optJSONObject("settings");
-                return new RtcSessionInfo(
+                int code = envelope.optInt("code", -1);
+                if (!response.isSuccessful() || code != 0) {
+                    Log.w(TAG, "RTC request failed HTTP=" + response.code() + " code=" + code);
+                    return new RtcResult(null, response.code(), code);
+                }
+                JSONObject data = envelope.getJSONObject("data");
+                RtcSessionInfo result = new RtcSessionInfo(
                         data.optString("session_id", ""),
-                        data.optString("app_id", ""),
-                        data.optString("room_id", ""),
-                        data.optString("uid", ""),
-                        data.optString("token", ""),
-                        data.optString("task_id", ""),
-                        data.optString("bot_uid", ""),
-                        settings == null || settings.optBoolean("photo_enabled", true),
-                        data.optBoolean("mocked", false));
+                        renewal ? previous.appId : data.optString("app_id", ""),
+                        data.optString("room_id", ""), data.optString("uid", ""),
+                        data.optString("token", ""), data.optString("task_id", ""),
+                        renewal ? previous.botUid : data.optString("bot_uid", ""),
+                        renewal ? previous.mocked : data.optBoolean("mocked", false),
+                        data.optLong("expire_at", 0));
+                if (!isRtcResponseValid(sessionId, previous, renewal, result)) {
+                    return new RtcResult(null, 422, -1);
+                }
+                return new RtcResult(result, response.code(), 0);
             }
-        } catch (Exception e) {
-            if (call != null && call.isCanceled()) return null;
-            Log.e(TAG, "createRtcSession 异常", e);
-            return null;
+        } catch (Exception error) {
+            // Never include JSON/token contents, including exception messages, in logs.
+            Log.w(TAG, "RTC request failed: " + error.getClass().getSimpleName());
+            return new RtcResult(null, 0, -1);
         } finally {
+            if (call != null) rtcCalls.remove(call);
             unregister(call);
         }
+    }
+
+    public void cancelRtcCalls() {
+        synchronized (callLock) {
+            rtcCallEpoch++;
+            for (Call call : rtcCalls) call.cancel();
+            rtcCalls.clear();
+        }
+    }
+
+    /** Capture before enqueueing work, so cancellation also fences requests not registered yet. */
+    public long rtcCallEpoch() {
+        synchronized (callLock) { return rtcCallEpoch; }
+    }
+
+    boolean registerRtcCall(Call call, long expectedEpoch) {
+        synchronized (callLock) {
+            if (closed || expectedEpoch != rtcCallEpoch) {
+                call.cancel();
+                return false;
+            }
+            activeCalls.add(call);
+            rtcCalls.add(call);
+            return true;
+        }
+    }
+
+    static Map<String, Object> rtcStopFields(String roomId, String taskId,
+                                            @Nullable String sessionId, boolean endSession) {
+        Map<String, Object> fields = new LinkedHashMap<>();
+        boolean hasRoom = roomId != null && !roomId.trim().isEmpty();
+        boolean hasTask = taskId != null && !taskId.trim().isEmpty();
+        boolean hasSession = sessionId != null && !sessionId.trim().isEmpty();
+        if (hasRoom != hasTask || (!hasRoom && (!endSession || !hasSession))) {
+            throw new IllegalArgumentException("incomplete RTC stop identity");
+        }
+        if (hasRoom) {
+            fields.put("room_id", roomId);
+            fields.put("task_id", taskId);
+        }
+        fields.put("end_session", endSession);
+        if (hasSession) fields.put("session_id", sessionId.trim());
+        return fields;
     }
 
     /**
@@ -210,18 +352,24 @@ public class GuideApiClient {
      *                  RAG 预取；传 null 则只停火山、不动状态。
      */
     public boolean stopRtcSession(String roomId, String taskId, @Nullable String sessionId) {
+        return stopRtcSession(roomId, taskId, sessionId, true);
+    }
+
+    public boolean stopRtcSession(String roomId, String taskId, @Nullable String sessionId,
+                                  boolean endSession) {
+        return stopRtcSession(roomId, taskId, sessionId, endSession, AppContextHeaders.dialogue());
+    }
+
+    /** Uses the tour's captured headers even after the active UI session has been cleared. */
+    public boolean stopRtcSession(String roomId, String taskId, @Nullable String sessionId,
+                                  boolean endSession, Map<String, String> headers) {
         Call call = null;
         try {
-            JSONObject body = new JSONObject();
-            body.put("room_id", roomId);
-            body.put("task_id", taskId);
-            if (sessionId != null && !sessionId.trim().isEmpty()) {
-                body.put("session_id", sessionId.trim());
-            }
+            JSONObject body = new JSONObject(rtcStopFields(roomId, taskId, sessionId, endSession));
             Request request = withDialogueHeaders(new Request.Builder()
                     .url(ApiConfig.rtcSessionStop())
                     .header("X-Client-Type", "android")
-                    .post(RequestBody.create(body.toString(), JSON)))
+                    .post(RequestBody.create(body.toString(), JSON)), headers)
                     .build();
             call = client.newCall(request);
             if (!register(call)) return false;

@@ -30,6 +30,10 @@ public final class ApiConfig {
         return baseUrl() + "/v1/rtc/session";
     }
 
+    public static String rtcSessionRenewToken() {
+        return baseUrl() + "/v1/rtc/session/renew-token";
+    }
+
     public static String rtcSessionStop() {
         return baseUrl() + "/v1/rtc/session/stop";
     }
