@@ -1,7 +1,6 @@
 package com.qimu.guide.net;
 
 import androidx.annotation.NonNull;
-import androidx.annotation.Nullable;
 
 import org.json.JSONException;
 import org.json.JSONObject;
@@ -48,18 +47,14 @@ public final class ShareBundleApiClient implements Closeable {
     }
 
     @NonNull
-    public CreateResult createBundle(@NonNull String phone,
+    public CreateResult createBundle(@NonNull String accessCode,
                                      int expectedPhotoCount,
                                      boolean needVlog,
-                                     @Nullable String venueId) throws IOException {
+                                     @NonNull String sessionId,
+                                     @NonNull String venueId) throws IOException {
         try {
-            JSONObject payload = new JSONObject();
-            payload.put("phone", phone);
-            payload.put("expected_photo_count", expectedPhotoCount);
-            payload.put("need_vlog", needVlog);
-            if (venueId != null && !venueId.trim().isEmpty()) {
-                payload.put("venue_id", venueId.trim());
-            }
+            JSONObject payload = buildCreateBundlePayload(
+                    accessCode, expectedPhotoCount, needVlog, sessionId, venueId);
             JSONObject data = execute(() -> authenticated(
                     new Request.Builder().url(ApiConfig.shareBundles()))
                     .post(RequestBody.create(payload.toString(), JSON))
@@ -74,13 +69,18 @@ public final class ShareBundleApiClient implements Closeable {
     }
 
     @NonNull
-    public UploadResult uploadPhoto(@NonNull String bundleId,
-                                    @NonNull String fileName,
-                                    @NonNull String mimeType,
-                                    @NonNull byte[] bytes,
-                                    int sortOrder,
-                                    @NonNull String sha256) throws IOException {
-        return uploadPhoto(bundleId, fileName, mimeType, bytes, sortOrder, sha256, null);
+    static JSONObject buildCreateBundlePayload(@NonNull String accessCode,
+                                               int expectedPhotoCount,
+                                               boolean needVlog,
+                                               @NonNull String sessionId,
+                                               @NonNull String venueId) throws JSONException {
+        JSONObject payload = new JSONObject();
+        payload.put("access_code", accessCode);
+        payload.put("expected_photo_count", expectedPhotoCount);
+        payload.put("need_vlog", needVlog);
+        payload.put("session_id", sessionId.trim());
+        payload.put("venue_id", venueId.trim());
+        return payload;
     }
 
     @NonNull
@@ -89,10 +89,9 @@ public final class ShareBundleApiClient implements Closeable {
                                     @NonNull String mimeType,
                                     @NonNull byte[] bytes,
                                     int sortOrder,
-                                    @NonNull String sha256,
-                                    @Nullable String sessionId) throws IOException {
+                                    @NonNull String sha256) throws IOException {
         MultipartBody body = buildPhotoUploadBody(
-                fileName, mimeType, bytes, sortOrder, sha256, sessionId);
+                fileName, mimeType, bytes, sortOrder, sha256);
         JSONObject data = null;
         for (int integrityAttempt = 0; integrityAttempt < MAX_ATTEMPTS; integrityAttempt++) {
             try {
@@ -117,8 +116,7 @@ public final class ShareBundleApiClient implements Closeable {
                                               @NonNull String mimeType,
                                               @NonNull byte[] bytes,
                                               int sortOrder,
-                                              @NonNull String sha256,
-                                              @Nullable String sessionId) {
+                                              @NonNull String sha256) {
         MediaType mediaType = MediaType.parse(mimeType);
         if (mediaType == null) mediaType = MediaType.parse("image/jpeg");
         RequestBody fileBody = RequestBody.create(bytes, mediaType);
@@ -127,9 +125,6 @@ public final class ShareBundleApiClient implements Closeable {
                 .addFormDataPart("file", safeFileName(fileName, mimeType), fileBody)
                 .addFormDataPart("sort_order", String.valueOf(sortOrder))
                 .addFormDataPart("sha256", sha256);
-        if (sessionId != null && !sessionId.trim().isEmpty()) {
-            builder.addFormDataPart("session_id", sessionId.trim());
-        }
         return builder.build();
     }
 

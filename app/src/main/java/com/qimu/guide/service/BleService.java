@@ -404,7 +404,7 @@ public class BleService {
         returnTransactionInProgress = false;
         activeReturnTarget = null;
         userInitiatedDisconnect = false;
-        postLog("归还", "已释放归还占位，本次游览继续");
+        postLog("归还", "已释放归还占位，保留数据等待重试结束");
     }
 
     public boolean startScan(GlassesScanCallback callback, long timeoutMs) {

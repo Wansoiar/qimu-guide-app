@@ -7,8 +7,8 @@ import android.util.Log;
 import com.moyoung.glasses.CRPBleClient;
 import com.moyoung.glasses.util.BleLog;
 import com.qimu.guide.net.TourSessionManager;
+import com.qimu.guide.service.GuideForegroundService;
 import com.qimu.guide.service.RealtimeGuideManager;
-import com.qimu.guide.service.TourExitWatchdogService;
 import com.qimu.guide.service.TourReturnCoordinator;
 
 public class QimuApplication extends Application {
@@ -81,8 +81,8 @@ public class QimuApplication extends Application {
                 TourSessionManager.get().completeSession(session.sessionId, false);
             }
             if (!processDying) {
-                // UI 即将退出，退出哨兵不再需要（闪退时进程随之消亡，无需显式停止）。
-                TourExitWatchdogService.stop();
+                // 会话已主动结束，前台导览服务不再需要。
+                GuideForegroundService.stop();
             }
         } catch (Throwable ignored) {
             // 退出路径只做尽力而为的收尾，不向上抛。

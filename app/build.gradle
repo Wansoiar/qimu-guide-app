@@ -3,6 +3,9 @@ apply plugin: 'com.android.application'
 // 环境选择：-PqimuEnv=dev 或环境变量 QIMU_ENV=dev 走本地联调；默认 prod 走线上。
 def qimuEnv = (project.findProperty('qimuEnv') ?: System.getenv('QIMU_ENV') ?: 'prod')
         .toString().trim().toLowerCase(Locale.ROOT)
+if (!(qimuEnv in ['dev', 'prod'])) {
+    throw new GradleException("qimuEnv 仅支持 dev 或 prod，当前值：${qimuEnv}")
+}
 
 // 读取项目根 local.properties（已被 .gitignore 忽略，仅本机使用）
 def readLocalProperties() {
@@ -15,12 +18,12 @@ def readLocalProperties() {
 // App 共享密钥解析（仓库内不存放 prod 真实密钥）：
 // 优先级：Gradle 属性(-P / gradle.properties) > 环境变量 > local.properties > dev 内置兜底。
 // prod 缺失时直接报错并提示配置位置，避免带错误密钥出包。
-def resolveAppSharedSecret() {
+def resolveAppSharedSecret(String environment) {
     def v = project.findProperty('QIMU_APP_SHARED_SECRET')
             ?: System.getenv('QIMU_APP_SHARED_SECRET')
             ?: readLocalProperties().getProperty('QIMU_APP_SHARED_SECRET')
     if (v && v.toString().trim()) return v.toString().trim()
-    if (qimuEnv == 'dev') return 'dev-app-shared-secret-change-in-prod' // dev 密钥非机密，仅联调用
+    if (environment == 'dev') return 'dev-app-shared-secret-change-in-prod' // dev 密钥非机密，仅联调用
     throw new GradleException("""
         QIMU_APP_SHARED_SECRET 未配置（prod 构建必须显式提供 App 共享密钥）：
           · 本地：在 ~/.gradle/gradle.properties 或项目 local.properties 添加
@@ -29,10 +32,24 @@ def resolveAppSharedSecret() {
     """.stripIndent())
 }
 
-def qimuApiBaseUrl = project.findProperty('QIMU_API_BASE_URL')
+def productionApiBaseUrl = 'https://api.equavision.cn'
+def requestedApiBaseUrl = project.findProperty('QIMU_API_BASE_URL')
         ?: System.getenv('QIMU_API_BASE_URL')
-        ?: (qimuEnv == 'dev' ? 'http://127.0.0.1:8787' : 'https://api.equavision.cn')
-def qimuAppSharedSecret = resolveAppSharedSecret()
+def normalizeApiBaseUrl = { value ->
+    value.toString().trim().replaceAll('/+$', '')
+}
+def qimuApiBaseUrl
+if (qimuEnv == 'prod') {
+    if (requestedApiBaseUrl
+            && normalizeApiBaseUrl(requestedApiBaseUrl) != productionApiBaseUrl) {
+        throw new GradleException(
+                "prod 构建只允许 ${productionApiBaseUrl}，禁止通过 IP、HTTP 或其他地址覆盖")
+    }
+    qimuApiBaseUrl = productionApiBaseUrl
+} else {
+    qimuApiBaseUrl = normalizeApiBaseUrl(requestedApiBaseUrl ?: 'http://127.0.0.1:8787')
+}
+def qimuAppSharedSecret = resolveAppSharedSecret(qimuEnv)
 def asBuildConfigString = { value ->
     '"' + value.toString().replace('\\', '\\\\').replace('"', '\\"') + '"'
 }
@@ -66,6 +83,7 @@ android {
             abiFilters 'arm64-v8a'
         }
         buildConfigField 'String', 'API_BASE_URL', asBuildConfigString(qimuApiBaseUrl)
+        buildConfigField 'boolean', 'IS_PRODUCTION_ENV', qimuEnv == 'prod' ? 'true' : 'false'
         buildConfigField 'String', 'APP_SHARED_SECRET', asBuildConfigString(qimuAppSharedSecret)
     }
 

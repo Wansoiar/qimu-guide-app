@@ -4,6 +4,7 @@ import android.media.AudioAttributes;
 import android.media.AudioFormat;
 import android.media.AudioManager;
 import android.media.AudioTrack;
+import android.os.Build;
 import android.util.Log;
 
 import com.ss.bytertc.engine.RTCEngine;
@@ -60,19 +61,7 @@ public final class RtcDownlinkVoicePlayer {
         try {
             // 关键：USAGE_VOICE_COMMUNICATION → 走通话流(STREAM_VOICE_CALL)，与 SCO/通话模式同路，
             // 不被通话模式当媒体流压低。这正是「像打电话一样」的下行。
-            track = new AudioTrack.Builder()
-                    .setAudioAttributes(new AudioAttributes.Builder()
-                            .setUsage(AudioAttributes.USAGE_VOICE_COMMUNICATION)
-                            .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
-                            .build())
-                    .setAudioFormat(new AudioFormat.Builder()
-                            .setSampleRate(SAMPLE_RATE)
-                            .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
-                            .setChannelMask(AudioFormat.CHANNEL_OUT_MONO)
-                            .build())
-                    .setBufferSizeInBytes(minBuf * 2)
-                    .setTransferMode(AudioTrack.MODE_STREAM)
-                    .build();
+            track = createVoiceCallTrack(minBuf * 2);
         } catch (RuntimeException e) {
             Log.e(TAG, "创建 VOICE_CALL AudioTrack 失败", e);
             return;
@@ -90,6 +79,33 @@ public final class RtcDownlinkVoicePlayer {
         pullThread.setDaemon(true);
         pullThread.start();
         Log.i(TAG, "下行外部渲染播放器已启动（VOICE_CALL 通话流）");
+    }
+
+    @SuppressWarnings("deprecation")
+    private static AudioTrack createVoiceCallTrack(int bufferSizeBytes) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            return new AudioTrack.Builder()
+                    .setAudioAttributes(new AudioAttributes.Builder()
+                            .setUsage(AudioAttributes.USAGE_VOICE_COMMUNICATION)
+                            .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
+                            .build())
+                    .setAudioFormat(new AudioFormat.Builder()
+                            .setSampleRate(SAMPLE_RATE)
+                            .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
+                            .setChannelMask(AudioFormat.CHANNEL_OUT_MONO)
+                            .build())
+                    .setBufferSizeInBytes(bufferSizeBytes)
+                    .setTransferMode(AudioTrack.MODE_STREAM)
+                    .build();
+        }
+        return new AudioTrack(
+                AudioManager.STREAM_VOICE_CALL,
+                SAMPLE_RATE,
+                AudioFormat.CHANNEL_OUT_MONO,
+                AudioFormat.ENCODING_PCM_16BIT,
+                bufferSizeBytes,
+                AudioTrack.MODE_STREAM
+        );
     }
 
     /** 停播：停线程 + 释放 AudioTrack。可重复调用。 */

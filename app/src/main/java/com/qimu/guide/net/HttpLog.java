@@ -22,6 +22,15 @@ public final class HttpLog {
 
     /** 返回日志拦截器：debug 打印 BODY 级日志，release 为空操作。 */
     public static Interceptor debugLogger() {
+        return logger(HttpLoggingInterceptor.Level.BODY);
+    }
+
+    /** RTC requests and responses contain join tokens: never log bodies or headers. */
+    public static Interceptor rtcLogger() {
+        return logger(HttpLoggingInterceptor.Level.BASIC);
+    }
+
+    private static Interceptor logger(HttpLoggingInterceptor.Level level) {
         if (!BuildConfig.DEBUG) {
             return chain -> chain.proceed(chain.request());
         }
@@ -29,7 +38,7 @@ public final class HttpLog {
         // 必须显式指定 android.util.Log Logger 才能用 adb logcat -s okhttp 抓到。
         HttpLoggingInterceptor logging = new HttpLoggingInterceptor(
                 message -> Log.i(TAG, message));
-        logging.setLevel(HttpLoggingInterceptor.Level.BODY);
+        logging.setLevel(level);
         return logging;
     }
 }

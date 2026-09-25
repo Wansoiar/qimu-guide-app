@@ -25,8 +25,7 @@ import com.qimu.guide.provisioning.OperatorConfigActivity;
 import com.qimu.guide.provisioning.OperatorSessionStore;
 import com.qimu.guide.provisioning.ProvisioningStore;
 import com.qimu.guide.service.BleService;
-import com.qimu.guide.service.RealtimeGuideManager;
-import com.qimu.guide.service.TourExitWatchdogService;
+import com.qimu.guide.service.GuideForegroundService;
 import com.qimu.guide.ui.device.DeviceFragment;
 import com.qimu.guide.ui.dialogue.DialogueFragment;
 import com.qimu.guide.ui.export.ExportFragment;
@@ -43,7 +42,6 @@ public class MainActivity extends AppCompatActivity implements TourSessionManage
     private BottomNavigationView bottomNav;
     private BleService bleService;
     private TourSessionManager tourSessionManager;
-    private RealtimeGuideManager realtimeGuideManager;
     private ProvisioningStore provisioningStore;
     private OperatorSessionStore operatorSessionStore;
     private TextView tvHeaderStatus;
@@ -53,6 +51,7 @@ public class MainActivity extends AppCompatActivity implements TourSessionManage
     private long lastTitleTapAt;
     private boolean longPressFired;
     private boolean debugBallDragging;
+    private boolean sessionNavigationPending;
     private View debugFloatingBall;
     private float debugBallDownX;
     private float debugBallDownY;
@@ -92,7 +91,6 @@ public class MainActivity extends AppCompatActivity implements TourSessionManage
         bleService.addListener(bleListener);
         tourSessionManager = TourSessionManager.get();
         tourSessionManager.addListener(this);
-        realtimeGuideManager = RealtimeGuideManager.get();
         operatorSessionStore = OperatorSessionStore.get(this);
 
         bottomNav = findViewById(R.id.bottom_navigation);
@@ -122,15 +120,16 @@ public class MainActivity extends AppCompatActivity implements TourSessionManage
             return false;
         });
 
-        if (savedInstanceState == null || tourSessionManager.hasCleanupWarning()) {
-            if (tourSessionManager.hasCleanupWarning()) removeSessionFragments();
-            bottomNav.setSelectedItemId(R.id.nav_device);
+        TourSessionManager.TourSession activeSession = tourSessionManager.current();
+        if (savedInstanceState == null) {
+            bottomNav.setSelectedItemId(activeSession == null
+                    ? R.id.nav_device : R.id.nav_dialogue);
+        } else if (tourSessionManager.hasCleanupWarning()) {
+            navigateForSessionState(false);
         }
         invalidateTabs();
-        TourSessionManager.TourSession activeSession = tourSessionManager.current();
         if (activeSession != null) {
-            realtimeGuideManager.startForTour(activeSession);
-            TourExitWatchdogService.start();
+            GuideForegroundService.startForTour();
         }
     }
 
@@ -319,28 +318,56 @@ public class MainActivity extends AppCompatActivity implements TourSessionManage
     @Override
     public void onTourSessionChanged(boolean active) {
         runOnUiThread(() -> {
-            TourSessionManager.TourSession session = tourSessionManager.current();
-            if (active && session != null) {
-                realtimeGuideManager.startForTour(session);
-                TourExitWatchdogService.start();
-            } else if (!active) {
-                realtimeGuideManager.stopForTour(null);
-                TourExitWatchdogService.stop();
-            }
             invalidateTabs();
-            removeSessionFragments();
-            bottomNav.setSelectedItemId(active ? R.id.nav_dialogue : R.id.nav_device);
+            navigateForSessionState(active);
         });
     }
 
-    private void removeSessionFragments() {
-        Fragment dialogue = getSupportFragmentManager().findFragmentByTag(TAG_DIALOGUE);
-        Fragment export = getSupportFragmentManager().findFragmentByTag(TAG_EXPORT);
-        if (dialogue == null && export == null) return;
-        FragmentTransaction transaction = getSupportFragmentManager().beginTransaction();
-        if (dialogue != null) transaction.remove(dialogue);
-        if (export != null) transaction.remove(export);
+    /**
+     * Session changes can arrive while the bottom navigation is disabled by the return flow.
+     * Render the destination and remove session-only pages in one transaction instead of relying
+     * on setSelectedItemId() to dispatch a second transaction.
+     */
+    private void navigateForSessionState(boolean active) {
+        if (isFinishing() || isDestroyed()) return;
+        if (getSupportFragmentManager().isStateSaved()) {
+            sessionNavigationPending = true;
+            return;
+        }
+
+        sessionNavigationPending = false;
+        String targetTag = active ? TAG_DIALOGUE : TAG_DEVICE;
+        int targetItemId = active ? R.id.nav_dialogue : R.id.nav_device;
+        Fragment target = getSupportFragmentManager().findFragmentByTag(targetTag);
+        FragmentTransaction transaction = getSupportFragmentManager().beginTransaction()
+                .setTransition(FragmentTransaction.TRANSIT_FRAGMENT_FADE);
+        for (Fragment fragment : getSupportFragmentManager().getFragments()) {
+            if (!fragment.isAdded()) continue;
+            String tag = fragment.getTag();
+            if (!active && (TAG_DIALOGUE.equals(tag) || TAG_EXPORT.equals(tag))) {
+                transaction.remove(fragment);
+            } else {
+                transaction.hide(fragment);
+            }
+        }
+        if (target == null) {
+            target = active ? new DialogueFragment() : new DeviceFragment();
+            transaction.add(R.id.fragment_container, target, targetTag);
+        } else {
+            transaction.show(target);
+        }
         transaction.commit();
+        bottomNav.getMenu().findItem(R.id.nav_device).setEnabled(true);
+        bottomNav.getMenu().findItem(R.id.nav_export).setEnabled(true);
+        bottomNav.getMenu().findItem(targetItemId).setChecked(true);
+    }
+
+    @Override
+    protected void onPostResume() {
+        super.onPostResume();
+        if (sessionNavigationPending) {
+            navigateForSessionState(tourSessionManager.isActive());
+        }
     }
 
     @Override
@@ -357,12 +384,8 @@ public class MainActivity extends AppCompatActivity implements TourSessionManage
         operatorEntryHandler.removeCallbacks(operatorEntryRunnable);
         if (bleService != null) bleService.removeListener(bleListener);
         if (tourSessionManager != null) tourSessionManager.removeListener(this);
-        // 用户正常退出 App（返回键/finish）前结束当前导览会话并关闭 RTC 房间。
-        // 从最近任务划掉 App 由 TourExitWatchdogService.onTaskRemoved 处理。
-        // 旋转等配置变更触发重建时不结束会话；后台被系统杀死由下次启动的会话标记兜底。
-        if (isFinishing()) {
-            QimuApplication.endActiveTourBeforeExit(false);
-        }
+        // Activity 退出、锁屏或从最近任务划掉都不等于结束导览；前台服务继续托管。
+        // 只有显式“结束本次游览”才走 TourReturnCoordinator 的完整收尾。
     }
 
 }

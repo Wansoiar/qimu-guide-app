@@ -67,9 +67,11 @@ public final class ShareBundleActivity extends AppCompatActivity {
 
     private static final String EXTRA_SELECTED_COUNT = "share_selected_count";
     private static final String EXTRA_NEED_VLOG = "share_need_vlog";
+    private static final String EXTRA_RESULT_ONLY = "share_result_only";
     public static final String EXTRA_SHARE_URL = "share_url";
     public static final String EXTRA_PHOTO_COUNT = "share_photo_count";
     public static final String EXTRA_VLOG_ENABLED = "share_vlog_enabled";
+    public static final String EXTRA_ACCESS_CODE = "share_access_code";
     private static final int MAX_PHOTO_BYTES = 10 * 1024 * 1024;
 
     public static Intent createIntent(@NonNull Context context,
@@ -80,14 +82,27 @@ public final class ShareBundleActivity extends AppCompatActivity {
                 .putExtra(EXTRA_NEED_VLOG, needVlog);
     }
 
+    public static Intent createResultIntent(@NonNull Context context,
+                                            @NonNull String shareUrl,
+                                            int photoCount,
+                                            boolean vlogEnabled,
+                                            @NonNull String accessCode) {
+        return new Intent(context, ShareBundleActivity.class)
+                .putExtra(EXTRA_RESULT_ONLY, true)
+                .putExtra(EXTRA_SHARE_URL, shareUrl)
+                .putExtra(EXTRA_PHOTO_COUNT, photoCount)
+                .putExtra(EXTRA_VLOG_ENABLED, vlogEnabled)
+                .putExtra(EXTRA_ACCESS_CODE, accessCode);
+    }
+
     private final ExecutorService orchestrationExecutor =
             Executors.newSingleThreadExecutor(runnable -> namedThread(runnable, "share-flow"));
     private final ExecutorService uploadExecutor =
             Executors.newFixedThreadPool(4, runnable -> namedThread(runnable, "share-photo"));
     private final List<Future<?>> uploadFutures = new ArrayList<>();
 
-    private TextInputLayout phoneLayout;
-    private TextInputEditText phoneInput;
+    private TextInputLayout accessCodeLayout;
+    private TextInputEditText accessCodeInput;
     private MaterialButton startButton;
     private View formPanel;
     private View progressPanel;
@@ -107,7 +122,7 @@ public final class ShareBundleActivity extends AppCompatActivity {
     private boolean completed;
     private int uploadPhotoCount;
     private String shareUrl = "";
-    private String phoneLast4 = "";
+    private String accessCode = "";
     private volatile ShareBundleApiClient apiClient;
 
     @Override
@@ -119,12 +134,6 @@ public final class ShareBundleActivity extends AppCompatActivity {
 
         needVlog = getIntent().getBooleanExtra(EXTRA_NEED_VLOG, false);
         bindViews();
-        photoRepository = new LocalPhotoRepository(this);
-        selectionStore = new GallerySelectionStore(this);
-
-        int expectedCount = getIntent().getIntExtra(EXTRA_SELECTED_COUNT, 0);
-        setSelectionSummary(expectedCount);
-        startButton.setEnabled(false);
         startButton.setOnClickListener(view -> startShare());
         findViewById(R.id.share_back).setOnClickListener(view -> handleBack());
         findViewById(R.id.share_done).setOnClickListener(view -> finish());
@@ -136,12 +145,28 @@ public final class ShareBundleActivity extends AppCompatActivity {
                 handleBack();
             }
         });
+
+        if (getIntent().getBooleanExtra(EXTRA_RESULT_ONLY, false)) {
+            showShareResult(
+                    getIntent().getStringExtra(EXTRA_SHARE_URL),
+                    getIntent().getIntExtra(EXTRA_PHOTO_COUNT, 0),
+                    getIntent().getBooleanExtra(EXTRA_VLOG_ENABLED, false),
+                    getIntent().getStringExtra(EXTRA_ACCESS_CODE),
+                    true);
+            return;
+        }
+
+        photoRepository = new LocalPhotoRepository(this);
+        selectionStore = new GallerySelectionStore(this);
+        int expectedCount = getIntent().getIntExtra(EXTRA_SELECTED_COUNT, 0);
+        setSelectionSummary(expectedCount);
+        startButton.setEnabled(false);
         loadSelectedPhotos();
     }
 
     private void bindViews() {
-        phoneLayout = findViewById(R.id.share_phone_layout);
-        phoneInput = findViewById(R.id.share_phone);
+        accessCodeLayout = findViewById(R.id.share_access_code_layout);
+        accessCodeInput = findViewById(R.id.share_access_code);
         startButton = findViewById(R.id.share_start);
         formPanel = findViewById(R.id.share_form);
         progressPanel = findViewById(R.id.share_progress_panel);
@@ -201,26 +226,30 @@ public final class ShareBundleActivity extends AppCompatActivity {
             showError("此安装包未配置分享服务密钥，请让管理员重新生成联调包");
             return;
         }
-
-        String normalizedPhone = normalizePhone(textOf(phoneInput));
-        if (!normalizedPhone.matches("^1\\d{10}$")) {
-            phoneLayout.setError("请输入正确的 11 位手机号");
+        String sessionId = validUuidOrNull(session.sessionId);
+        String venueId = validUuidOrNull(session.venueId);
+        if (sessionId == null || venueId == null) {
+            showError("当前导览会话信息无效，请返回设备页重新进入导览");
             return;
         }
-        phoneLayout.setError(null);
-        phoneLast4 = normalizedPhone.substring(normalizedPhone.length() - 4);
+
+        String enteredAccessCode = textOf(accessCodeInput);
+        if (!ShareAccessCode.isValid(enteredAccessCode)) {
+            accessCodeLayout.setError("请输入 4 位数字密码");
+            return;
+        }
+        accessCodeLayout.setError(null);
+        accessCode = enteredAccessCode;
         errorText.setVisibility(View.GONE);
         setUploading(true, "正在创建分享…", true, 0);
 
-        AtomicReference<String> phone = new AtomicReference<>(normalizedPhone);
-        String sessionId = validUuidOrNull(session.sessionId);
-        String venueId = validUuidOrNull(session.venueId);
-        orchestrationExecutor.execute(() -> runUploadFlow(phone, sessionId, venueId));
+        AtomicReference<String> code = new AtomicReference<>(enteredAccessCode);
+        orchestrationExecutor.execute(() -> runUploadFlow(code, sessionId, venueId));
     }
 
-    private void runUploadFlow(@NonNull AtomicReference<String> phone,
-                               @Nullable String sessionId,
-                               @Nullable String venueId) {
+    private void runUploadFlow(@NonNull AtomicReference<String> code,
+                               @NonNull String sessionId,
+                               @NonNull String venueId) {
         ShareBundleApiClient client = new ShareBundleApiClient(androidDeviceId());
         apiClient = client;
         try {
@@ -237,16 +266,16 @@ public final class ShareBundleActivity extends AppCompatActivity {
                 setUploading(true, "正在创建分享…", true, 0);
             });
             ShareBundleApiClient.CreateResult created = client.createBundle(
-                    phone.get(), preparedPhotos.size(), needVlog, venueId);
-            phone.set(null);
-            runOnUiThread(() -> phoneInput.setText(""));
+                    code.get(), preparedPhotos.size(), needVlog, sessionId, venueId);
+            code.set(null);
+            runOnUiThread(() -> accessCodeInput.setText(""));
 
-            uploadAllPhotos(client, created.bundleId, preparedPhotos, sessionId);
+            uploadAllPhotos(client, created.bundleId, preparedPhotos);
             runOnUiThread(() -> setUploading(true, "正在激活分享…", true, 0));
             ShareBundleApiClient.FinishResult finished = client.finishBundle(created.bundleId);
             runOnUiThread(() -> showShareResult(finished));
         } catch (Throwable error) {
-            phone.set(null);
+            code.set(null);
             runOnUiThread(() -> {
                 if (isFinishing() || isDestroyed()) return;
                 setUploading(false, "", false, 0);
@@ -275,8 +304,7 @@ public final class ShareBundleActivity extends AppCompatActivity {
 
     private void uploadAllPhotos(@NonNull ShareBundleApiClient client,
                                  @NonNull String bundleId,
-                                 @NonNull List<PreparedPhoto> photos,
-                                 @Nullable String sessionId) throws IOException {
+                                 @NonNull List<PreparedPhoto> photos) throws IOException {
         CompletionService<ShareBundleApiClient.UploadResult> completion =
                 new ExecutorCompletionService<>(uploadExecutor);
         synchronized (uploadFutures) {
@@ -292,8 +320,7 @@ public final class ShareBundleActivity extends AppCompatActivity {
                             prepared.mimeType,
                             bytes,
                             sortOrder,
-                            prepared.sha256,
-                            sessionId);
+                            prepared.sha256);
                 }));
             }
         }
@@ -400,29 +427,53 @@ public final class ShareBundleActivity extends AppCompatActivity {
     }
 
     private void showShareResult(@NonNull ShareBundleApiClient.FinishResult result) {
+        showShareResult(result.shareUrl, result.photoCount, result.vlogEnabled,
+                accessCode, true);
+    }
+
+    private void showShareResult(@Nullable String resultShareUrl,
+                                 int photoCount,
+                                 boolean vlogEnabled,
+                                 @Nullable String resultAccessCode,
+                                 boolean publishActivityResult) {
         if (isFinishing() || isDestroyed()) return;
+        if (resultShareUrl == null || resultShareUrl.trim().isEmpty()
+                || !ShareAccessCode.isValid(resultAccessCode)) {
+            showError("分享二维码信息不完整，请重新生成");
+            return;
+        }
         completed = true;
         uploading = false;
-        shareUrl = result.shareUrl;
+        shareUrl = resultShareUrl;
+        accessCode = resultAccessCode;
+        needVlog = vlogEnabled;
         progressPanel.setVisibility(View.GONE);
         formPanel.setVisibility(View.GONE);
         errorText.setVisibility(View.GONE);
         qrPanel.setVisibility(View.VISIBLE);
         try {
-            qrImage.setImageBitmap(createQrBitmap(result.shareUrl, 720));
+            qrImage.setImageBitmap(createQrBitmap(resultShareUrl, 720));
         } catch (WriterException error) {
             showError("二维码绘制失败，可复制下方链接打开 H5");
         }
-        shareUrlText.setText(result.shareUrl);
-        String vlogText = result.vlogEnabled
+        shareUrlText.setText(resultShareUrl);
+        String vlogText = vlogEnabled
                 ? "已开启回忆视频 · 验证后可选择视频边框"
                 : "仅分享照片";
         qrSummary.setText(getString(R.string.share_qr_summary,
-                phoneLast4, result.photoCount, vlogText));
+                accessCode, photoCount, vlogText));
+        getIntent()
+                .putExtra(EXTRA_RESULT_ONLY, true)
+                .putExtra(EXTRA_SHARE_URL, resultShareUrl)
+                .putExtra(EXTRA_PHOTO_COUNT, photoCount)
+                .putExtra(EXTRA_VLOG_ENABLED, vlogEnabled)
+                .putExtra(EXTRA_ACCESS_CODE, accessCode);
+        if (!publishActivityResult) return;
         Intent resultIntent = new Intent()
-                .putExtra(EXTRA_SHARE_URL, result.shareUrl)
-                .putExtra(EXTRA_PHOTO_COUNT, result.photoCount)
-                .putExtra(EXTRA_VLOG_ENABLED, result.vlogEnabled);
+                .putExtra(EXTRA_SHARE_URL, resultShareUrl)
+                .putExtra(EXTRA_PHOTO_COUNT, photoCount)
+                .putExtra(EXTRA_VLOG_ENABLED, vlogEnabled)
+                .putExtra(EXTRA_ACCESS_CODE, accessCode);
         setResult(Activity.RESULT_OK, resultIntent);
     }
 
@@ -430,7 +481,7 @@ public final class ShareBundleActivity extends AppCompatActivity {
                               boolean indeterminate, int completedCount) {
         uploading = active;
         startButton.setEnabled(!active && !selectedPhotos.isEmpty());
-        phoneInput.setEnabled(!active);
+        accessCodeInput.setEnabled(!active);
         progressPanel.setVisibility(active ? View.VISIBLE : View.GONE);
         if (!active) return;
         progressText.setText(message);
@@ -459,7 +510,7 @@ public final class ShareBundleActivity extends AppCompatActivity {
             ShareBundleApiClient.ApiException api = (ShareBundleApiClient.ApiException) actual;
             switch (api.code) {
                 case 30001: message = "APP 分享服务密钥无效，请联系管理员"; break;
-                case 30002: message = "手机号格式不正确，请重新输入"; break;
+                case 30002: message = "请输入 4 位数字密码"; break;
                 case 30003:
                 case 30014:
                     message = "最多只能分享 " + GallerySelectionStore.MAX_SELECTION + " 张照片";
@@ -520,13 +571,6 @@ public final class ShareBundleActivity extends AppCompatActivity {
         } catch (IllegalArgumentException ignored) {
             return null;
         }
-    }
-
-    private static String normalizePhone(String raw) {
-        String value = raw == null ? "" : raw.replaceAll("[\\s-]", "");
-        if (value.startsWith("+86")) value = value.substring(3);
-        else if (value.startsWith("86") && value.length() == 13) value = value.substring(2);
-        return value;
     }
 
     private static String textOf(TextInputEditText input) {
@@ -594,8 +638,8 @@ public final class ShareBundleActivity extends AppCompatActivity {
         orchestrationExecutor.shutdownNow();
         uploadExecutor.shutdownNow();
         if (photoRepository != null) photoRepository.close();
-        phoneInput.setText("");
-        phoneLast4 = "";
+        accessCodeInput.setText("");
+        accessCode = "";
         super.onDestroy();
     }
 
