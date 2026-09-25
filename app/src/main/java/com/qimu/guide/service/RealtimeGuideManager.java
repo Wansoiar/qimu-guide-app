@@ -765,6 +765,70 @@ public final class RealtimeGuideManager {
     }
 
     /** 点击结束游览后应立即调用；先停眼镜音频，再退房并停止后端 Agent。 */
+    public GuideApiClient.RtcStopRequest prepareServerStopForTour(
+            @NonNull TourSessionManager.TourSession session) {
+        if (TourSessionManager.get().current() != session) {
+            throw new IllegalStateException("tour changed before return");
+        }
+        GuideApiClient.RtcSessionInfo current = rtcSession;
+        GuideApiClient.RtcStopRequest request = new GuideApiClient.RtcStopRequest(
+                current == null ? null : current.roomId,
+                current == null ? null : current.taskId, session.sessionId,
+                AppContextHeaders.dialogue());
+        freezeForReturn(session.sessionId);
+        return request;
+    }
+
+    public GuideApiClient.RtcStopRequest prepareServerStopForStaleOrder(
+            @Nullable String roomId, @Nullable String taskId, @NonNull String sessionId) {
+        if (TourSessionManager.get().current() != null) {
+            throw new IllegalStateException("an active tour cannot be ended as a stale order");
+        }
+        GuideApiClient.RtcStopRequest request = new GuideApiClient.RtcStopRequest(
+                roomId, taskId, sessionId, AppContextHeaders.dialogue());
+        freezeForReturn(sessionId);
+        return request;
+    }
+
+    /** Stop local media and fence every in-flight recovery before asking the backend to end. */
+    private void freezeForReturn(String sessionId) {
+        if (Looper.myLooper() != Looper.getMainLooper()
+                || (tourSessionId != null && !sessionId.equals(tourSessionId))) {
+            throw new IllegalStateException("invalid tour return target");
+        }
+        endingTourSessionId = sessionId;
+        ++generation;
+        audioStartAttempt++;
+        audioAutoRetryCount = 0;
+        recovery.stop();
+        quietAudioResume = false;
+        requiresNewTour = true;
+        invalidateTokenRenewal();
+        apiClient.cancelRtcCalls();
+        cancelVisionOperationOnMain("正在结束游览，拍照识别已取消");
+        pendingVisionRequest = null;
+        unregisterBleListener();
+        RtcVoiceChatManager current = rtc;
+        if (current != null) current.setInputEnabled(false);
+        glassesAudioSource.stop();
+        rtc = null;
+        if (current != null) current.stop();
+        rtcRoomJoined = false;
+        agentOnline = false;
+        // Keep RTC identity, transcript and the business tour until confirmed cleanup.
+        updateState(State.STOPPING, "正在确认结束游览…");
+    }
+
+    public void onServerStopConfirmationFailed(String sessionId, String message) {
+        if (!sessionId.equals(endingTourSessionId)) return;
+        updateState(TourSessionManager.get().isActive() ? State.ERROR : State.IDLE, message);
+    }
+
+    public void completeConfirmedServerStop(GuideApiClient.RtcStopRequest request) {
+        if (!request.sessionId.equals(endingTourSessionId)) return;
+        stopForTourOnMain(request.sessionId, true, request.headers, false);
+    }
+
     public void stopForTour(@Nullable String expectedTourSessionId) {
         Map<String, String> stopHeaders = AppContextHeaders.dialogue();
         String endingId = expectedTourSessionId != null ? expectedTourSessionId : tourSessionId;
@@ -778,6 +842,12 @@ public final class RealtimeGuideManager {
 
     private void stopForTourOnMain(@Nullable String expectedTourSessionId,
                                    boolean publishStopping, Map<String, String> stopHeaders) {
+        stopForTourOnMain(expectedTourSessionId, publishStopping, stopHeaders, true);
+    }
+
+    private void stopForTourOnMain(@Nullable String expectedTourSessionId,
+                                   boolean publishStopping, Map<String, String> stopHeaders,
+                                   boolean sendServerStop) {
         if (expectedTourSessionId != null && tourSessionId != null
                 && !expectedTourSessionId.equals(tourSessionId)) {
             return;
@@ -820,7 +890,7 @@ public final class RealtimeGuideManager {
             handledCommandIds.clear();
             hasConnectedInTour = false;
         }
-        if (currentSession != null || stopSessionId != null) {
+        if (sendServerStop && (currentSession != null || stopSessionId != null)) {
             stopServerSessionAsync(currentSession, stopSessionId, publishStopping, stopHeaders);
         }
         updateState(State.IDLE, "本次导览已结束");

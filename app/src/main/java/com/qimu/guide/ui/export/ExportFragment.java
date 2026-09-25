@@ -140,6 +140,8 @@ public class ExportFragment extends Fragment {
                 @Override
                 public void onReturnStageChanged(String message) {
                     if (!isAdded()) return;
+                    // 只响应「活动游览结束」流程；上次订单收尾由设备页展示。
+                    if (!returnCoordinator.isActiveTourReturnInProgress()) return;
                     requireActivity().runOnUiThread(() -> showReturnProgress(message));
                 }
 
@@ -148,9 +150,13 @@ public class ExportFragment extends Fragment {
                                              boolean serverCloseSucceeded,
                                              boolean localCleanupSucceeded) {
                     if (!isAdded()) return;
+                    if (!returnCoordinator.isActiveTourReturn()) return;
                     requireActivity().runOnUiThread(() -> {
                         setNavigationEnabled(true);
-                        if (returnProgressDialog != null) returnProgressDialog.dismiss();
+                        if (returnProgressDialog != null) {
+                            returnProgressDialog.dismiss();
+                            returnProgressDialog = null;
+                        }
                         if (!localCleanupSucceeded) {
                             Toast.makeText(requireContext(),
                                     "本机导览缓存未完全清理，已阻止下一位游客开始导览；请立即告知管理员",
@@ -168,6 +174,22 @@ public class ExportFragment extends Fragment {
                                     "本次游览已结束，眼镜正在准备下一位游客",
                                     Toast.LENGTH_SHORT).show();
                         }
+                    });
+                }
+
+                @Override
+                public void onReturnFailed(String message) {
+                    if (!isAdded()) return;
+                    if (!returnCoordinator.isActiveTourReturn()) return;
+                    requireActivity().runOnUiThread(() -> {
+                        setNavigationEnabled(true);
+                        if (returnProgressDialog != null) {
+                            returnProgressDialog.dismiss();
+                            returnProgressDialog = null;
+                        }
+                        // 归还状态已结束，恢复导出页按钮（结束/导出/相册等）以便重试。
+                        updateActionState();
+                        Toast.makeText(requireContext(), message, Toast.LENGTH_LONG).show();
                     });
                 }
             };
@@ -411,9 +433,9 @@ public class ExportFragment extends Fragment {
         if (!returnInProgress && tourSessionManager.isActive() && bleService.isConnected()) {
             bleService.queryNewMediaFile();
         }
-        if (returnInProgress) {
+        if (returnCoordinator.isActiveTourReturnInProgress()) {
             setNavigationEnabled(false);
-            showReturnProgress("正在完成归还流程…");
+            showReturnProgress("正在结束本次游览…");
             updateActionState();
         }
     }
@@ -932,11 +954,14 @@ public class ExportFragment extends Fragment {
 
     private void beginIrreversibleReturn() {
         setNavigationEnabled(false);
-        showReturnProgress("正在开始归还流程…");
+        showReturnProgress("正在结束本次游览…");
         if (!returnCoordinator.beginReturn()) {
             setNavigationEnabled(true);
-            if (returnProgressDialog != null) returnProgressDialog.dismiss();
-            Toast.makeText(requireContext(), "归还流程未启动，请重试", Toast.LENGTH_SHORT).show();
+            if (returnProgressDialog != null) {
+                returnProgressDialog.dismiss();
+                returnProgressDialog = null;
+            }
+            Toast.makeText(requireContext(), "未能开始结束本次游览，请重试", Toast.LENGTH_SHORT).show();
         }
         updateActionState();
     }
@@ -961,7 +986,7 @@ public class ExportFragment extends Fragment {
             textParams.topMargin = padding / 2;
             content.addView(returnProgressText, textParams);
             returnProgressDialog = new AlertDialog.Builder(requireContext())
-                    .setTitle("正在结束导览")
+                    .setTitle("正在结束本次游览")
                     .setView(content)
                     .setCancelable(false)
                     .create();

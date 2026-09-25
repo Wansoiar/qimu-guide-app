@@ -275,6 +275,20 @@ public final class GuideForegroundService extends Service implements
         });
     }
 
+    @Override
+    public void onReturnFailed(String message) {
+        mainHandler.post(() -> {
+            if (!TourSessionManager.get().isActive()) {
+                shutdownService();
+                return;
+            }
+            guideState = RealtimeGuideManager.get().getState();
+            guideMessage = message;
+            updateNotification();
+            updateWakeLock();
+        });
+    }
+
     private void createNotificationChannel() {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O || notificationManager == null) return;
         NotificationChannel channel = new NotificationChannel(

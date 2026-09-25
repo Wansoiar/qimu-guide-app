@@ -8,6 +8,7 @@ import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
 import android.text.Editable;
+import android.text.InputFilter;
 import android.text.SpannableString;
 import android.text.Spanned;
 import android.text.TextUtils;
@@ -113,6 +114,8 @@ public class DeviceFragment extends Fragment {
                 @Override
                 public void onReturnStageChanged(String message) {
                     if (!isAdded()) return;
+                    // 「活动游览结束」由导出页展示进度；设备页只负责上次订单收尾。
+                    if (TourReturnCoordinator.get().isActiveTourReturnInProgress()) return;
                     requireActivity().runOnUiThread(() -> showLastOrderProgress(message));
                 }
 
@@ -121,6 +124,7 @@ public class DeviceFragment extends Fragment {
                                              boolean serverCloseSucceeded,
                                              boolean localCleanupSucceeded) {
                     if (!isAdded()) return;
+                    if (TourReturnCoordinator.get().isActiveTourReturn()) return;
                     requireActivity().runOnUiThread(() -> {
                         if (lastOrderProgressDialog != null) {
                             lastOrderProgressDialog.dismiss();
@@ -139,6 +143,19 @@ public class DeviceFragment extends Fragment {
                                     "上次订单已结束，眼镜已为下一位游客准备就绪",
                                     Toast.LENGTH_SHORT).show();
                         }
+                    });
+                }
+
+                @Override
+                public void onReturnFailed(String message) {
+                    if (!isAdded()) return;
+                    if (TourReturnCoordinator.get().isActiveTourReturn()) return;
+                    requireActivity().runOnUiThread(() -> {
+                        if (lastOrderProgressDialog != null) {
+                            lastOrderProgressDialog.dismiss();
+                            lastOrderProgressDialog = null;
+                        }
+                        Toast.makeText(requireContext(), message, Toast.LENGTH_LONG).show();
                     });
                 }
             };
@@ -366,6 +383,18 @@ public class DeviceFragment extends Fragment {
         TextInputEditText input = new TextInputEditText(inputLayout.getContext());
         input.setSingleLine(true);
         input.setInputType(android.text.InputType.TYPE_CLASS_PHONE);
+        // 手机号仅允许 11 位数字：输入/粘贴时过滤非数字，超出 11 位自动截断。
+        input.setFilters(new InputFilter[]{
+                (source, start, end, dest, dstart, dend) -> {
+                    StringBuilder digits = new StringBuilder(end - start);
+                    for (int i = start; i < end; i++) {
+                        char c = source.charAt(i);
+                        if (c >= '0' && c <= '9') digits.append(c);
+                    }
+                    return digits.toString();
+                },
+                new InputFilter.LengthFilter(11)
+        });
         inputLayout.addView(input, new TextInputLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
 

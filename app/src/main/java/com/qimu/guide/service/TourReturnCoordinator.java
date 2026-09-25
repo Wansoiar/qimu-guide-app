@@ -3,6 +3,7 @@ package com.qimu.guide.service;
 import android.content.Context;
 import android.os.Handler;
 import android.os.Looper;
+import android.os.SystemClock;
 import android.text.TextUtils;
 import android.util.Log;
 
@@ -30,6 +31,8 @@ public final class TourReturnCoordinator {
         void onReturnStageChanged(String message);
         void onReturnFinished(boolean glassesResetConfirmed, boolean serverCloseSucceeded,
                               boolean localCleanupSucceeded);
+        /** 服务端确认结束时失败：message 为接口返回内容或兜底文案，本次归还不会继续。 */
+        void onReturnFailed(String message);
     }
 
     private static final TourReturnCoordinator INSTANCE = new TourReturnCoordinator();
@@ -41,8 +44,15 @@ public final class TourReturnCoordinator {
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
     private final Set<Listener> listeners = new CopyOnWriteArraySet<>();
     private boolean inProgress;
+    /** true：本次归还来自活动游览（导出页）；false：上次订单收尾（设备页）。 */
+    private boolean activeTourReturn;
+    /** 服务端停止确认进行中；用于兜底超时区分「确认阶段」与「后续清理阶段」。 */
+    private final ReturnConfirmationGate confirmationGate = new ReturnConfirmationGate();
+    private GuideApiClient pendingStopClient;
     private int generation;
     private String currentStage = "";
+    /** 服务端停止确认的兜底超时：超过该时间仍未确认则按失败结束归还，避免进度框卡死。 */
+    private static final long SERVER_STOP_CONFIRM_TIMEOUT_MS = 20_000L;
 
     private TourReturnCoordinator() {
     }
@@ -61,87 +71,175 @@ public final class TourReturnCoordinator {
         return inProgress;
     }
 
+    /** The most recent flow type remains available to terminal callbacks. */
+    public boolean isActiveTourReturn() { return activeTourReturn; }
+
+    public boolean isActiveTourReturnInProgress() {
+        return inProgress && activeTourReturn;
+    }
+
     public boolean beginReturn() {
         if (Looper.myLooper() != Looper.getMainLooper()) {
-            Log.e(TAG, "归还流程必须在主线程启动");
+            Log.e(TAG, "Return must start on the main thread");
             return false;
         }
         TourSessionManager sessionManager = TourSessionManager.get();
         TourSessionManager.TourSession session = sessionManager.current();
         if (inProgress || session == null) return false;
+        BleService.ReturnTarget target = BleService.getInstance().beginReturnTransaction();
+        if (target == null) return false;
 
-        BleService bleService = BleService.getInstance();
-        BleService.ReturnTarget returnTarget = bleService.beginReturnTransaction();
-        if (returnTarget == null) return false;
-        // 归还事务已成功占位后立即停止眼镜收音、退 RTC 房并关后端 Agent，
-        // 不等待服务器关 session、眼镜 reset 或本地媒体清理结束。
-        RealtimeGuideManager.get().stopForTour(session.sessionId);
+        int operation = beginConfirmation(true, "正在确认结束本次游览…");
         sessionManager.invalidatePendingSessionRequests();
-
-        inProgress = true;
-        int operation = ++generation;
-        publishStage("正在关闭本次导览会话…");
-        // 服务端停火山由本方法开头的 stopForTour（/v1/rtc/session/stop 带 session_id）承担，
-        // 后端会落 rtc_status=stopped；失败由后端补停对账任务兜底。归还不再发独立的
-        // /sessions/{id}/close（后端无此路由）。
-        startGlassesReset(operation, session.sessionId, returnTarget, true);
+        try {
+            GuideApiClient.RtcStopRequest request =
+                    RealtimeGuideManager.get().prepareServerStopForTour(session);
+            confirmServerStop(operation, request, target);
+        } catch (RuntimeException failure) {
+            Log.e(TAG, "Unable to prepare tour stop confirmation", failure);
+            failPreparation(operation, session.sessionId, target);
+        }
         return true;
     }
 
-    /**
-     * 清理上次异常退出遗留的订单（重启后无活动会话，仅持有持久化的 session_id）。
-     * 复用与 {@link #beginReturn()} 相同的眼镜重置 + 本地缓存清理管线；缺少 RTC room/task
-     * 时通过 session-only stop 让后端关闭当前任务。网络失败仍由后端对账兜底。
-     */
+    /** Missing RTC credentials still require a confirmed session-only stop. */
     public boolean beginStaleOrderReturn(@Nullable String sessionId,
                                          @Nullable String roomId,
                                          @Nullable String taskId) {
-        if (Looper.myLooper() != Looper.getMainLooper()) {
-            Log.e(TAG, "上次订单收尾必须在主线程启动");
-            return false;
-        }
-        TourSessionManager.TourSession current = TourSessionManager.get().current();
-        if (current != null || inProgress
-                || sessionId == null || sessionId.trim().isEmpty()) {
-            return false;
-        }
+        if (Looper.myLooper() != Looper.getMainLooper()
+                || TourSessionManager.get().current() != null || inProgress
+                || sessionId == null || sessionId.trim().isEmpty()) return false;
+        BleService.ReturnTarget target = BleService.getInstance().beginReturnTransaction();
+        if (target == null) return false;
 
-        BleService bleService = BleService.getInstance();
-        BleService.ReturnTarget returnTarget = bleService.beginReturnTransaction();
-        if (returnTarget == null) return false;
-        RealtimeGuideManager.get().stopForTour(null);
+        int operation = beginConfirmation(false, "正在确认结束上次游览…");
         TourSessionManager.get().invalidatePendingSessionRequests();
-
-        // 通知后端关闭遗留会话：带 session_id 会把大 session 置 ended（释放设备），
-        // room/task 来自上次进房时的留存，用于停火山 RTC。异步发出，不阻塞本地清理。
-        final String sid = sessionId.trim();
-        final String rid = roomId == null ? "" : roomId.trim();
-        final String tid = taskId == null ? "" : taskId.trim();
-        final java.util.Map<String, String> stopHeaders = com.qimu.guide.net.AppContextHeaders.dialogue();
-        new Thread(() -> {
-            try {
-                boolean hasRtcIdentity = !rid.isEmpty() && !tid.isEmpty();
-                boolean ok = new GuideApiClient().stopRtcSession(
-                        hasRtcIdentity ? rid : null, hasRtcIdentity ? tid : null,
-                        sid, true, stopHeaders);
-                if (!ok) Log.e(TAG, "结束上次订单：后端 RTC 停止未确认: " + sid);
-            } catch (RuntimeException failure) {
-                Log.e(TAG, "结束上次订单：后端停止异常", failure);
-            }
-        }, "stale-order-rtc-stop").start();
-
-        inProgress = true;
-        int operation = ++generation;
-        publishStage("正在关闭上次导览会话…");
-        startGlassesReset(operation, sid, returnTarget, true);
+        try {
+            GuideApiClient.RtcStopRequest request = RealtimeGuideManager.get()
+                    .prepareServerStopForStaleOrder(roomId, taskId, sessionId.trim());
+            confirmServerStop(operation, request, target);
+        } catch (RuntimeException failure) {
+            Log.e(TAG, "Unable to prepare stale order stop confirmation", failure);
+            failPreparation(operation, sessionId.trim(), target);
+        }
         return true;
+    }
+
+    private int beginConfirmation(boolean activeTour, String message) {
+        inProgress = true;
+        activeTourReturn = activeTour;
+        int operation = ++generation;
+        confirmationGate.begin(operation, SystemClock.elapsedRealtime(), SERVER_STOP_CONFIRM_TIMEOUT_MS);
+        publishStage(message);
+        return operation;
+    }
+
+    private void failPreparation(int operation, String sessionId, BleService.ReturnTarget target) {
+        if (!isCurrent(operation) || confirmationGate.resolve(operation, false,
+                SystemClock.elapsedRealtime()) == ReturnConfirmationGate.Resolution.IGNORED) return;
+        if (pendingStopClient != null) pendingStopClient.cancelAll();
+        pendingStopClient = null;
+        failReturn(sessionId, target, new GuideApiClient.RtcStopResult(false, null));
+    }
+
+    /** The stop client is isolated from RTC/vision requests and can be cancelled on timeout. */
+    private void confirmServerStop(int operation, GuideApiClient.RtcStopRequest request,
+                                   BleService.ReturnTarget target) {
+        GuideApiClient confirmationClient = new GuideApiClient();
+        pendingStopClient = confirmationClient;
+        Thread worker = new Thread(() -> {
+            GuideApiClient.RtcStopResult result = confirmServerStopBlocking(
+                    operation, confirmationClient, request);
+            mainHandler.post(() -> continueAfterServerStop(operation, request, target, result));
+        }, "tour-return-stop-confirm");
+        worker.setDaemon(true);
+        try {
+            worker.start();
+        } catch (RuntimeException failure) {
+            Log.e(TAG, "Unable to start stop confirmation", failure);
+            continueAfterServerStop(operation, request, target,
+                    new GuideApiClient.RtcStopResult(false, null));
+            return;
+        }
+        mainHandler.postDelayed(() -> {
+            if (isCurrent(operation) && confirmationGate.isPending(operation)) {
+                continueAfterServerStop(operation, request, target,
+                        new GuideApiClient.RtcStopResult(false, null));
+            }
+        }, confirmationGate.remainingMs(operation, SystemClock.elapsedRealtime()));
+    }
+
+    private GuideApiClient.RtcStopResult confirmServerStopBlocking(int operation,
+            GuideApiClient client, GuideApiClient.RtcStopRequest request) {
+        GuideApiClient.RtcStopResult last = new GuideApiClient.RtcStopResult(false, null);
+        try {
+            for (int attempt = 0; attempt < 3 && confirmationGate.isPending(operation); attempt++) {
+                long remaining = confirmationGate.remainingMs(operation, SystemClock.elapsedRealtime());
+                if (remaining <= 0) break;
+                // All attempts share one absolute budget. A healthy 5-10 second vendor stop
+                // can finish; fast failures may retry without restarting the 20 second clock.
+                last = client.stopRtcSessionWithResult(request.roomId, request.taskId,
+                        request.sessionId, true, request.headers, remaining);
+                if (last.ok || com.qimu.guide.net.AppAuthInterceptor.consumeAuthError()) return last;
+                if (attempt < 2 && confirmationGate.isPending(operation)) {
+                    long delay = Math.min(250L * (attempt + 1),
+                            confirmationGate.remainingMs(operation, SystemClock.elapsedRealtime()));
+                    if (delay > 0) Thread.sleep(delay);
+                }
+            }
+        } catch (InterruptedException interrupted) {
+            Thread.currentThread().interrupt();
+        } catch (RuntimeException failure) {
+            Log.e(TAG, "Stop confirmation failed", failure);
+        }
+        return last;
+    }
+
+    private void continueAfterServerStop(int operation, GuideApiClient.RtcStopRequest request,
+                                         BleService.ReturnTarget target,
+                                         GuideApiClient.RtcStopResult result) {
+        // A timeout, duplicate result or superseded attempt cannot reach destructive cleanup.
+        if (!isCurrent(operation)) return;
+        ReturnConfirmationGate.Resolution resolution = confirmationGate.resolve(
+                operation, result.ok, SystemClock.elapsedRealtime());
+        if (resolution == ReturnConfirmationGate.Resolution.IGNORED) return;
+        GuideApiClient client = pendingStopClient;
+        pendingStopClient = null;
+        if (client != null) client.cancelAll();
+        if (resolution != ReturnConfirmationGate.Resolution.CONFIRMED) {
+            failReturn(request.sessionId, target, result);
+            return;
+        }
+        RealtimeGuideManager.get().completeConfirmedServerStop(request);
+        startGlassesReset(operation, request.sessionId, target, true);
+    }
+
+    private void failReturn(String sessionId, BleService.ReturnTarget target,
+                            GuideApiClient.RtcStopResult result) {
+        BleService.getInstance().cancelReturnTransaction(target);
+        inProgress = false;
+        currentStage = "";
+        String message = activeTourReturn
+                ? "尚未确认结束本次游览，照片已保留，请重试"
+                : "尚未确认结束上次订单，记录已保留，请重试";
+        if (result.serverMessage != null && !TextUtils.isEmpty(result.serverMessage)) {
+            message += "（" + result.serverMessage + "）";
+        }
+        RealtimeGuideManager.get().onServerStopConfirmationFailed(sessionId, message);
+        for (Listener listener : listeners) {
+            try {
+                listener.onReturnFailed(message);
+            } catch (RuntimeException listenerFailure) {
+                Log.e(TAG, "Return failure listener failed", listenerFailure);
+            }
+        }
     }
 
     private void startGlassesReset(int operation, String sessionId,
                                    BleService.ReturnTarget returnTarget,
                                    boolean serverCloseSucceeded) {
         if (!isCurrent(operation)) return;
-        publishStage("正在清理眼镜中的照片，请勿关闭 App…");
+        publishStage("正在清理眼镜照片，请勿关闭应用…");
         BleService.getInstance().resetForReturn(returnTarget, (success, errorCode) ->
                 cleanupLocalData(operation, sessionId, returnTarget,
                         success, serverCloseSucceeded));
@@ -151,7 +249,7 @@ public final class TourReturnCoordinator {
                                   BleService.ReturnTarget returnTarget,
                                   boolean resetConfirmed, boolean serverCloseSucceeded) {
         if (!isCurrent(operation)) return;
-        publishStage("正在清理本次导览缓存…");
+        publishStage("正在清理游览记录…");
         Thread cleanupThread = new Thread(() -> {
             CleanupResult result = null;
             try {

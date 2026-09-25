@@ -5,6 +5,10 @@ import android.util.Log;
 import androidx.annotation.Nullable;
 
 import org.json.JSONObject;
+import com.google.gson.Gson;
+import com.google.gson.JsonElement;
+import com.google.gson.JsonObject;
+import com.google.gson.JsonParser;
 
 import java.io.File;
 import java.util.Map;
@@ -344,6 +348,64 @@ public class GuideApiClient {
         return fields;
     }
 
+    /** Snapshot the identity and headers before freezing/clearing the active tour. */
+    public static final class RtcStopRequest {
+        @Nullable public final String roomId;
+        @Nullable public final String taskId;
+        public final String sessionId;
+        public final Map<String, String> headers;
+
+        public RtcStopRequest(@Nullable String roomId, @Nullable String taskId,
+                              String sessionId, Map<String, String> headers) {
+            if (sessionId == null || sessionId.trim().isEmpty()) {
+                throw new IllegalArgumentException("tour stop requires session_id");
+            }
+            this.sessionId = sessionId.trim();
+            // A restart may retain only one RTC field. End by session instead of sending
+            // a partial identity (or the empty strings rejected by the backend).
+            boolean complete = roomId != null && !roomId.trim().isEmpty()
+                    && taskId != null && !taskId.trim().isEmpty();
+            this.roomId = complete ? roomId.trim() : null;
+            this.taskId = complete ? taskId.trim() : null;
+            this.headers = java.util.Collections.unmodifiableMap(new LinkedHashMap<>(headers));
+        }
+    }
+
+    public static final class RtcStopResult {
+        public final boolean ok;
+        @Nullable public final String serverMessage;
+
+        public RtcStopResult(boolean ok, @Nullable String serverMessage) {
+            this.ok = ok;
+            this.serverMessage = serverMessage;
+        }
+    }
+
+    /** Destructive cleanup requires an explicit acknowledgement, never a missing field. */
+    static RtcStopResult parseRtcStopResult(int httpStatus, String responseBody) {
+        try {
+            JsonObject json = new JsonParser().parse(responseBody).getAsJsonObject();
+            JsonElement code = json.get("code");
+            JsonElement data = json.get("data");
+            JsonElement stopped = data != null && data.isJsonObject()
+                    ? data.getAsJsonObject().get("stopped") : null;
+            boolean ok = httpStatus >= 200 && httpStatus < 300
+                    && code != null && code.isJsonPrimitive()
+                    && code.getAsJsonPrimitive().isNumber() && code.getAsDouble() == 0
+                    && stopped != null && stopped.isJsonPrimitive()
+                    && stopped.getAsJsonPrimitive().isBoolean() && stopped.getAsBoolean();
+            JsonElement message = json.get("message");
+            String text = message != null && message.isJsonPrimitive()
+                    && message.getAsJsonPrimitive().isString() ? message.getAsString().trim() : "";
+            if (text.isEmpty() || "ok".equalsIgnoreCase(text) || "success".equalsIgnoreCase(text)) {
+                text = null;
+            }
+            return new RtcStopResult(ok, ok ? null : text);
+        } catch (RuntimeException invalidResponse) {
+            return new RtcStopResult(false, null);
+        }
+    }
+
     /**
      * 停止后端 VoiceChat Agent，避免结束游览后继续占用。阻塞调用。
      *
@@ -363,30 +425,36 @@ public class GuideApiClient {
     /** Uses the tour's captured headers even after the active UI session has been cleared. */
     public boolean stopRtcSession(String roomId, String taskId, @Nullable String sessionId,
                                   boolean endSession, Map<String, String> headers) {
+        return stopRtcSessionWithResult(roomId, taskId, sessionId, endSession, headers, 0L).ok;
+    }
+
+    /** The timeout covers the entire HTTP call, including writes and slow response bodies. */
+    public RtcStopResult stopRtcSessionWithResult(String roomId, String taskId,
+                                                  @Nullable String sessionId, boolean endSession,
+                                                  Map<String, String> headers, long timeoutMs) {
         Call call = null;
         try {
-            JSONObject body = new JSONObject(rtcStopFields(roomId, taskId, sessionId, endSession));
+            String body = new Gson().toJson(rtcStopFields(roomId, taskId, sessionId, endSession));
             Request request = withDialogueHeaders(new Request.Builder()
                     .url(ApiConfig.rtcSessionStop())
                     .header("X-Client-Type", "android")
-                    .post(RequestBody.create(body.toString(), JSON)), headers)
+                    .post(RequestBody.create(body, JSON)), headers)
                     .build();
-            call = client.newCall(request);
-            if (!register(call)) return false;
+            OkHttpClient stopClient = timeoutMs > 0 ? client.newBuilder()
+                    .callTimeout(timeoutMs, TimeUnit.MILLISECONDS)
+                    .connectTimeout(timeoutMs, TimeUnit.MILLISECONDS)
+                    .readTimeout(timeoutMs, TimeUnit.MILLISECONDS)
+                    .writeTimeout(timeoutMs, TimeUnit.MILLISECONDS).build() : client;
+            call = stopClient.newCall(request);
+            if (!register(call)) return new RtcStopResult(false, null);
             try (Response response = call.execute()) {
                 String responseBody = response.body() != null ? response.body().string() : "";
-                JSONObject json = new JSONObject(responseBody);
-                if (!response.isSuccessful() || json.optInt("code", -1) != 0) {
-                    Log.e(TAG, "stopRtcSession 后端错误: " + json.optString("message"));
-                    return false;
-                }
-                JSONObject data = json.optJSONObject("data");
-                return data == null || data.optBoolean("stopped", true);
+                return parseRtcStopResult(response.code(), responseBody);
             }
         } catch (Exception e) {
-            if (call != null && call.isCanceled()) return false;
+            if (call != null && call.isCanceled()) return new RtcStopResult(false, null);
             Log.e(TAG, "stopRtcSession 异常", e);
-            return false;
+            return new RtcStopResult(false, null);
         } finally {
             unregister(call);
         }
