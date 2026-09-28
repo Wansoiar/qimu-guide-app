@@ -10,6 +10,7 @@
     <color name="qimu_brown_dark">#52351D</color>
     <color name="qimu_app_bar">#F7F2E7</color>
     <color name="qimu_background">#F6F0E4</color>
+    <color name="qimu_tutorial_background">#F8F5EF</color>
     <color name="qimu_background_bottom">#F1E7D7</color>
     <color name="qimu_surface">#FFFEF9</color>
     <color name="qimu_card">#FAF6EC</color>

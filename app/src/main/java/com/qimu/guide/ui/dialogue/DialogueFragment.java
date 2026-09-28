@@ -7,6 +7,7 @@ import android.net.Uri;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
+import android.os.SystemClock;
 import android.provider.Settings;
 import android.util.Log;
 import android.view.LayoutInflater;
@@ -35,7 +36,9 @@ import com.qimu.guide.R;
 import com.qimu.guide.model.DialogueMessage;
 import com.qimu.guide.net.TourSessionManager;
 import com.qimu.guide.service.BleService;
+import com.qimu.guide.service.CapturedJpeg;
 import com.qimu.guide.service.GuideForegroundService;
+import com.qimu.guide.service.MoyoungAiImageReceiver;
 import com.qimu.guide.service.RealtimeGuideManager;
 import com.qimu.guide.service.SubtitleTranscript;
 
@@ -98,6 +101,7 @@ public class DialogueFragment extends Fragment {
     private String visionCommandId;
     private CRPBleConnection visionConnection;
     private Runnable visionTimeout;
+    private long visionCaptureStartedAt;
 
     private final RealtimeGuideManager.Listener realtimeListener =
             new RealtimeGuideManager.Listener() {
@@ -176,12 +180,10 @@ public class DialogueFragment extends Fragment {
 
         renderState(guideManager.getState(), guideManager.getStateMessage());
 
-        if (TourSessionManager.get().consumeFirstTutorial()) {
-            new AlertDialog.Builder(requireContext())
-                    .setTitle(R.string.dialogue_tutorial_title)
-                    .setMessage(R.string.dialogue_tutorial_body)
-                    .setPositiveButton(R.string.dialogue_tutorial_action, null)
-                    .show();
+        if (getChildFragmentManager().findFragmentByTag(TourTutorialDialogFragment.TAG) == null
+                && TourSessionManager.get().consumeFirstTutorial()) {
+            new TourTutorialDialogFragment().show(
+                    getChildFragmentManager(), TourTutorialDialogFragment.TAG);
         }
     }
 
@@ -414,7 +416,7 @@ public class DialogueFragment extends Fragment {
             return;
         }
         try {
-            connection.setAiDialogueListener(new CRPAiDialogueListener() {
+            MoyoungAiImageReceiver.attach(connection, new CRPAiDialogueListener() {
                 @Override public void onDialogueStart() { }
                 @Override public void onDialogueAudioChange(byte[] audioBytes) { }
 
@@ -426,10 +428,15 @@ public class DialogueFragment extends Fragment {
 
                 @Override public void onDialogueStop(boolean isTimeout) { }
             });
-            connection.takePhoto(TakePhoto.PhotoMode.ModeAIRecognition);
-            visionTimeout = () -> failVisionCapture(
-                    operation, "没有收到眼镜图片，请重试", true);
+            visionCaptureStartedAt = SystemClock.elapsedRealtime();
+            Log.i(TAG, "vision capture start: operation=" + operation);
+            visionTimeout = () -> {
+                Log.w(TAG, "vision capture timeout: operation=" + operation
+                        + ", elapsedMs=" + (SystemClock.elapsedRealtime() - visionCaptureStartedAt));
+                failVisionCapture(operation, "眼镜图片接收超时，请重试", true);
+            };
             mainHandler.postDelayed(visionTimeout, VISION_CAPTURE_TIMEOUT_MS);
+            connection.takePhoto(TakePhoto.PhotoMode.ModeAIRecognition);
             renderState(guideManager.getState(), "正在等待眼镜返回图片…");
         } catch (RuntimeException error) {
             Log.e(TAG, "触发 AI 识图拍照失败", error);
@@ -440,6 +447,15 @@ public class DialogueFragment extends Fragment {
     private void onVisionImage(int operation, File imageFile) {
         if (!viewActive || !visionBusy || visionImageAccepted
                 || operation != visionGeneration) return;
+        if (!CapturedJpeg.hasCompleteEnvelope(imageFile)) {
+            Log.w(TAG, "vision image incomplete: operation=" + operation
+                    + ", bytes=" + imageFile.length());
+            failVisionCapture(operation, "眼镜图片传输不完整，请重试", true);
+            return;
+        }
+        Log.i(TAG, "vision image received: operation=" + operation
+                + ", elapsedMs=" + (SystemClock.elapsedRealtime() - visionCaptureStartedAt)
+                + ", bytes=" + imageFile.length());
         visionImageAccepted = true;
         visionHardwareStageActive = false;
         clearVisionHardwareListener();
@@ -479,7 +495,7 @@ public class DialogueFragment extends Fragment {
     }
 
     private void failVisionCapture(int operation, String message, boolean resumeIfNeeded) {
-        if (operation != visionGeneration) return;
+        if (operation != visionGeneration || !visionBusy || !visionHardwareStageActive) return;
         boolean shouldResume = resumeIfNeeded && resumeAfterVisionFailure;
         String failedCommandId = visionCommandId;
         clearVisionHardwareListener();
@@ -507,7 +523,7 @@ public class DialogueFragment extends Fragment {
         visionConnection = null;
         if (connection != null) {
             try {
-                connection.setAiDialogueListener(null);
+                MoyoungAiImageReceiver.detach(connection);
             } catch (RuntimeException error) {
                 Log.w(TAG, "释放 AI 图片监听器失败", error);
             }
