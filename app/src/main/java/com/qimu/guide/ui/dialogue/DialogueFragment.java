@@ -176,12 +176,10 @@ public class DialogueFragment extends Fragment {
 
         renderState(guideManager.getState(), guideManager.getStateMessage());
 
-        if (TourSessionManager.get().consumeFirstTutorial()) {
-            new AlertDialog.Builder(requireContext())
-                    .setTitle(R.string.dialogue_tutorial_title)
-                    .setMessage(R.string.dialogue_tutorial_body)
-                    .setPositiveButton(R.string.dialogue_tutorial_action, null)
-                    .show();
+        if (getChildFragmentManager().findFragmentByTag(TourTutorialDialogFragment.TAG) == null
+                && TourSessionManager.get().consumeFirstTutorial()) {
+            new TourTutorialDialogFragment().show(
+                    getChildFragmentManager(), TourTutorialDialogFragment.TAG);
         }
     }
 
