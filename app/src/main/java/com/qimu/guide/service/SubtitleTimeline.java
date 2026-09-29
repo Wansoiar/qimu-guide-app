@@ -1,7 +1,6 @@
-package com.qimu.guide.ui.dialogue;
+package com.qimu.guide.service;
 
 import com.qimu.guide.model.DialogueMessage;
-import com.qimu.guide.service.SubtitleTranscript;
 
 import java.util.ArrayList;
 import java.util.Collections;
