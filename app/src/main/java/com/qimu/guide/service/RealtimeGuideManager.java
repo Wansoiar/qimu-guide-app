@@ -15,6 +15,7 @@ import com.moyoung.glasses.conn.CRPBleConnection;
 import com.moyoung.glasses.conn.callback.CRPDeviceVolumeCallback;
 import com.moyoung.glasses.conn.listener.CRPBleConnectionStateListener;
 import com.qimu.guide.QimuApplication;
+import com.qimu.guide.model.DialogueMessage;
 import com.qimu.guide.net.AppAuthInterceptor;
 import com.qimu.guide.net.AppContextHeaders;
 import com.qimu.guide.net.GuideApiClient;
@@ -23,6 +24,7 @@ import com.qimu.guide.net.TourSessionManager;
 import org.json.JSONObject;
 
 import java.io.File;
+import java.util.Collections;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
@@ -118,6 +120,7 @@ public final class RealtimeGuideManager {
     private final RtcTokenRenewalController tokenRenewal = new RtcTokenRenewalController();
     private final Set<Listener> listeners = new CopyOnWriteArraySet<>();
     private final SubtitleTranscript transcript = new SubtitleTranscript();
+    private final TourDialogueHistory dialogueHistory = new TourDialogueHistory();
     private final Set<String> handledCommandIds = new HashSet<>();
     private final GuideApiClient apiClient = new GuideApiClient();
     // 收音源：眼镜当标准蓝牙耳机走系统 SCO 全双工（外放时仍收音→可打断），
@@ -220,6 +223,26 @@ public final class RealtimeGuideManager {
 
     public List<SubtitleTranscript.Entry> getTranscriptSnapshot() {
         return transcript.snapshot();
+    }
+
+    /** Main-thread UI snapshot including photos/status in their original event positions. */
+    public List<DialogueMessage> getDialogueSnapshot(@Nullable String expectedSessionId) {
+        if (!prepareDialogueHistory(expectedSessionId)) return Collections.emptyList();
+        return dialogueHistory.snapshot(expectedSessionId);
+    }
+
+    /** A detached page or a late callback from another tour cannot append to the current one. */
+    public void appendDialogueMessage(@Nullable String expectedSessionId, DialogueMessage message) {
+        if (prepareDialogueHistory(expectedSessionId)) {
+            dialogueHistory.append(expectedSessionId, message);
+        }
+    }
+
+    private boolean prepareDialogueHistory(@Nullable String expectedSessionId) {
+        TourSessionManager.TourSession current = TourSessionManager.get().current();
+        if (current == null || !current.sessionId.equals(expectedSessionId)) return false;
+        dialogueHistory.beginTour(current.sessionId);
+        return true;
     }
 
     /** Camera availability depends on a live session, not a retired venue setting. */
@@ -357,6 +380,7 @@ public final class RealtimeGuideManager {
             transcriptTourSessionId = session.sessionId;
             audioAutoRetryCount = 0;
             transcript.clear();
+            dialogueHistory.beginTour(session.sessionId);
             handledCommandIds.clear();
             hasConnectedInTour = false;
         }
@@ -887,6 +911,7 @@ public final class RealtimeGuideManager {
             audioAutoRetryCount = 0;
             transcriptTourSessionId = null;
             transcript.clear();
+            dialogueHistory.clear();
             handledCommandIds.clear();
             hasConnectedInTour = false;
         }
@@ -1659,6 +1684,7 @@ public final class RealtimeGuideManager {
                             rtcGeneration, fromSelf, normalized, definite, sequence, roundId,
                             source, receivedElapsedMs, timestamp);
                     if (recorded == null) return;
+                    dialogueHistory.upsert(tourSessionId, recorded);
                     for (Listener listener : listeners) {
                         listener.onSubtitle(recorded);
                     }

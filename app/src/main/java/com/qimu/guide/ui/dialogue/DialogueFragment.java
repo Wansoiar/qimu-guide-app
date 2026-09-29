@@ -55,7 +55,10 @@ import java.util.List;
 public class DialogueFragment extends Fragment {
 
     private static final String TAG = "DialogueFragment";
-    private static final long VISION_CAPTURE_TIMEOUT_MS = 10_000L;
+    // Slow BLE links can deliver every frame correctly but need more than 10 seconds.
+    // A captured failure took 13.154s: the old deadline discarded frames 27–38.
+    // Allow larger photos on the same slow link, while keeping capture/cleanup bounded.
+    private static final long VISION_CAPTURE_TIMEOUT_MS = 30_000L;
     private static final long HARDWARE_RELEASE_DELAY_MS = 300L;
 
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
@@ -91,7 +94,7 @@ public class DialogueFragment extends Fragment {
                 }
             });
 
-    private final SubtitleTimeline subtitleTimeline = new SubtitleTimeline();
+    private String dialogueTourSessionId;
 
     private int visionGeneration;
     private boolean visionBusy;
@@ -119,10 +122,7 @@ public class DialogueFragment extends Fragment {
 
                 @Override
                 public void onSubtitle(SubtitleTranscript.Entry entry) {
-                    postUi(() -> {
-                        subtitleTimeline.upsert(entry);
-                        renderTimeline();
-                    });
+                    postUi(() -> renderTimeline());
                 }
 
                 @Override
@@ -157,6 +157,8 @@ public class DialogueFragment extends Fragment {
     public void onViewCreated(@NonNull View view, @Nullable Bundle savedInstanceState) {
         super.onViewCreated(view, savedInstanceState);
         viewActive = true;
+        TourSessionManager.TourSession tour = TourSessionManager.get().current();
+        dialogueTourSessionId = tour == null ? null : tour.sessionId;
 
         recyclerMessages = view.findViewById(R.id.recycler_messages);
         recyclerMessages.setLayoutManager(new LinearLayoutManager(requireContext()));
@@ -171,11 +173,9 @@ public class DialogueFragment extends Fragment {
         dialogueButton.setOnClickListener(clicked -> handleDialogueButton());
         photoButton.setOnClickListener(clicked -> requestVisionCapture(null, true));
 
-        // 先注册再取快照，避免视图重建时字幕恰好到达而漏掉一条。
+        // The manager retains the full tour history before dispatching UI callbacks.
+        // Recreating this page must restore photos/status as well as subtitles.
         guideManager.addListener(realtimeListener);
-        for (SubtitleTranscript.Entry entry : guideManager.getTranscriptSnapshot()) {
-            subtitleTimeline.upsert(entry);
-        }
         renderTimeline();
 
         renderState(guideManager.getState(), guideManager.getStateMessage());
@@ -558,14 +558,14 @@ public class DialogueFragment extends Fragment {
 
     private void appendMessageDirect(DialogueMessage message) {
         if (!viewActive) return;
-        subtitleTimeline.append(message);
+        guideManager.appendDialogueMessage(dialogueTourSessionId, message);
         renderTimeline();
     }
 
     private void renderTimeline() {
         if (!viewActive || messageAdapter == null || recyclerMessages == null) return;
         messages.clear();
-        messages.addAll(subtitleTimeline.snapshot());
+        messages.addAll(guideManager.getDialogueSnapshot(dialogueTourSessionId));
         messageAdapter.notifyDataSetChanged();
         if (!messages.isEmpty()) recyclerMessages.smoothScrollToPosition(messages.size() - 1);
     }

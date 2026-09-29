@@ -2,6 +2,7 @@ package com.qimu.guide.ui.dialogue;
 
 import com.qimu.guide.model.DialogueMessage;
 import com.qimu.guide.service.SubtitleTranscript;
+import com.qimu.guide.service.SubtitleTimeline;
 
 import org.junit.Test;
 
