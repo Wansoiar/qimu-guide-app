@@ -984,7 +984,7 @@ public final class RealtimeGuideManager {
             GuideApiClient.ImageDescribeResult desc =
                     apiClient.describeRtcImage(venueId, rtcSessionId, uploaded.url,
                             isFcCommand(commandId) ? activeVisionRoundId : 0);
-            String content = buildVisionReplyContent(desc);
+            String content = VisionReplyContent.build(desc);
 
             boolean ok;
             if (isFcCommand(commandId)) {
@@ -1001,31 +1001,6 @@ public final class RealtimeGuideManager {
             finishVisionOperation(operationId, callback, ok,
                     ok ? "照片已交给 AI，正在讲解" : "识图结果回填失败");
         });
-    }
-
-    /**
-     * 按后端置信度三态拼给模型的回填文案（单一声音，不弹 UI）：
-     * high_conf 直接讲 / ambiguous 引导确认 / 未匹配建议重拍。
-     * FC func 回填与手动文本注入共用同一份。
-     */
-    private static String buildVisionReplyContent(
-            @Nullable GuideApiClient.ImageDescribeResult desc) {
-        boolean hasSummary = desc != null && desc.summary != null
-                && !desc.summary.trim().isEmpty();
-        if (desc != null && desc.isHighConf() && hasSummary) {
-            // 高置信：已确定展品，直接口语化讲解。
-            return "这是「" + desc.exhibitName + "」。以下是讲解资料，"
-                    + "请用讲解员口吻面向游客口语化介绍：" + desc.summary;
-        }
-        if (desc != null && desc.isAmbiguous() && hasSummary) {
-            // 待确认：识别到多个候选，引导用户确认是哪一件，不要硬挑一个讲。
-            return "眼前这件有多个相似的候选展品，还不能确定是哪一件，先别急着讲解。"
-                    + "请用讲解员口吻自然地把这些候选口语化地说给游客，"
-                    + "并问他看的是哪一件，帮你确认后再讲。以下是候选信息：" + desc.summary;
-        }
-        // 未匹配（含 null/异常）→ 让模型引导用户重拍，保持单一声音。
-        return "没有从本馆知识库里识别出这件展品。请用讲解员口吻告诉游客："
-                + "暂时没认出眼前这件，建议靠近一点或换个角度再让我看看。";
     }
 
     private void publishVisionOperation(boolean inProgress, String message) {
