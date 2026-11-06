@@ -83,13 +83,14 @@ public class GuideApiClient {
         public static final String HIGH_CONF = "high_conf";       // 已确定展品，summary 为讲解资料
         public static final String AMBIGUOUS = "ambiguous";       // 多个候选展品，summary 为引导确认语
         public static final String NOT_RECOGNIZED = "not_recognized"; // 未匹配到知识库展品
+        public static final String WEB_IDENTIFIED = "web_identified"; // 联网图片搜索识别结果
 
-        /** 三态之一（旧版曾是 boolean，后端已改为字符串，勿再用 optBoolean 解析）。 */
+        /** 识别状态之一（旧版曾是 boolean，后端已改为字符串，勿再用 optBoolean 解析）。 */
         public final String recognized;
         public final String exhibitName;
         public final String summary;
 
-        ImageDescribeResult(String recognized, String exhibitName, String summary) {
+        public ImageDescribeResult(String recognized, String exhibitName, String summary) {
             this.recognized = recognized;
             this.exhibitName = exhibitName;
             this.summary = summary;
@@ -97,6 +98,7 @@ public class GuideApiClient {
 
         public boolean isHighConf() { return HIGH_CONF.equals(recognized); }
         public boolean isAmbiguous() { return AMBIGUOUS.equals(recognized); }
+        public boolean isWebIdentified() { return WEB_IDENTIFIED.equals(recognized); }
     }
 
     /** 后端创建 RTC 房间并启动 VoiceChat Agent 后返回的进房信息。 */

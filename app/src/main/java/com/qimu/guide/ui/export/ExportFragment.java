@@ -167,7 +167,7 @@ public class ExportFragment extends Fragment {
                                     Toast.LENGTH_LONG).show();
                         } else if (!serverCloseSucceeded) {
                             Toast.makeText(requireContext(),
-                                    "眼镜已清理，会话服务稍后会自动关闭",
+                                    "眼镜已清理，但会话服务未确认关闭，请重试结束",
                                     Toast.LENGTH_LONG).show();
                         } else {
                             Toast.makeText(requireContext(),
@@ -189,7 +189,15 @@ public class ExportFragment extends Fragment {
                         }
                         // 归还状态已结束，恢复导出页按钮（结束/导出/相册等）以便重试。
                         updateActionState();
-                        Toast.makeText(requireContext(), message, Toast.LENGTH_LONG).show();
+                        if (!isAdded()) return;
+                        new AlertDialog.Builder(requireContext())
+                                .setTitle("未能结束本次游览")
+                                .setMessage(message
+                                        + "\n\n会话服务可能仍在后台运行，请重试结束。")
+                                .setNegativeButton("稍后", null)
+                                .setPositiveButton("重试结束", (dialog, which) ->
+                                        confirmEndTour())
+                                .show();
                     });
                 }
             };
@@ -278,8 +286,13 @@ public class ExportFragment extends Fragment {
         @Override
         public void onMediaFileChanged(int photoCount, int videoCount, int audioCount) {
             pendingPhotoCount = photoCount;
-            if (!isAdded()) return;
-            requireActivity().runOnUiThread(() -> {
+            mainHandler.post(() -> {
+                if (!isAdded()) {
+                    // 视图已销毁，清掉等待标记，避免下次进入时结束按钮被永久挡住。
+                    endMediaQueryPending = false;
+                    mainHandler.removeCallbacks(endMediaQueryTimeout);
+                    return;
+                }
                 if (tvPendingCount != null) tvPendingCount.setText(String.valueOf(photoCount));
                 if (endMediaQueryPending) {
                     endMediaQueryPending = false;
@@ -475,7 +488,11 @@ public class ExportFragment extends Fragment {
             Toast.makeText(requireContext(), R.string.export_nothing_pending, Toast.LENGTH_SHORT).show();
             return;
         }
-        if (exportRequested) return;
+        if (exportRequested) {
+            Toast.makeText(requireContext(),
+                    "照片导出已在进行中，请稍候", Toast.LENGTH_SHORT).show();
+            return;
+        }
 
         List<String> missingPermissions = getMissingWifiPermissions();
         if (!missingPermissions.isEmpty()) {
@@ -629,46 +646,67 @@ public class ExportFragment extends Fragment {
     private void publishDownloadedPhotos(@Nullable String directory,
                                          @Nullable List<String> downloadedPaths) {
         Context context = getContext();
-        if (context == null) return;
+        if (context == null) {
+            // 视图已销毁：没有后续回调能收尾，必须主动释放导出挂起状态。
+            releaseMediaTransferHold();
+            return;
+        }
         Context appContext = context.getApplicationContext();
         List<String> paths = downloadedPaths == null
                 ? new ArrayList<>() : new ArrayList<>(downloadedPaths);
         int generation = galleryPublishGeneration.incrementAndGet();
 
         new Thread(() -> {
-            int imageCount = 0;
-            int savedCount = 0;
-            String firstError = null;
-            for (String path : paths) {
-                File source = resolveDownloadedFile(directory, path);
-                if (source == null || !source.isFile() || !isImagePath(source.getName())) continue;
-                imageCount++;
-                try {
-                    publishImage(appContext, source);
-                    savedCount++;
-                } catch (Exception e) {
-                    if (firstError == null) firstError = e.getMessage();
+            try {
+                int imageCount = 0;
+                int savedCount = 0;
+                String firstError = null;
+                for (String path : paths) {
+                    File source = resolveDownloadedFile(directory, path);
+                    if (source == null || !source.isFile() || !isImagePath(source.getName())) continue;
+                    imageCount++;
+                    try {
+                        publishImage(appContext, source);
+                        savedCount++;
+                    } catch (Exception e) {
+                        if (firstError == null) firstError = e.getMessage();
+                    }
                 }
-            }
 
-            int finalImageCount = imageCount;
-            int finalSavedCount = savedCount;
-            String finalFirstError = firstError;
-            if (generation != galleryPublishGeneration.get() || !isAdded()) return;
-            requireActivity().runOnUiThread(() -> {
-                if (generation != galleryPublishGeneration.get() || !isAdded()) return;
-                if (finalImageCount == 0) {
-                    finishExport(false, "下载完成，但 SDK 未返回可保存的图片文件");
-                } else if (finalSavedCount == finalImageCount) {
-                    setStatus("导出完成，已保存 " + finalSavedCount + " 张照片到手机相册");
-                    finishExport(true, null);
-                } else {
-                    String detail = finalFirstError == null ? "未知错误" : finalFirstError;
-                    finishExport(false, "下载已完成，但仅保存 " + finalSavedCount + "/"
-                            + finalImageCount + " 张到相册：" + detail);
+                int finalImageCount = imageCount;
+                int finalSavedCount = savedCount;
+                String finalFirstError = firstError;
+                if (!isAdded() || getView() == null) {
+                    // 视图已销毁：后台发布无法回调 UI，至少要释放媒体传输 hold，
+                    // 否则 RTC 会一直停在“导出中”的挂起状态。
+                    releaseMediaTransferHold();
+                    return;
                 }
-            });
+                if (generation != galleryPublishGeneration.get()) return;
+                requireActivity().runOnUiThread(() -> {
+                    if (generation != galleryPublishGeneration.get() || !isAdded()) return;
+                    if (finalImageCount == 0) {
+                        finishExport(false, "下载完成，但 SDK 未返回可保存的图片文件");
+                    } else if (finalSavedCount == finalImageCount) {
+                        setStatus("导出完成，已保存 " + finalSavedCount + " 张照片到手机相册");
+                        finishExport(true, null);
+                    } else {
+                        String detail = finalFirstError == null ? "未知错误" : finalFirstError;
+                        finishExport(false, "下载已完成，但仅保存 " + finalSavedCount + "/"
+                                + finalImageCount + " 张到相册：" + detail);
+                    }
+                });
+            } catch (RuntimeException publishFailure) {
+                Log.e("ExportFragment", "照片发布异常，释放导出挂起状态", publishFailure);
+                releaseMediaTransferHold();
+            }
         }, "export-gallery-publish").start();
+    }
+
+    private void releaseMediaTransferHold() {
+        if (realtimeGuideManager != null) {
+            realtimeGuideManager.completeMediaTransferHold();
+        }
     }
 
     @Nullable
@@ -898,7 +936,17 @@ public class ExportFragment extends Fragment {
             Toast.makeText(requireContext(), R.string.must_start_tour_first, Toast.LENGTH_SHORT).show();
             return;
         }
-        if (returnCoordinator.isInProgress() || exportRequested || endMediaQueryPending) return;
+        if (returnCoordinator.isInProgress()) return;
+        if (exportRequested) {
+            Toast.makeText(requireContext(),
+                    "正在导出照片，请等待导出完成后再结束", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        if (endMediaQueryPending) {
+            Toast.makeText(requireContext(),
+                    "正在检查眼镜照片，请稍候再试", Toast.LENGTH_SHORT).show();
+            return;
+        }
 
         if (!connected) {
             new AlertDialog.Builder(requireContext())
